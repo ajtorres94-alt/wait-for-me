@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1A1F3D">
+<meta name="description" content="Book someone to hold your spot in line, or get paid to wait.">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Wait For Me!">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<style>
+html{padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;font-size:14px}
+img{max-width:100%}
+[hidden]{display:none!important}
+</style>
+<title>Wait For Me!</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=Figtree:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: a single phone-width app column; a role switch on top, a "take-a-number" ticket as the signature element */
+:root{
+  --bg:#EEF0F6; --surface:#FFFFFF; --ink:#1A1F3D; --muted:#5D6485; --line:#D9DCE8;
+  --ticket:#FFC21A; --ticket-ink:#2A1E00; --primary:#1A1F3D; --on-primary:#FFFFFF;
+  --good:#1D8A55; --good-bg:#DDF3E7; --warn:#B45309; --warn-bg:#FDEBD3; --info:#2F45D8; --info-bg:#E2E6FC;
+  --f-display:"Bungee","Arial Black",Impact,sans-serif;
+  --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#10132A; --surface:#1A1F3D; --ink:#ECEEF8; --muted:#A3A9C9; --line:#2D3359;
+  --ticket:#FFC933; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
+  --good:#5BD49A; --good-bg:#16382A; --warn:#F5A65B; --warn-bg:#3E2A14; --info:#9DABFF; --info-bg:#252C5A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10132A; --surface:#1A1F3D; --ink:#ECEEF8; --muted:#A3A9C9; --line:#2D3359;
+  --ticket:#FFC933; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
+  --good:#5BD49A; --good-bg:#16382A; --warn:#F5A65B; --warn-bg:#3E2A14; --info:#9DABFF; --info-bg:#252C5A; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
+  padding-block:0 calc(92px + env(safe-area-inset-bottom,0px));-webkit-tap-highlight-color:transparent;overscroll-behavior-y:none}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.app{max-width:560px;margin:0 auto;display:flex;flex-direction:column;gap:14px;padding-block:6px 20px}
+.screen-title{font-family:var(--f-body);font-weight:800;font-size:32px;letter-spacing:-.02em;line-height:1.1;padding-top:4px}
+button,a,.card{-webkit-user-select:none;user-select:none}
+input,textarea{-webkit-user-select:text;user-select:text}
+@media (prefers-reduced-motion:no-preference){button:active{transform:scale(.97)}button{transition:transform .08s}}
+h1,h2,h3{margin:0;text-wrap:balance}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:3px solid var(--info);outline-offset:2px}
+
+.appbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
+.appbar-in{max-width:560px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding-block:10px}
+.logo{display:flex;align-items:center;gap:8px;min-width:0}
+.logo .stub{font-family:var(--f-display);background:var(--ticket);color:var(--ticket-ink);padding:3px 6px;border-radius:3px;font-size:11px;transform:rotate(-4deg)}
+.logo h1{font-family:var(--f-display);font-size:17px;font-weight:400;white-space:nowrap}
+.sample{font-size:12px;color:var(--muted)}
+
+.roles{display:grid;grid-template-columns:1fr 1fr;background:color-mix(in srgb,var(--line) 70%,transparent);border-radius:10px;padding:3px;gap:2px;flex:none}
+.roles button{border:0;background:transparent;padding:6px 12px;border-radius:8px;font-weight:700;font-size:13px;color:var(--muted);min-height:32px}
+.roles button[aria-pressed="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgb(0 0 0 / .14)}
+
+.tabbar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:color-mix(in srgb,var(--surface) 90%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+.tabbar-in{max-width:560px;margin:0 auto;display:grid;grid-template-columns:repeat(3,1fr);padding-block:6px 4px}
+.tabbar button{border:0;background:none;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--muted);padding:4px 0;min-height:50px;position:relative}
+.tabbar svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tabbar button[aria-selected="true"]{color:var(--ink)}
+.tabbar button[aria-selected="true"] svg{stroke-width:2.3}
+.tabbar button[aria-selected="true"] .ic{background:var(--ticket);color:var(--ticket-ink)}
+.ic{display:grid;place-items:center;width:56px;height:30px;border-radius:15px;position:relative}
+.tabbar .plus .ic{background:var(--primary);color:var(--on-primary)}
+.badge{position:absolute;top:-3px;right:6px;min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:var(--warn);color:var(--surface);font-size:10px;font-weight:800;display:grid;place-items:center;font-family:var(--f-mono)}
+
+.list{display:flex;flex-direction:column;gap:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;gap:12px;align-items:flex-start;justify-content:space-between}
+.row>div{min-width:0}
+.card h3{font-size:17px;font-weight:700;line-height:1.3}
+.meta{color:var(--muted);font-size:13px}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.pill{font-size:12px;font-weight:700;padding:3px 9px;border-radius:99px;white-space:nowrap}
+.pill.open{background:var(--info-bg);color:var(--info)}
+.pill.active{background:var(--warn-bg);color:var(--warn)}
+.pill.ready{background:var(--ticket);color:var(--ticket-ink)}
+.pill.done{background:var(--good-bg);color:var(--good)}
+
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border-top:1px dashed var(--line);padding-top:12px}
+.facts div{display:flex;flex-direction:column}
+.facts span{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.facts b{font-family:var(--f-mono);font-size:15px;font-variant-numeric:tabular-nums}
+
+/* signature: take-a-number ticket */
+.ticket{--n:8px;background:var(--ticket);color:var(--ticket-ink);display:flex;align-items:center;gap:14px;padding:12px 18px;border-radius:6px;
+  -webkit-mask:radial-gradient(circle var(--n) at 0 50%,#0000 98%,#000) left/51% 100% no-repeat,radial-gradient(circle var(--n) at 100% 50%,#0000 98%,#000) right/51% 100% no-repeat;
+  mask:radial-gradient(circle var(--n) at 0 50%,#0000 98%,#000) left/51% 100% no-repeat,radial-gradient(circle var(--n) at 100% 50%,#0000 98%,#000) right/51% 100% no-repeat}
+.ticket .num{font-family:var(--f-display);font-size:40px;line-height:1;min-width:2.2ch;text-align:center}
+.ticket .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:700;opacity:.75}
+.ticket .txt{font-weight:600;font-size:14px;line-height:1.35}
+.ticket .sep{width:0;align-self:stretch;border-left:2px dashed color-mix(in srgb,var(--ticket-ink) 35%,transparent)}
+
+.steps{display:flex;gap:4px;list-style:none;padding:0;margin:0}
+.steps li{flex:1;height:6px;border-radius:3px;background:var(--line)}
+.steps li.on{background:var(--ticket)}
+.stepnote{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.stepnote b{color:var(--ink)}
+
+.btn{border:0;border-radius:10px;padding:10px 16px;font-weight:700;background:var(--primary);color:var(--on-primary)}
+.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.small{padding:7px 12px;font-size:13px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+form.post{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:18px;display:grid;gap:14px}
+.field{display:flex;flex-direction:column;gap:5px;min-width:0}
+.field label{font-size:13px;font-weight:700}
+.field small{color:var(--muted);font-size:12px}
+.field input,.field select,.field textarea{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;width:100%}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.quote{background:var(--bg);border-radius:10px;padding:12px 14px;display:grid;gap:4px;font-size:14px}
+.quote div{display:flex;justify-content:space-between}
+.quote .total{font-weight:800;border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
+
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;font-size:13px;font-weight:600}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.earn{display:flex;justify-content:space-between;align-items:baseline;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;gap:10px;flex-wrap:wrap}
+.earn b{font-family:var(--f-display);font-weight:400;font-size:28px}
+.pos{display:flex;gap:6px;align-items:center}
+.pos input{width:76px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.empty{text-align:center;color:var(--muted);padding:28px 12px;border:1px dashed var(--line);border-radius:14px}
+.who{display:flex;gap:12px;align-items:center;background:var(--bg);border-radius:12px;padding:10px 12px}
+.who>div{min-width:0}
+.avatar{flex:none;width:44px;height:44px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-weight:800;font-size:15px;border:3px solid var(--ticket)}
+.verified{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:var(--good);background:var(--good-bg);padding:1px 7px;border-radius:99px;margin-left:4px;vertical-align:2px}
+.look{font-size:13px;margin-top:2px}
+.look b{font-weight:700}
+.codebox{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.codebox input{width:110px;letter-spacing:.3em;text-align:center;font-family:var(--f-mono);font-weight:700;font-size:18px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.hint{font-size:12px;color:var(--muted)}
+.section{display:flex;flex-direction:column;gap:10px}
+.section h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700}
+.kv{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line)}
+.kv:first-of-type{border-top:0}
+.kv>div{min-width:0}
+.kv small{display:block;color:var(--muted);font-size:12px}
+.card-brand{font-family:var(--f-mono);font-weight:700}
+.checks{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.checks li{display:flex;gap:10px;align-items:center;font-size:14px}
+.checks li::before{content:"✓";flex:none;width:22px;height:22px;border-radius:50%;background:var(--good-bg);color:var(--good);display:grid;place-items:center;font-weight:800;font-size:12px}
+.btn{min-height:44px;border-radius:12px}
+.btn.small{min-height:36px;border-radius:10px}
+.toast{z-index:7;position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:600;font-size:14px;max-width:calc(100% - 32px)}
+@media (max-width:420px){.two{grid-template-columns:1fr}.ticket .num{font-size:32px}}
+@media (prefers-reduced-motion:no-preference){.card{transition:border-color .2s}.card.flash{border-color:var(--ticket)}}
+</style>
+</head>
+<body>
+
+<header class="appbar"><div class="appbar-in gutter">
+  <div class="logo"><span class="stub">No.1</span><h1>Wait For Me!</h1></div>
+  <div class="roles" role="group" aria-label="Choose a side">
+    <button id="role-customer" aria-pressed="true" data-role="customer">Book</button>
+    <button id="role-waiter" aria-pressed="false" data-role="waiter">Earn</button>
+  </div>
+</div></header>
+<main class="app gutter">
+  <h2 class="screen-title" id="screenTitle"></h2>
+  <div id="view"></div>
+  <p class="sample">Prototype with sample data. Nothing here is saved or charged.</p>
+</main>
+<nav class="tabbar" aria-label="Sections"><div class="tabbar-in gutter" role="tablist" id="tabs"></div></nav>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+const STAGES=[
+ {k:'open',label:'Waiting for a waiter',short:'Posted'},
+ {k:'claimed',label:'Waiter booked',short:'Booked'},
+ {k:'enroute',label:'Waiter on the way',short:'On the way'},
+ {k:'inline',label:'Holding your spot',short:'In line'},
+ {k:'nearfront',label:'Almost at the front',short:'Near front'},
+ {k:'handoff',label:'Ready for the swap',short:'Swap'},
+ {k:'done',label:'Done and paid',short:'Done'}];
+const idx=k=>STAGES.findIndex(s=>s.k===k);
+const FEE=0.15;
+const money=n=>'$'+n.toFixed(2).replace(/\.00$/,'');
+
+let jobs=[
+ {id:1,owner:'me',place:'DMV office, Riverside',what:'Real ID appointment walk-in',start:'Today 7:40 AM',hours:3,rate:22,status:'inline',waiter:'Marisol T.',pos:14,cat:'Errands',dist:'—',notes:'I\'ll come by at 10:30. Text me when you\'re about 10 people out.'},
+ {id:2,owner:'me',place:'Kogi-style ramen pop-up, Silver Lake',what:'Dinner for 4',start:'Sat 4:30 PM',hours:2,rate:20,status:'open',waiter:null,pos:null,cat:'Food',dist:'—',notes:'Doors open at 6. Put my name down for a party of 4.'},
+ {id:3,owner:'Jordan P.',place:'Croissant bakery, Pasadena',what:'Weekend pastry drop',start:'Sun 6:00 AM',hours:2.5,rate:18,status:'enroute',waiter:'me',pos:null,cat:'Food',dist:'3.1 mi',notes:'Buy 6 almond croissants, I\'ll Venmo back.'},
+ {id:4,owner:'Priya K.',place:'Sneaker release, Downtown LA',what:'Limited release, size 10',start:'Sat 5:00 AM',hours:5,rate:25,status:'open',waiter:null,pos:null,cat:'Releases',dist:'6.4 mi',notes:'Line forms overnight. Bring a chair.'},
+ {id:5,owner:'Dev S.',place:'Passport agency, Westwood',what:'Urgent passport pickup',start:'Mon 7:00 AM',hours:3,rate:24,status:'open',waiter:null,pos:null,cat:'Errands',dist:'11.2 mi',notes:'I need to be there for the window. Hold my spot until 9.'},
+ {id:6,owner:'Ana R.',place:'Outlet mall, Ontario',what:'Black Friday doorbuster TV',start:'Fri 3:00 AM',hours:4,rate:22,status:'open',waiter:null,pos:null,cat:'Releases',dist:'18.0 mi',notes:'Swap 30 min before doors open.'},
+ {id:7,owner:'Chris L.',place:'Theme park ride reopening, Anaheim',what:'Rope drop for new ride',start:'Sat 7:00 AM',hours:2,rate:20,status:'open',waiter:null,pos:null,cat:'Events',dist:'24.5 mi',notes:'You\'ll need a park ticket, I\'ll cover it.'}
+];
+const PEOPLE={
+ 'Marisol T.':{ini:'MT',rating:4.9,waits:212,look:'Red baseball cap, gray hoodie'},
+ 'me':{ini:'AN',rating:4.8,waits:37,look:'Black jacket, orange beanie'},
+ 'Jordan P.':{ini:'JP',rating:4.7,waits:9},'Priya K.':{ini:'PK',rating:5.0,waits:3},'Dev S.':{ini:'DS',rating:4.6,waits:12},'Ana R.':{ini:'AR',rating:4.9,waits:6},'Chris L.':{ini:'CL',rating:4.8,waits:4}};
+jobs[0].code='4827';jobs[1].code='6153';jobs[2].code='2290';
+const newCode=()=>String(1000+Math.floor(Math.random()*9000));
+function whoCard(name,kind){
+  const p=PEOPLE[name]||{ini:name.slice(0,2).toUpperCase(),rating:5,waits:0};
+  const label=name==='me'?'You':name;
+  return`<div class="who"><div class="avatar" aria-hidden="true">${p.ini}</div><div><b>${esc(label)}</b><span class="verified">✓ ID verified</span>
+    <div class="meta">★ ${p.rating.toFixed(1)} · ${p.waits} ${kind==='waiter'?'waits completed':'lines posted'}</div>
+    ${kind==='waiter'&&p.look?`<div class="look">Look for: <b>${esc(p.look)}</b></div>`:''}</div></div>`}
+let nextId=8, role='customer', tab={customer:'mine',waiter:'find'}, filter='All', paidOut=86;
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2600)}
+function pillFor(s){
+  if(s==='open')return'<span class="pill open">Open</span>';
+  if(s==='handoff')return'<span class="pill ready">Ready for swap</span>';
+  if(s==='done')return'<span class="pill done">Done</span>';
+  return`<span class="pill active">${STAGES[idx(s)].short}</span>`}
+function steps(s){const i=idx(s);return`<ol class="steps" aria-label="Progress: ${STAGES[i].label}">${STAGES.slice(1).map((st,j)=>`<li class="${j+1<=i?'on':''}" title="${st.short}"></li>`).join('')}</ol>`}
+function facts(j,mode){
+  const pay=j.hours*j.rate;
+  const total=mode==='customer'?pay*(1+FEE):pay;
+  return`<div class="facts"><div><span>Starts</span><b>${esc(j.start)}</b></div><div><span>Est. wait</span><b>${j.hours} hr</b></div><div><span>${mode==='customer'?'You pay':'You earn'}</span><b>${money(total)}</b></div></div>`}
+
+function setRole(r){if(r===role)return;role=r;document.querySelectorAll('.roles button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.role===r));render();window.scrollTo(0,0)}
+document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
+
+const svg=p=>`<svg viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`;
+const ICONS={
+ mine:svg('<path d="M4 6h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"/><path d="M14.5 7v2M14.5 11v2M14.5 15v2"/>'),
+ post:svg('<path d="M12 6v12M6 12h12"/>'),
+ account:svg('<circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c1.3-3.4 3.9-5 7-5s5.7 1.6 7 5"/>'),
+ find:svg('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>'),
+ shifts:svg('<circle cx="12" cy="12" r="8"/><path d="M12 8v4.2l2.8 1.8"/>')};
+const TITLES={mine:'My lines',post:'Post a line',account:'Account',find:'Find lines',shifts:'My shifts'};
+function renderTabs(){
+  const mine=jobs.filter(j=>j.owner==='me'&&j.status!=='done').length;
+  const open=jobs.filter(j=>j.status==='open'&&j.owner!=='me').length;
+  const shifts=jobs.filter(j=>j.waiter==='me'&&j.status!=='done').length;
+  const t=role==='customer'?[['mine','My lines',mine],['post','Post',null],['account','Account',null]]:[['find','Find lines',open],['shifts','My shifts',shifts],['account','Account',null]];
+  $('#tabs').innerHTML=t.map(([k,l,c])=>`<button role="tab" id="tab-${k}" class="${k==='post'?'plus':''}" aria-selected="${tab[role]===k}" data-k="${k}"><span class="ic">${ICONS[k]}${c?`<span class="badge">${c}</span>`:''}</span>${l}</button>`).join('');
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
+}
+
+function customerMine(){
+  const mine=jobs.filter(j=>j.owner==='me').sort((a,b)=>(a.status==='done')-(b.status==='done'));
+  if(!mine.length)return`<div class="empty">No lines yet. Post one and a waiter can claim it.</div>`;
+  return`<div class="list">${mine.map(j=>{
+    const i=idx(j.status);
+    let ticket='';
+    if(j.status==='inline'||j.status==='nearfront')ticket=`<div class="ticket"><div><div class="lbl">Place</div><div class="num">${j.pos??'—'}</div></div><div class="sep"></div><div class="txt">${esc(j.waiter)} is holding your spot. ${j.status==='nearfront'?'Head over now.':'You\'ll get a heads-up when they\'re close.'}</div></div>`;
+    if(j.status==='handoff')ticket=`<div class="ticket"><div><div class="lbl">Swap code</div><div class="num mono" style="font-family:var(--f-display)">${j.code}</div></div><div class="sep"></div><div class="txt">${esc(j.waiter)} is at the front. Find them and read out this code. They enter it to hand over your spot.</div></div>`;
+    else if(j.waiter&&j.status!=='done')ticket+=`<div class="hint">Your swap code is <b class="mono">${j.code}</b>. Only share it in person when you take over the spot.</div>`;
+    let actions='';
+    if(j.status==='open')actions=`<button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
+    if(j.status==='handoff')actions=`<button class="btn ghost small" data-act="swap" data-id="${j.id}">Demo: ${esc(j.waiter)} enters your code</button>`;
+    if(j.waiter&&j.waiter!=='me'&&['claimed','enroute','inline','nearfront'].includes(j.status))actions=`<button class="btn ghost small" data-act="advance" data-id="${j.id}">Demo: send the next update from ${esc(j.waiter)}</button>`;
+    if(j.status==='done')actions=`<span class="meta">Paid ${money(j.hours*j.rate*(1+FEE))} · Thanks for waiting with us</span>`;
+    return`<article class="card" id="job-${j.id}"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
+      ${j.status!=='open'?steps(j.status):''}
+      <div class="stepnote"><span><b>${STAGES[i].label}</b></span><span>${j.waiter?'Your waiter':'Visible to nearby waiters'}</span></div>
+      ${j.waiter&&j.status!=='done'?whoCard(j.waiter,'waiter'):''}${ticket}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
+
+function customerPost(){
+  return`<form class="post" id="postForm" novalidate>
+   <div class="meta">Tell waiters where to go and how long you expect it to take.</div>
+   <div class="field"><label for="f-place">Where is the line?</label><input id="f-place" required placeholder="e.g. Taco truck at Grand Park"></div>
+   <div class="field"><label for="f-what">What's it for?</label><input id="f-what" required placeholder="e.g. Lunch for 2, opening day"></div>
+   <div class="two"><div class="field"><label for="f-cat">Type</label><select id="f-cat"><option>Food</option><option>Releases</option><option>Errands</option><option>Events</option></select></div>
+   <div class="field"><label for="f-start">When should they arrive?</label><input id="f-start" required placeholder="Sat 9:00 AM"></div></div>
+   <div class="two"><div class="field"><label for="f-hours">Estimated wait (hours)</label><input id="f-hours" type="number" min="0.5" step="0.5" value="2"></div>
+   <div class="field"><label for="f-rate">Hourly rate</label><input id="f-rate" type="number" min="15" step="1" value="20"><small>Minimum $15/hr</small></div></div>
+   <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" placeholder="When you'll arrive, how to reach you, anything to buy"></textarea></div>
+   <div class="quote" id="quote"></div>
+   <div class="btns"><button class="btn" type="submit">Post line</button><span class="meta" id="formErr" role="alert"></span></div></form>`}
+
+function updateQuote(){
+  const h=+$('#f-hours').value||0,r=+$('#f-rate').value||0,base=h*r,fee=base*FEE;
+  $('#quote').innerHTML=`<div><span>Waiter pay (${h} hr × ${money(r)})</span><span class="mono">${money(base)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(fee)}</span></div><div class="total"><span>Estimated total</span><span class="mono">${money(base+fee)}</span></div>`}
+
+function waiterFind(){
+  const cats=['All','Food','Releases','Errands','Events'];
+  const open=jobs.filter(j=>j.status==='open'&&j.owner!=='me'&&(filter==='All'||j.cat===filter));
+  return`<div class="list"><div class="filters" role="group" aria-label="Filter by type">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
+   ${open.length?open.map(j=>`<article class="card" id="job-${j.id}"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · ${esc(j.dist)} away · posted by ${esc(j.owner)}</div></div><span class="pill open">${money(j.rate)}/hr</span></div>
+     ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}
+     <div class="btns"><button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></div></article>`).join(''):`<div class="empty">No open lines in this category right now.</div>`}</div>`}
+
+function waiterShifts(){
+  const mine=jobs.filter(j=>j.waiter==='me').sort((a,b)=>(a.status==='done')-(b.status==='done'));
+  const active=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+j.hours*j.rate,0);
+  return`<div class="list"><div class="earn"><div><div class="meta">Paid out this week</div><b class="mono">${money(paidOut)}</b></div><div class="meta">${money(active)} pending on active shifts</div></div>
+   ${mine.length?mine.map(j=>{
+     const i=idx(j.status),next=STAGES[i+1];
+     const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the front',handoff:'I\'m at the front, ready to swap'};
+     let ctl='';
+     if(next&&verbs[next.k])ctl+=`<button class="btn small" data-act="advance" data-id="${j.id}">${verbs[next.k]}</button>`;
+     if(j.status==='handoff')ctl+=`<div class="codebox" style="width:100%"><label class="meta" for="code-${j.id}" style="width:100%">Ask ${esc(j.owner)} for their 4-digit swap code, then enter it to hand over the spot.</label><input id="code-${j.id}" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off"><button class="btn small" data-act="code" data-id="${j.id}">Complete swap</button></div><div class="hint">Demo: ${esc(j.owner)}'s code is <b class="mono">${j.code}</b></div>`;
+     if(j.status==='inline'||j.status==='nearfront')ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" value="${j.pos??''}"><button class="btn ghost small" data-act="pos" data-id="${j.id}">Update</button></span>`;
+     if(j.status==='done')ctl=`<span class="meta">Earned ${money(j.hours*j.rate)} · paid out</span>`;
+     return`<article class="card" id="job-${j.id}"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">For ${esc(j.owner)} · ${esc(j.what)}</div></div>${pillFor(j.status)}</div>
+       ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
+       ${j.status!=='done'?whoCard(j.owner,'customer'):''}
+       ${['claimed','enroute','inline','nearfront','handoff'].includes(j.status)?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">What you're wearing today, so ${esc(j.owner)} can spot you. Pick something easy to see.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" value="${esc(PEOPLE.me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:''}
+       ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}<div class="btns">${ctl}</div></article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from Find lines.</div>`}</div>`}
+
+function profileHead(kind){
+  return`<article class="card"><div class="who" style="background:none;padding:0"><div class="avatar" aria-hidden="true">AN</div><div><b>Andrew</b><span class="verified">✓ ID verified</span>
+    <div class="meta">${kind==='customer'?'Customer since Oct 2026':'Waiter since Oct 2026 · ★ 4.8 · 37 waits'}</div></div></div></article>`}
+function customerAccount(){
+  const done=jobs.filter(j=>j.owner==='me'&&j.status==='done');
+  return`<div class="list">${profileHead('customer')}
+  <article class="card section"><h2>Payment method</h2>
+    <div class="kv"><div><span class="card-brand">VISA •••• 4242</span><small>Default · expires 08/29</small></div><button class="btn ghost small" data-demo="Card changes go through the secure payment form in the live app.">Change</button></div>
+    <div class="kv"><div>Apple Pay / Google Pay<small>Not set up</small></div><button class="btn ghost small" data-demo="Wallet payments get added in the live app.">Add</button></div></article>
+  <article class="card section"><h2>How you're charged</h2>
+    <ul class="checks"><li>Posting a line is free. Cancel any time before a waiter claims it.</li><li>When a waiter claims it, we place a hold on your card for the estimate.</li><li>You're charged only after your swap code is used, for the waiter's pay plus a 15% service fee.</li></ul></article>
+  <article class="card section"><h2>Receipts</h2>
+    ${done.length?done.map(j=>{const b=j.hours*j.rate;return`<div class="kv"><div>${esc(j.place)}<small>Waiter ${money(b)} + service fee ${money(b*FEE)}</small></div><b class="mono">${money(b*(1+FEE))}</b></div>`}).join(''):`<div class="hint">Receipts appear here after a swap. Try the DMV line under My lines.</div>`}</article></div>`}
+function waiterAccount(){
+  return`<div class="list">${profileHead('waiter')}
+  <article class="card section"><h2>Verification</h2>
+    <ul class="checks"><li>Government ID checked</li><li>Selfie matches ID photo</li><li>Background check cleared</li><li>Profile photo matches ID</li></ul></article>
+  <article class="card section"><h2>Payout account</h2>
+    <div class="kv"><div><span class="card-brand">Bank •••• 6789</span><small>Standard payout: 1–2 business days, free</small></div><button class="btn ghost small" data-demo="Bank changes go through the secure payout form in the live app.">Change</button></div>
+    <div class="kv"><div>Instant payout to debit card<small>Arrives in minutes</small></div><button class="btn ghost small" data-demo="Instant payouts get added in the live app.">Set up</button></div></article>
+  <article class="card section"><h2>Earnings</h2>
+    <div class="kv"><div>Paid out this week</div><b class="mono">${money(paidOut)}</b></div>
+    <div class="kv"><div>You keep<small>100% of your hourly rate, plus tips</small></div><b class="mono">100%</b></div></article></div>`}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-demo]');if(b)toast(b.dataset.demo)});
+
+function render(){
+  renderTabs();
+  const v=$('#view'),t=tab[role];
+  $('#screenTitle').textContent=TITLES[t];
+  v.innerHTML=t==='account'?(role==='customer'?customerAccount():waiterAccount()):role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
+  if(t==='post'){['f-hours','f-rate'].forEach(id=>$('#'+id).addEventListener('input',updateQuote));updateQuote();
+    $('#postForm').addEventListener('submit',e=>{e.preventDefault();
+      const place=$('#f-place').value.trim(),what=$('#f-what').value.trim(),start=$('#f-start').value.trim(),h=+$('#f-hours').value,r=+$('#f-rate').value;
+      if(!place||!what||!start){$('#formErr').textContent='Add where, what, and when so waiters know what they\'re signing up for.';return}
+      if(r<15){$('#formErr').textContent='Set the rate to at least $15/hr.';return}
+      jobs.unshift({id:nextId++,owner:'me',place,what,start,hours:h||1,rate:r,status:'open',waiter:null,pos:null,cat:$('#f-cat').value,dist:'—',notes:$('#f-notes').value.trim()});
+      tab.customer='mine';render();toast('Line posted. Waiters nearby can claim it now.')})}
+  v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
+}
+
+$('#view').addEventListener('click',e=>{
+  const b=e.target.closest('[data-act]');if(!b)return;
+  const j=jobs.find(x=>x.id==b.dataset.id);if(!j)return;
+  const a=b.dataset.act;
+  if(a==='cancel'){jobs=jobs.filter(x=>x!==j);toast('Request cancelled. You weren\'t charged.')}
+  if(a==='outfit'){const v=document.getElementById('outfit-'+j.id).value.trim();if(!v){toast('Describe at least one item your customer can spot from a distance.');return}PEOPLE.me.look=v;toast(`${j.owner} will look for: ${v}`)}
+  if(a==='code'){const v=document.getElementById('code-'+j.id).value.trim();
+    if(v!==j.code){toast('That code doesn\'t match. Check it with the customer and try again.');return}
+    j.status='done';paidOut+=j.hours*j.rate;toast(`Swap complete. ${money(j.hours*j.rate)} is on its way to your bank.`)}
+  if(a==='claim'){j.status='claimed';j.waiter='me';j.code=j.code||newCode();toast(`Claimed. Head to ${j.place} by ${j.start}.`)}
+  if(a==='advance'){j.status=STAGES[idx(j.status)+1].k;if(j.status==='inline'&&!j.pos)j.pos=30;if(j.status==='nearfront'&&(j.pos??99)>5)j.pos=5;if(j.status==='handoff')j.pos=1;const lbl=STAGES[idx(j.status)].label;toast(j.waiter==='me'?`${j.owner} was notified: ${lbl.toLowerCase()}.`:`Update from ${j.waiter}: ${lbl.toLowerCase()}.`)}
+  if(a==='pos'){const v=+document.getElementById('pos-'+j.id).value;if(v>0){j.pos=v;toast(`Place in line updated to ${v}.`)}}
+  if(a==='swap'){j.status='done';if(j.waiter==='me')paidOut+=j.hours*j.rate;toast('Swap confirmed. Your waiter has been paid.')}
+  render();
+  const c=document.getElementById('job-'+j.id);if(c){c.classList.add('flash');setTimeout(()=>c.classList.remove('flash'),900)}
+});
+
+render();
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+}
+</script>
+</body>
+</html>
