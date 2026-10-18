@@ -10,8 +10,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Wait For Me!">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" type="image/png" href="/icons/icon-192.png">
-<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="/icons/icon-192-v2.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon-v2.png">
 <style>
 html{padding-top:env(safe-area-inset-top,0px)}
 body{margin:0;font-size:14px}
@@ -25,7 +25,7 @@ img{max-width:100%}
 /* Layout: a single phone-width app column; a role switch on top, a "take-a-number" ticket as the signature element */
 :root{
   --bg:#EEF0F6; --surface:#FFFFFF; --ink:#1A1F3D; --muted:#5D6485; --line:#D9DCE8;
-  --ticket:#FFC21A; --logo:#FFCD44; --ticket-ink:#2A1E00; --primary:#1A1F3D; --on-primary:#FFFFFF;
+  --ticket:#FFCD44; --logo:#FFCD44; --ticket-ink:#2A1E00; --primary:#1A1F3D; --on-primary:#FFFFFF;
   --good:#1D8A55; --good-bg:#DDF3E7; --warn:#B45309; --warn-bg:#FDEBD3; --info:#2F45D8; --info-bg:#E2E6FC;
   --f-display:"Bungee","Arial Black",Impact,sans-serif;
   --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -33,11 +33,11 @@ img{max-width:100%}
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#10132A; --surface:#1A1F3D; --ink:#ECEEF8; --muted:#A3A9C9; --line:#2D3359;
-  --ticket:#FFC933; --logo:#FFD561; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
+  --ticket:#FFD561; --logo:#FFD561; --ticket-ink:#2A1E00; --primary:#FFD561; --on-primary:#1A1F3D;
   --good:#5BD49A; --good-bg:#16382A; --warn:#F5A65B; --warn-bg:#3E2A14; --info:#9DABFF; --info-bg:#252C5A; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#10132A; --surface:#1A1F3D; --ink:#ECEEF8; --muted:#A3A9C9; --line:#2D3359;
-  --ticket:#FFC933; --logo:#FFD561; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
+  --ticket:#FFD561; --logo:#FFD561; --ticket-ink:#2A1E00; --primary:#FFD561; --on-primary:#1A1F3D;
   --good:#5BD49A; --good-bg:#16382A; --warn:#F5A65B; --warn-bg:#3E2A14; --info:#9DABFF; --info-bg:#252C5A; color-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;

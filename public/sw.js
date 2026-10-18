@@ -1,6 +1,6 @@
 // Service worker: lets phones install the app and open it without a connection.
-const CACHE = "wait-for-me-v5";
-const FILES = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE = "wait-for-me-v6";
+const FILES = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192-v2.png", "/icons/icon-512-v2.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)));
