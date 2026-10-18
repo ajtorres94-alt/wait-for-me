@@ -41,6 +41,9 @@ CREATE INDEX IF NOT EXISTS lines_owner_idx ON lines(owner_id);
 CREATE INDEX IF NOT EXISTS lines_waiter_idx ON lines(waiter_id);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT NOT NULL DEFAULT '';
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS checkin_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS geo_approx BOOLEAN;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS done_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS outcome TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS approved_hours NUMERIC;
@@ -92,6 +95,9 @@ function line(r) {
       pos: r.pos,
       code: r.code,
       checkinAt: r.checkin_at,
+      lat: r.lat,
+      lng: r.lng,
+      geoApprox: r.geo_approx,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -185,6 +191,32 @@ module.exports = {
       args
     );
     return r.rows[0] ? this.getLine(id) : null;
+  },
+  async setLineGeo(id, geo) {
+    await pool.query("UPDATE lines SET lat = $2, lng = $3, geo_approx = $4 WHERE id = $1", [id, geo.lat, geo.lng, geo.approx]);
+  },
+  async openLinesMissingGeo() {
+    const r = await pool.query("SELECT id, place FROM lines WHERE status = 'open' AND lat IS NULL ORDER BY id LIMIT 200");
+    return r.rows;
+  },
+  // Removes personal details but keeps finished jobs and ratings intact for the other person.
+  async deleteUser(id) {
+    const c = await pool.connect();
+    try {
+      await c.query("BEGIN");
+      await c.query("DELETE FROM lines WHERE owner_id = $1 AND status = 'open'", [id]);
+      await c.query("DELETE FROM sessions WHERE user_id = $1", [id]);
+      await c.query(
+        `UPDATE users SET name = 'Deleted user', email = $2, pw_hash = '', look = '', avatar = '' WHERE id = $1`,
+        [id, `deleted-${id}@deleted.invalid`]
+      );
+      await c.query("COMMIT");
+    } catch (e) {
+      await c.query("ROLLBACK");
+      throw e;
+    } finally {
+      c.release();
+    }
   },
   async deleteLine(id, expectStatus) {
     const r = await pool.query("DELETE FROM lines WHERE id = $1 AND status = $2", [id, expectStatus]);

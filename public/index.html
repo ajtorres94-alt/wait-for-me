@@ -242,6 +242,15 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .avgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
 .avpick{border:3px solid transparent;border-radius:50%;padding:0;background:none;aspect-ratio:1;max-width:100%;min-width:0}
 .avpick[aria-pressed="true"]{border-color:var(--ink)}
+.dist{font-size:13px;font-weight:700;color:var(--info);margin-top:2px}
+.chip.near{font-weight:800}
+.chip[disabled]{opacity:.6}
+.links{display:flex;flex-direction:column;gap:2px}
+.links a{color:var(--info);font-weight:600;padding:8px 0;text-decoration:none}
+.linkbtn{background:none;border:0;color:var(--muted);text-decoration:underline;padding:10px 0;align-self:center;min-height:44px}
+.card.danger{border-color:var(--warn)}
+.btn.danger-btn{background:#B42318;color:#fff}
+.hint a{color:var(--info)}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
 </style>
 <div class="intro" id="intro" role="dialog" aria-label="Wait For Me!">
@@ -286,6 +295,7 @@ const initials=n=>String(n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).joi
 function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3000)}
 const store={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
 
+let delOpen=false;
 let me=null, role=store.get('wfm_role')==='waiter'?'waiter':'customer', tab={customer:'mine',waiter:'find'}, filter='All', authMode='signup';
 let data={mine:[],open:[],shifts:[]}, lastJSON='';
 
@@ -407,6 +417,7 @@ function authScreen(){
     <button class="btn block" type="submit">${up?'Create account':'Sign in'}</button>
     <span class="meta" id="authErr" role="alert"></span>
    </form>
+   ${up?'<div class="hint">By creating an account you agree to the <a href="/terms" target="_blank" rel="noopener">Terms of service</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy policy</a>.</div>':''}
    <button class="switch" id="authSwitch">${up?'Already have an account? Sign in':'New here? Create an account'}</button></div>`}
 
 function customerMine(){
@@ -471,14 +482,35 @@ function updateQuote(){
   const h=HOURS[wheel.hours],r=RATES[wheel.rate],base=h*r,fee=base*FEE;
   $('#quote').innerHTML=`<div><span>Waiter pay (${fmtHours(h)} × ${fmtRate(r)}/hr)</span><span class="mono">${money(base)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(fee)}</span></div><div class="total"><span>Estimated total</span><span class="mono">${money(base+fee)}</span></div>`}
 
+// ---------- Near me (waiters) ----------
+let near={on:false,pos:null,radius:0,busy:false};
+function miles(a,b){const R=3958.8,r=x=>x*Math.PI/180,dLat=r(b.lat-a.lat),dLng=r(b.lng-a.lng);
+  const h=Math.sin(dLat/2)**2+Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLng/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
+const distOf=j=>near.pos&&j.lat!=null?miles(near.pos,{lat:j.lat,lng:j.lng}):null;
+function distTxt(j){const d=distOf(j);if(d==null)return near.on?'Distance unknown':'';const n=d<10?d.toFixed(1):Math.round(d);return`${j.geoApprox?'About ':''}${n} mi away`}
+function locate(){
+  if(!navigator.geolocation){toast('This phone can\'t share its location with the app.');return}
+  near.busy=true;render();
+  navigator.geolocation.getCurrentPosition(p=>{near={on:true,pos:{lat:p.coords.latitude,lng:p.coords.longitude},radius:near.radius,busy:false};render()},
+    e=>{near.busy=false;near.on=false;render();toast(e.code===1?'Location is blocked. Allow location for this app in your phone\'s settings, then try again.':'Couldn\'t get your location. Try again in a moment.')},
+    {enableHighAccuracy:false,timeout:10000,maximumAge:300000});
+}
 function waiterFind(){
   const cats=['All','Food','Releases','Errands','Events'];
-  const open=data.open.filter(j=>filter==='All'||j.cat===filter);
+  let open=data.open.filter(j=>filter==='All'||j.cat===filter);
+  if(near.on){
+    if(near.radius)open=open.filter(j=>{const d=distOf(j);return d!=null&&d<=near.radius});
+    open=open.slice().sort((a,b)=>{const x=distOf(a),y=distOf(b);return(x==null)-(y==null)||(x??0)-(y??0)});
+  }
+  const radii=[[0,'Any distance'],[5,'5 mi'],[10,'10 mi'],[25,'25 mi']];
   return`<div class="list"><div class="filters" role="group" aria-label="Filter by type">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
-   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)} (${ratingTxt(j.ownerRating)})</div></div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
+   <div class="filters" role="group" aria-label="Distance">
+     <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
+     ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>
+   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)} (${ratingTxt(j.ownerRating)})</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}
      <div class="hint">Paid for time in line from check-in to swap, 1 hour minimum.</div>
-     <button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></article>`).join(''):`<div class="empty">No open lines${filter==='All'?'':' in this category'} right now. New ones show up here automatically.</div>`}</div>`}
+     <button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></article>`).join(''):`<div class="empty">No open lines${near.on&&near.radius?` within ${near.radius} miles`:''}${filter==='All'?'':' in this category'} right now. New ones show up here automatically.</div>`}</div>`}
 
 function waiterShifts(){
   const mine=data.shifts.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
@@ -520,7 +552,14 @@ function account(){
   <article class="card section"><h2>How it works</h2>
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
   <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
-  <button class="btn ghost block" data-act="logout">Sign out</button></div>`}
+  <article class="card section"><h2>Help and legal</h2>
+    <div class="links"><a href="/support" target="_blank" rel="noopener">Support</a><a href="/privacy" target="_blank" rel="noopener">Privacy policy</a><a href="/terms" target="_blank" rel="noopener">Terms of service</a></div></article>
+  <button class="btn ghost block" data-act="logout">Sign out</button>
+  ${delOpen?`<article class="card section danger"><h2>Delete your account</h2>
+    <div class="meta">This removes your name, email, outfit, and avatar, and cancels any open lines you've posted. Finished jobs stay in the other person's history as "Deleted user." This can't be undone.</div>
+    <div class="field"><label for="del-pass">Enter your password to confirm</label><input id="del-pass" type="password" autocomplete="current-password"></div>
+    <div class="btns"><button class="btn danger-btn small" data-act="delete-confirm">Delete my account</button><button class="btn ghost small" data-act="delete-cancel">Keep my account</button></div></article>`
+  :`<button class="linkbtn" data-act="delete-open">Delete account</button>`}</div>`}
 
 // ---------- tutorials ----------
 const T_TICKET=(lbl,num,txt)=>`<div class="ticket"><div><div class="lbl">${lbl}</div><div class="num">${num}</div></div><div class="sep"></div><div class="txt">${txt}</div></div>`;
@@ -629,6 +668,8 @@ function render(){
         tab.customer='mine';await load(true);window.scrollTo(0,0);toast('Line posted. Waiters can claim it now.')}
       catch(err){$('#formErr').textContent=err.message;btn.disabled=false}})}
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
+  v.querySelectorAll('[data-near]').forEach(b=>b.onclick=()=>{if(near.on){near.on=false;near.radius=0;render()}else locate()});
+  v.querySelectorAll('[data-radius]').forEach(b=>b.onclick=()=>{near.radius=+b.dataset.radius;render()});
   const st=$('#sound-toggle');if(st)st.onchange=()=>{store.set('wfm_sound',st.checked?'on':'off');if(st.checked){chimed=false;tryChime()}toast(st.checked?'Opening sound on.':'Opening sound off.')};
   maybeTut();
 }
@@ -644,6 +685,9 @@ $('#view').addEventListener('click',async e=>{
   try{
     if(a==='tut-customer'||a==='tut-waiter'){b.disabled=false;openTut(a==='tut-customer'?'customer':'waiter');return}
     if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='login';render();return}
+    if(a==='delete-open'||a==='delete-cancel'){delOpen=a==='delete-open';render();if(delOpen)$('#del-pass').focus();return}
+    if(a==='delete-confirm'){await api('/me/delete',{method:'POST',body:{password:$('#del-pass').value}});
+      me=null;delOpen=false;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='signup';render();toast('Your account was deleted.');return}
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}

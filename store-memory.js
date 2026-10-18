@@ -56,7 +56,7 @@ module.exports = {
     const now = new Date();
     const l = {
       id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null,
-      outcome: null, approvedHours: f.hours, createdAt: now, updatedAt: now, ...f,
+      outcome: null, approvedHours: f.hours, lat: null, lng: null, geoApprox: null, createdAt: now, updatedAt: now, ...f,
     };
     lines.push(l);
     return withNames(l);
@@ -77,6 +77,20 @@ module.exports = {
     if (!l || l.status !== expectStatus) return null;
     Object.assign(l, fields, { updatedAt: new Date() });
     return withNames(l);
+  },
+  async setLineGeo(id, geo) {
+    const l = lines.find((x) => x.id === id);
+    if (l) Object.assign(l, { lat: geo.lat, lng: geo.lng, geoApprox: geo.approx });
+  },
+  async openLinesMissingGeo() {
+    return lines.filter((l) => l.status === "open" && l.lat == null).map((l) => ({ id: l.id, place: l.place }));
+  },
+  // Removes personal details but keeps finished jobs and ratings intact for the other person.
+  async deleteUser(id) {
+    for (let i = lines.length - 1; i >= 0; i--) if (lines[i].ownerId === id && lines[i].status === "open") lines.splice(i, 1);
+    for (const [k, s] of sessions) if (s.userId === id) sessions.delete(k);
+    const u = users.find((x) => x.id === id);
+    if (u) Object.assign(u, { name: "Deleted user", email: `deleted-${id}@deleted.invalid`, pwHash: "", look: "", avatar: "" });
   },
   async deleteLine(id, expectStatus) {
     const i = lines.findIndex((x) => x.id === id && x.status === expectStatus);

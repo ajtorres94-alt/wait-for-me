@@ -42,6 +42,17 @@ After a job, the booker rates the waiter and the waiter rates the booker (1–5 
 
 Only the customer can see their 4-digit code. At the front of the line, the customer reads it to the waiter in person, and the waiter types it in to finish the job. Wrong codes are rejected.
 
+## Near me (waiters)
+
+When a line is posted, the server looks up map coordinates for the "Where is the line?" text using OpenStreetMap's free Nominatim service (`geocode.js`, about one lookup per second). If the full text isn't found, it falls back to the part after the first comma (usually the city) and marks the distance as approximate. Waiters' locations stay on their phones; distances are worked out on the device.
+
+## Privacy, terms, and support pages
+
+`/privacy`, `/terms`, and `/support` are served from `public/`. Set these Railway variables when ready:
+
+- `SUPPORT_EMAIL`: shown as the contact address on all three pages
+- `COMPANY_NAME`: your legal business name (defaults to "Wait For Me!")
+
 ## Not built yet
 
 - Card payments and waiter payouts (planned: Stripe Connect)

@@ -9,6 +9,7 @@ const PORT = process.env.PORT || 3000;
 const ROOT = path.join(__dirname, "public");
 const store = process.env.DATABASE_URL ? require("./store-postgres") : require("./store-memory");
 const { billing } = require("./billing");
+const { geocode } = require("./geocode");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
@@ -230,6 +231,17 @@ async function api(req, res, urlPath, query) {
   }
   if (!me) fail(401, "Sign in to continue.");
 
+  if (urlPath === "/api/me/delete" && method === "POST") {
+    limitAuth(req);
+    const b = await readBody(req);
+    if (!checkPassword(String(b.password || ""), me.pwHash)) fail(403, "That password isn't right. Try again.");
+    const busy = [...(await store.listLines({ ownerId: me.id })), ...(await store.listLines({ waiterId: me.id }))]
+      .filter((l) => !["open", "done"].includes(l.status));
+    if (busy.length) fail(409, "Finish or release your lines that are in progress before deleting your account.");
+    await store.deleteUser(me.id);
+    return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(req, "", 0) });
+  }
+
   if (urlPath === "/api/me" && method === "PATCH") {
     const b = await readBody(req);
     const fields = {};
@@ -262,6 +274,8 @@ async function api(req, res, urlPath, query) {
       notes: text(b.notes, "notes", 500, { required: false }),
       code: String(crypto.randomInt(1000, 10000)),
     });
+    // Look up map coordinates in the background so posting stays instant.
+    geocode(line.place).then((g) => g && store.setLineGeo(line.id, g)).catch(() => {});
     return send(res, 201, { line: await one(me, line) });
   }
 
@@ -354,7 +368,25 @@ async function api(req, res, urlPath, query) {
 }
 
 // ---------- static files ----------
+// Privacy, terms, and support pages. SUPPORT_EMAIL and COMPANY_NAME come from Railway variables.
+const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html" };
+function servePage(res, file) {
+  fs.readFile(path.join(ROOT, file), "utf8", (err, html) => {
+    if (err) return res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
+    const email = process.env.SUPPORT_EMAIL || "";
+    const contact = email
+      ? `<a href="mailto:${email}">${email}</a>`
+      : "our support email, which will be listed here before launch";
+    const out = html
+      .replaceAll("{{CONTACT}}", contact)
+      .replaceAll("{{COMPANY}}", process.env.COMPANY_NAME || "Wait For Me!")
+      .replaceAll("{{UPDATED}}", "October 17, 2026");
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" }).end(out);
+  });
+}
+
 function serveStatic(req, res, urlPath) {
+  if (PAGES[urlPath]) return servePage(res, PAGES[urlPath]);
   let file = path.normalize(path.join(ROOT, urlPath));
   if (!file.startsWith(ROOT)) {
     res.writeHead(403).end("Forbidden");
@@ -400,6 +432,13 @@ store
   .init()
   .then(() => {
     server.listen(PORT, () => console.log(`Wait For Me! on port ${PORT}, storage: ${store.kind}`));
+    // Fill in map coordinates for open lines posted before this feature existed.
+    store.openLinesMissingGeo().then(async (rows) => {
+      for (const r of rows) {
+        const g = await geocode(r.place);
+        if (g) await store.setLineGeo(r.id, g);
+      }
+    }).catch(() => {});
   })
   .catch((e) => {
     console.error("Could not connect to the database:", e.message);
