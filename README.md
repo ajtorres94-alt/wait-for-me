@@ -30,6 +30,14 @@ The app works right away, but without a database every redeploy wipes accounts a
 
 The app creates its own tables on first start.
 
+## How billing works
+
+The clock starts when the waiter taps **I'm in line** and stops when the swap code is entered. Time is billed in 15-minute steps, rounded up, with a 1-hour minimum, and never more than the time the booker approved. The estimate is the starting approval; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time. The logic lives in `billing.js`.
+
+## Ratings
+
+After a job, the booker rates the waiter and the waiter rates the booker (1–5 stars plus optional tags). Ratings stay private for 3 days after the job, and an average only shows once someone has 3 or more. Ratings can be left for 7 days.
+
 ## How the swap code works
 
 Only the customer can see their 4-digit code. At the front of the line, the customer reads it to the waiter in person, and the waiter types it in to finish the job. Wrong codes are rejected.
@@ -40,3 +48,7 @@ Only the customer can see their 4-digit code. At the front of the line, the cust
 - ID checks for waiters
 - Push notifications (the app refreshes while it's open)
 - Password reset
+
+## Testing
+
+`WFM_TEST_HOOKS=1` turns on a test-only endpoint for moving the clock in automated tests. Never set it on Railway.

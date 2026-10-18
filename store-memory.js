@@ -1,12 +1,13 @@
-// In-memory store. Used when no DATABASE_URL is set (local testing, or before
-// Postgres is added on Railway). Data is shared between phones but is lost
-// whenever the server restarts or redeploys.
+// In-memory store. Used when no DATABASE_URL is set (local testing).
+// Data is shared between phones but is lost whenever the server restarts.
 
 const users = [];
 const sessions = new Map(); // tokenHash -> { userId, createdAt }
 const lines = [];
+const ratings = [];
 let nextUser = 1;
 let nextLine = 1;
+let nextRating = 1;
 
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -50,7 +51,10 @@ module.exports = {
 
   async createLine(f) {
     const now = new Date();
-    const l = { id: nextLine++, waiterId: null, status: "open", pos: null, createdAt: now, updatedAt: now, ...f };
+    const l = {
+      id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null,
+      outcome: null, approvedHours: f.hours, createdAt: now, updatedAt: now, ...f,
+    };
     lines.push(l);
     return withNames(l);
   },
@@ -62,13 +66,9 @@ module.exports = {
     if (ownerId) r = r.filter((l) => l.ownerId === ownerId);
     if (waiterId) r = r.filter((l) => l.waiterId === waiterId);
     if (openExcept) r = r.filter((l) => l.status === "open" && l.ownerId !== openExcept);
-    return r
-      .slice()
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .map(withNames);
+    return r.slice().sort((a, b) => b.createdAt - a.createdAt).map(withNames);
   },
-  // Changes a line only if it is still in the expected status (prevents two
-  // waiters claiming the same line, or double swaps). Returns null otherwise.
+  // Changes a line only if it is still in the expected status. Returns null otherwise.
   async updateLine(id, expectStatus, fields) {
     const l = lines.find((x) => x.id === id);
     if (!l || l.status !== expectStatus) return null;
@@ -80,5 +80,38 @@ module.exports = {
     if (i < 0) return false;
     lines.splice(i, 1);
     return true;
+  },
+
+  // ---- ratings ----
+  async addRating(r) {
+    if (ratings.some((x) => x.lineId === r.lineId && x.raterId === r.raterId)) return null;
+    const row = { id: nextRating++, createdAt: new Date(), ...r };
+    ratings.push(row);
+    return row;
+  },
+  async ratingsByRater(raterId, lineIds) {
+    return ratings.filter((r) => r.raterId === raterId && lineIds.includes(r.lineId));
+  },
+  // Average and count of ratings that are public (job finished 3+ days ago).
+  async ratingSummaries(userIds, visibleBefore) {
+    const out = {};
+    for (const id of userIds) out[id] = { waiter: { sum: 0, count: 0 }, booker: { sum: 0, count: 0 } };
+    for (const r of ratings) {
+      if (!out[r.rateeId]) continue;
+      const l = lines.find((x) => x.id === r.lineId);
+      if (!l || !l.doneAt || l.doneAt > visibleBefore) continue;
+      const s = out[r.rateeId][r.rateeRole];
+      s.sum += r.stars;
+      s.count++;
+    }
+    return out;
+  },
+
+  // Test-only: move a line's check-in time back (used by automated tests).
+  async _shiftCheckin(id, minutes) {
+    const l = lines.find((x) => x.id === id);
+    if (l && l.checkinAt) l.checkinAt = new Date(l.checkinAt.getTime() - minutes * 60000);
+    if (l && l.doneAt) l.doneAt = new Date(l.doneAt.getTime() - minutes * 60000);
+    return !!l;
   },
 };

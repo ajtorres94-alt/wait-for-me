@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const PORT = process.env.PORT || 3000;
 const ROOT = path.join(__dirname, "public");
 const store = process.env.DATABASE_URL ? require("./store-postgres") : require("./store-memory");
+const { billing } = require("./billing");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
@@ -119,6 +120,41 @@ function lineFor(viewer, l) {
   return out;
 }
 
+// ---- ratings ----
+const RATING_DELAY_MS = 3 * 86400 * 1000; // ratings stay hidden until 3 days after the job
+const RATE_WINDOW_MS = 7 * 86400 * 1000; // you can leave a rating for 7 days after the job
+const MIN_RATINGS_SHOWN = 3; // an average only shows once someone has 3+ public ratings
+const TAGS = {
+  waiter: ["On time", "Easy to find", "Good updates", "Friendly"],
+  booker: ["On time to swap", "Easy to find", "Clear notes", "Friendly"],
+};
+function summarize(s) {
+  if (!s || s.count < MIN_RATINGS_SHOWN) return { avg: null, count: s ? s.count : 0 };
+  return { avg: Math.round((s.sum / s.count) * 10) / 10, count: s.count };
+}
+
+// Adds billing, ratings, and "can I rate this?" to lines for this viewer.
+async function decorate(viewer, list) {
+  const now = Date.now();
+  const ids = [...new Set(list.flatMap((l) => [l.ownerId, l.waiterId]).filter(Boolean))];
+  const sums = await store.ratingSummaries(ids, new Date(now - RATING_DELAY_MS));
+  const doneIds = list.filter((l) => l.status === "done").map((l) => l.id);
+  const mine = await store.ratingsByRater(viewer.id, doneIds);
+  return list.map((l) => {
+    const out = lineFor(viewer, l);
+    out.bill = billing(l, now);
+    out.ownerRating = summarize(sums[l.ownerId] && sums[l.ownerId].booker);
+    if (l.waiterId) out.waiterRating = summarize(sums[l.waiterId] && sums[l.waiterId].waiter);
+    if (l.status === "done" && (l.ownerId === viewer.id || l.waiterId === viewer.id)) {
+      const r = mine.find((x) => x.lineId === l.id);
+      out.myRating = r ? r.stars : null;
+      out.canRate = !r && !!l.doneAt && now - new Date(l.doneAt).getTime() < RATE_WINDOW_MS;
+    }
+    return out;
+  });
+}
+const one = async (viewer, l) => (await decorate(viewer, [l]))[0];
+
 const text = (v, field, max, { required = true } = {}) => {
   const s = typeof v === "string" ? v.trim() : "";
   if (required && !s) fail(400, `Add ${field}.`);
@@ -185,7 +221,12 @@ async function api(req, res, urlPath, query) {
 
   // Everything below needs a signed-in user.
   const me = await currentUser(req);
-  if (urlPath === "/api/me" && method === "GET") return send(res, 200, { user: publicUser(me) });
+  if (urlPath === "/api/me" && method === "GET") {
+    if (!me) return send(res, 200, { user: null });
+    const sums = await store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS));
+    const ratings = { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) };
+    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS });
+  }
   if (!me) fail(401, "Sign in to continue.");
 
   if (urlPath === "/api/me" && method === "PATCH") {
@@ -199,7 +240,7 @@ async function api(req, res, urlPath, query) {
     const filter =
       scope === "mine" ? { ownerId: me.id } : scope === "shifts" ? { waiterId: me.id } : { openExcept: me.id };
     const list = await store.listLines(filter);
-    return send(res, 200, { lines: list.map((l) => lineFor(me, l)) });
+    return send(res, 200, { lines: await decorate(me, list), now: Date.now() });
   }
 
   if (urlPath === "/api/lines" && method === "POST") {
@@ -215,10 +256,10 @@ async function api(req, res, urlPath, query) {
       notes: text(b.notes, "notes", 500, { required: false }),
       code: String(crypto.randomInt(1000, 10000)),
     });
-    return send(res, 201, { line: lineFor(me, line) });
+    return send(res, 201, { line: await one(me, line) });
   }
 
-  const m = urlPath.match(/^\/api\/lines\/(\d+)\/(cancel|claim|advance|position|release|swap)$/);
+  const m = urlPath.match(/^\/api\/lines\/(\d+)\/(cancel|claim|advance|position|release|swap|extend|leave|rate)$/);
   if (m && method === "POST") {
     const id = Number(m[1]);
     const action = m[2];
@@ -238,7 +279,33 @@ async function api(req, res, urlPath, query) {
       if (l.ownerId === me.id) fail(400, "You can't claim your own line.");
       updated = await store.updateLine(id, "open", { status: "claimed", waiterId: me.id });
       if (!updated) fail(409, "Someone else just claimed this line.");
-      return send(res, 200, { line: lineFor(me, updated) });
+      return send(res, 200, { line: await one(me, updated) });
+    }
+
+    if (action === "extend") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can add time.");
+      if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "Time can only be added while a waiter is on this line.");
+      const approved = Number(l.approvedHours ?? l.hours);
+      if (approved + 0.5 > 24) fail(400, "A line can't go past 24 hours.");
+      updated = await store.updateLine(id, l.status, { approvedHours: approved + 0.5 });
+      if (!updated) fail(409, "This line changed. Refresh and try again.");
+      return send(res, 200, { line: await one(me, updated) });
+    }
+
+    if (action === "rate") {
+      if (l.ownerId !== me.id && l.waiterId !== me.id) fail(403, "Only people on this job can rate it.");
+      if (l.status !== "done" || !l.doneAt) fail(409, "You can rate once the job is finished.");
+      if (Date.now() - new Date(l.doneAt).getTime() > RATE_WINDOW_MS) fail(409, "Ratings close 7 days after a job.");
+      const stars = Number(b.stars);
+      if (!Number.isInteger(stars) || stars < 1 || stars > 5) fail(400, "Pick 1 to 5 stars.");
+      const rateeRole = l.ownerId === me.id ? "waiter" : "booker";
+      const tags = (Array.isArray(b.tags) ? b.tags : []).filter((t) => TAGS[rateeRole].includes(t)).slice(0, 4);
+      const added = await store.addRating({
+        lineId: id, raterId: me.id, rateeId: rateeRole === "waiter" ? l.waiterId : l.ownerId,
+        rateeRole, stars, tags: tags.join(","),
+      });
+      if (!added) fail(409, "You already rated this job.");
+      return send(res, 200, { line: await one(me, l) });
     }
 
     // The rest are waiter actions on their own claimed line.
@@ -249,6 +316,7 @@ async function api(req, res, urlPath, query) {
       const next = STAGES[STAGES.indexOf(l.status) + 1];
       const fields = { status: next };
       if (next === "handoff") fields.pos = 1;
+      if (next === "inline") fields.checkinAt = new Date();
       updated = await store.updateLine(id, l.status, fields);
     } else if (action === "position") {
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the line before updating your place.");
@@ -260,10 +328,20 @@ async function api(req, res, urlPath, query) {
     } else if (action === "swap") {
       if (l.status !== "handoff") fail(409, "Mark that you're at the front before completing the swap.");
       if (String(b.code || "").trim() !== l.code) fail(400, "That code doesn't match. Check it with the customer and try again.");
-      updated = await store.updateLine(id, "handoff", { status: "done" });
+      updated = await store.updateLine(id, "handoff", { status: "done", doneAt: new Date(), outcome: "swapped" });
+    } else if (action === "leave") {
+      if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a shift while you're in line.");
+      if (!billing(l).timeUp) fail(409, "You can end the shift once the approved time runs out. Ask your customer to add time if the line is still moving.");
+      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "time_up" });
     }
     if (!updated) fail(409, "This line changed. Refresh and try again.");
-    return send(res, 200, { line: lineFor(me, updated) });
+    return send(res, 200, { line: await one(me, updated) });
+  }
+
+  // Test-only hook for automated tests (never enabled in production).
+  if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/shift" && method === "POST" && store._shiftCheckin) {
+    const b = await readBody(req);
+    return send(res, 200, { ok: await store._shiftCheckin(Number(b.id), Number(b.minutes)) });
   }
 
   fail(404, "Not found.");

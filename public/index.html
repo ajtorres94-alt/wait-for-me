@@ -200,6 +200,22 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .mini-btns{display:flex;flex-direction:column;gap:8px}
 .toggle{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .toggle input{width:48px;height:28px;accent-color:var(--ink)}
+.meter{background:var(--bg);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.meter-top,.meter-bot{display:flex;align-items:baseline;gap:8px;font-size:13px;color:var(--muted)}
+.meter-top b{font-size:22px;color:var(--ink);font-variant-numeric:tabular-nums}
+.meter-top span:last-child,.meter-bot b{margin-left:auto}
+.meter-bot b{color:var(--ink);font-size:15px}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ticket);border-radius:4px;transition:width .4s}
+.bar.warn i{background:var(--warn)}
+.warnnote{font-size:13px;font-weight:600;color:var(--warn);background:var(--warn-bg);border-radius:10px;padding:10px 12px}
+.receipt{display:grid;gap:4px;font-size:14px;background:var(--bg);border-radius:10px;padding:12px 14px}
+.receipt div{display:flex;justify-content:space-between;gap:12px}
+.receipt .total{font-weight:800;border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
+.rate{display:flex;flex-direction:column;gap:10px;border-top:1px dashed var(--line);padding-top:12px}
+.stars{display:flex;gap:4px}
+.stars button{border:0;background:none;font-size:32px;line-height:1;padding:2px 4px;color:var(--line);min-width:44px;min-height:44px}
+.stars button.on{color:var(--ticket);text-shadow:0 0 1px var(--ticket-ink)}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
 </style>
 <header class="appbar"><div class="appbar-in gutter">
@@ -257,8 +273,38 @@ function pillFor(s){
   return`<span class="pill active">${STAGES[idx(s)].short}</span>`}
 function steps(s){const i=idx(s);return`<ol class="steps" aria-label="Progress: ${STAGES[i].label}">${STAGES.slice(1).map((st,j)=>`<li class="${j+1<=i?'on':''}" title="${st.short}"></li>`).join('')}</ol>`}
 function facts(j,mode){
-  const pay=j.hours*j.rate,total=mode==='customer'?pay*(1+FEE):pay;
-  return`<div class="facts"><div><span>Starts</span><b>${esc(j.startText)}</b></div><div><span>Est. wait</span><b>${fmtShort(j.hours)}</b></div><div><span>${mode==='customer'?'You pay':'You earn'}</span><b>${money(total)}</b></div></div>`}
+  const b=billOf(j),done=j.status==='done';
+  const third=mode==='customer'?(done?['Paid',money(b.total)]:['Up to',money(b.approved*j.rate*(1+FEE))]):(done?['Earned',money(b.pay)]:['Up to',money(b.approved*j.rate)]);
+  return`<div class="facts"><div><span>Starts</span><b>${esc(j.startText)}</b></div><div><span>${done?'Billed':'Approved'}</span><b>${fmtShort(done?b.billed:b.approved)}</b></div><div><span>${third[0]}</span><b>${third[1]}</b></div></div>`}
+// Mirrors the server's billing so the clock and cost tick between refreshes.
+let clockSkew=0;
+const nowS=()=>Date.now()+clockSkew;
+function billOf(j){
+  const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
+  const w=ci?Math.max(0,((j.doneAt?Date.parse(j.doneAt):nowS())-ci)/3600e3):0;
+  let billed=j.outcome==='time_up'?approved:Math.min(approved,Math.max(1,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
+  const pay=Math.round(billed*j.rate*100)/100,fee=Math.round(pay*FEE*100)/100;
+  return{approved,waited:w,billed,pay,fee,total:Math.round((pay+fee)*100)/100,timeUp:!!ci&&w>=approved,nearUp:!!ci&&w>=approved-0.25}}
+const clockTxt=h=>{const m=Math.floor(h*60);return`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`};
+function meterInner(j,mode){
+  const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
+  return`<div class="meter-top"><span>Time in line</span><b class="mono">${clockTxt(b.waited)}</b><span>of ${fmtShort(b.approved)} approved</span></div>
+   <div class="bar${b.nearUp?' warn':''}"><i style="width:${pct}%"></i></div>
+   <div class="meter-bot"><span>${mode==='customer'?'Cost so far (1 hr minimum)':'Earned so far (1 hr minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
+const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
+setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
+let myRatings=null,TAGS={waiter:[],booker:[]};
+const ratingTxt=r=>r&&r.avg!=null?`★ ${r.avg.toFixed(1)} · ${r.count} ratings`:'New · fewer than 3 ratings';
+const rateDraft={};
+function rateHTML(j,name,kind){
+  if(j.myRating)return`<div class="meta">You rated ${esc(name)} ${'★'.repeat(j.myRating)}${'☆'.repeat(5-j.myRating)}. It shows on their profile 3 days after the job.</div>`;
+  if(!j.canRate)return'';
+  const d=rateDraft[j.id]||{stars:0,tags:[]};
+  return`<div class="rate"><b>Rate ${esc(name)}</b>
+   <div class="stars" role="radiogroup" aria-label="Stars for ${esc(name)}">${[1,2,3,4,5].map(n=>`<button type="button" role="radio" aria-checked="${d.stars===n}" aria-label="${n} star${n>1?'s':''}" data-star="${n}" data-id="${j.id}" class="${n<=d.stars?'on':''}">★</button>`).join('')}</div>
+   <div class="filters">${(TAGS[kind]||[]).map(t=>`<button type="button" class="chip" aria-pressed="${d.tags.includes(t)}" data-tag="${esc(t)}" data-id="${j.id}">${esc(t)}</button>`).join('')}</div>
+   <button class="btn small" data-act="rate" data-id="${j.id}"${d.stars?'':' disabled'}>Submit rating</button>
+   <div class="hint">Ratings stay private for 3 days, then count toward their profile.</div></div>`}
 function whoCard(name,sub,look){
   return`<div class="who"><div class="avatar" aria-hidden="true">${esc(initials(name))}</div><div><b>${esc(name)}</b><div class="meta">${esc(sub)}</div>
     ${look!==undefined?`<div class="look">${look?`Look for: <b>${esc(look)}</b>`:'They haven\'t said what they\'re wearing yet.'}</div>`:''}</div></div>`}
@@ -299,16 +345,21 @@ function customerMine(){
   const mine=data.mine.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
   if(!mine.length)return`<div class="empty">No lines yet. Tap <b>Post</b> to have someone hold your spot.</div>`;
   return`<div class="list">${mine.map(j=>{
-    const i=idx(j.status);let ticket='',actions='';
+    const i=idx(j.status),b=billOf(j),active=j.waiterId&&j.status!=='done';let ticket='',actions='',extra='';
     if(j.status==='inline'||j.status==='nearfront')ticket=`<div class="ticket"><div><div class="lbl">Place</div><div class="num">${j.pos??'—'}</div></div><div class="sep"></div><div class="txt">${esc(j.waiterName)} is holding your spot. ${j.status==='nearfront'?'Head over now.':'You\'ll see it here when they\'re close.'}</div></div>`;
     if(j.status==='handoff')ticket=`<div class="ticket"><div><div class="lbl">Swap code</div><div class="num">${esc(j.code)}</div></div><div class="sep"></div><div class="txt">${esc(j.waiterName)} is at the front. Find them and read out this code. They enter it to hand over your spot.</div></div>`;
-    else if(j.waiterId&&j.status!=='done')ticket+=`<div class="hint">Your swap code is <b class="mono">${esc(j.code)}</b>. Only share it in person when you take over the spot.</div>`;
+    else if(active)ticket+=`<div class="hint">Your swap code is <b class="mono">${esc(j.code)}</b>. Only share it in person when you take over the spot.</div>`;
+    if(active&&!j.checkinAt)extra=`<div class="hint">The clock starts when ${esc(j.waiterName)} checks in at the line. You only pay for time they actually spend in line.</div>`;
+    if(active&&b.nearUp)extra+=`<div class="warnnote">${b.timeUp?'Your approved time is up.':'Your approved time is almost up.'} Add time, or ${esc(j.waiterName)} can end the shift when it runs out.</div>`;
     if(j.status==='open')actions=`<button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
-    if(j.status==='done')actions=`<span class="meta">Completed with ${esc(j.waiterName)} · ${money(j.hours*j.rate*(1+FEE))}</span>`;
+    if(active)actions=`<button class="btn ${b.nearUp?'':'ghost '}small" data-act="extend" data-id="${j.id}">Add 30 min (up to +${money(0.5*j.rate*(1+FEE))})</button>`;
+    if(j.status==='done'){
+      extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed (15-min steps, 1 hr min)</span><span class="mono">${fmtShort(b.billed)}</span></div><div><span>Waiter pay</span><span class="mono">${money(b.pay)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(b.fee)}</span></div><div class="total"><span>Total</span><span class="mono">${money(b.total)}</span></div></div>
+       ${j.outcome==='time_up'?`<div class="hint">Your approved time ran out, so ${esc(j.waiterName)} ended the shift.</div>`:''}${rateHTML(j,j.waiterName,'waiter')}`}
     return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
       ${j.status!=='open'?steps(j.status):''}
       <div class="stepnote"><span><b>${STAGES[i].label}</b></span><span>${j.waiterId?'Your waiter':'Visible to waiters now'}</span></div>
-      ${j.waiterId&&j.status!=='done'?whoCard(j.waiterName,'Your waiter',j.waiterLook||''):''}${ticket}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
+      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||''):''}${ticket}${meterHTML(j,'customer')}${extra}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
 
 function customerPost(){
   return`<form class="post" id="postForm" novalidate>
@@ -356,38 +407,45 @@ function waiterFind(){
   const cats=['All','Food','Releases','Errands','Events'];
   const open=data.open.filter(j=>filter==='All'||j.cat===filter);
   return`<div class="list"><div class="filters" role="group" aria-label="Filter by type">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
-   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)}</div></div><span class="pill open">${money(j.rate)}/hr</span></div>
+   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)} (${ratingTxt(j.ownerRating)})</div></div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}
+     <div class="hint">Paid for time in line from check-in to swap, 1 hour minimum.</div>
      <button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></article>`).join(''):`<div class="empty">No open lines${filter==='All'?'':' in this category'} right now. New ones show up here automatically.</div>`}</div>`}
 
 function waiterShifts(){
   const mine=data.shifts.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
-  const pending=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+j.hours*j.rate,0);
-  const earned=mine.filter(j=>j.status==='done').reduce((s,j)=>s+j.hours*j.rate,0);
+  const earned=mine.filter(j=>j.status==='done').reduce((s,j)=>s+billOf(j).pay,0);
+  const upTo=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+billOf(j).approved*j.rate,0);
   const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the front',handoff:'I\'m at the front'};
-  return`<div class="list"><div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">${money(pending)} on active shifts</div></div>
+  return`<div class="list"><div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upTo)} on active shifts</div></div>
    ${mine.length?mine.map(j=>{
-     const i=idx(j.status),next=STAGES[i+1];let ctl='';
+     const i=idx(j.status),next=STAGES[i+1],b=billOf(j);let ctl='',extra='';
      if(next&&verbs[next.k])ctl+=`<button class="btn small" data-act="advance" data-id="${j.id}">${verbs[next.k]}</button>`;
      if(j.status==='claimed'||j.status==='enroute')ctl+=`<button class="btn ghost small" data-act="release" data-id="${j.id}">Release line</button>`;
+     if(j.status==='enroute')extra=`<div class="hint">Tap <b>I'm in line</b> when you join it. That starts the clock you're paid on.</div>`;
      if(j.status==='inline'||j.status==='nearfront')ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span>`;
      if(j.status==='handoff')ctl+=`<div class="codebox" style="width:100%"><label class="meta" for="code-${j.id}" style="width:100%">Ask ${esc(j.ownerName)} for their 4-digit swap code, then enter it to hand over the spot.</label><input id="code-${j.id}" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off"><button class="btn small" data-act="swap" data-id="${j.id}">Complete swap</button></div>`;
-     if(j.status==='done')ctl=`<span class="meta">Earned ${money(j.hours*j.rate)}</span>`;
+     if(j.status!=='done'&&b.timeUp)extra+=`<div class="warnnote">The approved time is up. If ${esc(j.ownerName)} doesn't add time, you can end the shift and be paid for the full ${fmtShort(b.approved)}.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (time's up)</button>`;
+     else if(j.status!=='done'&&b.nearUp)extra+=`<div class="warnnote">Approved time is almost up. Ask ${esc(j.ownerName)} to add time if the line is still moving.</div>`;
+     if(j.status==='done'){ctl='';extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed (15-min steps, 1 hr min)</span><span class="mono">${fmtShort(b.billed)}</span></div><div class="total"><span>You earned</span><span class="mono">${money(b.pay)}</span></div></div>${rateHTML(j,j.ownerName,'booker')}`}
      const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">What you're wearing, so ${esc(j.ownerName)} can spot you. Pick something easy to see.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
      return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
-       ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
-       ${j.status!=='done'?whoCard(j.ownerName,'Your customer'):''}${outfit}
-       ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}<div class="btns">${ctl}</div></article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
+       ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos&&j.status!=='done'?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
+       ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating)):''}${meterHTML(j,'waiter')}${outfit}
+       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${extra}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
 
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
   return`<div class="list">
-  <article class="card">${whoCard(me.name,me.email)}</article>
+  <article class="card">${whoCard(me.name,me.email)}
+    <div class="kv"><div>As a waiter</div><b>${myRatings?ratingTxt(myRatings.waiter):'—'}</b></div>
+    <div class="kv"><div>As a booker</div><b>${myRatings?ratingTxt(myRatings.booker):'—'}</b></div>
+    <div class="hint">Ratings count 3 days after each job, and your average shows once you have 3.</div></article>
   <article class="card section"><h2>What you wear when waiting</h2>
     <div class="codebox"><label class="meta" for="acct-look" style="width:100%">Customers see this so they can find you in line.</label><input id="acct-look" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit">Save</button></div></article>
   <article class="card section"><h2>Payments</h2>
-    <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other. Prices shown include the 15% service fee you'll charge once payments are live.</div></article>
-  ${done.length?`<article class="card section"><h2>Completed lines</h2>${done.map(j=>{const b=j.hours*j.rate;return`<div class="kv"><div>${esc(j.place)}<small>Waiter ${money(b)} + service fee ${money(b*FEE)}</small></div><b class="mono">${money(b*(1+FEE))}</b></div>`}).join('')}</article>`:''}
+    <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other using the totals shown on each finished line.</div></article>
+  ${done.length?`<article class="card section"><h2>Completed lines</h2>${done.map(j=>{const b=billOf(j);return`<div class="kv"><div>${esc(j.place)}<small>${fmtShort(b.billed)} billed · waiter ${money(b.pay)} + fee ${money(b.fee)}</small></div><b class="mono">${money(b.total)}</b></div>`}).join('')}</article>`:''}
   <article class="card section"><h2>How it works</h2>
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
   <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
@@ -397,7 +455,7 @@ function account(){
 const T_TICKET=(lbl,num,txt)=>`<div class="ticket"><div><div class="lbl">${lbl}</div><div class="num">${num}</div></div><div class="sep"></div><div class="txt">${txt}</div></div>`;
 const TUTORIALS={
  customer:{kicker:'Booking a waiter',done:'Start booking',steps:[
-  {title:'Post your line',body:'Tell us where the line is, when to arrive, how long you expect to wait, and what you\'ll pay per hour. You see the full price, including the 15% service fee, before you post.',
+  {title:'Post your line',body:'Tell us where the line is, when to arrive, how long you expect to wait, and what you\'ll pay per hour. You see the most it can cost before you post, and you only pay for the time your waiter actually spends in line.',
    art:()=>`<div class="card"><div class="quote" style="background:none;padding:0"><div><span>Waiter pay (3 hr × $22.00/hr)</span><span class="mono">$66</span></div><div><span>Service fee (15%)</span><span class="mono">$9.90</span></div><div class="total"><span>Estimated total</span><span class="mono">$75.90</span></div></div></div>`},
   {title:'A waiter claims it',body:'You\'ll see who\'s holding your spot and what they\'re wearing, so you can find them in the crowd.',
    art:()=>`<div class="card">${whoCard('Marisol T','Your waiter','Red cap, gray hoodie')}</div>`},
@@ -410,7 +468,7 @@ const TUTORIALS={
    art:()=>`<div class="card"><div class="row"><div><h3>Croissant bakery, Pasadena</h3><div class="meta">Weekend pastry drop</div></div><span class="pill open">$18.00/hr</span></div><div class="facts"><div><span>Starts</span><b>Sun 6:00 AM</b></div><div><span>Est. wait</span><b>2h 30m</b></div><div><span>You earn</span><b>$45</b></div></div><span class="btn small" style="text-align:center">Claim this line</span></div>`},
   {title:'Say what you\'re wearing',body:'Pick something easy to spot, like a bright cap or jacket. Your customer sees it so they can find you.',
    art:()=>`<div class="card">${whoCard(me?me.name:'You','Your waiter','Orange beanie, black jacket')}</div>`},
-  {title:'Keep them posted',body:'Tap On my way, In line, and Near the front as you go, and update your place in line when it moves.',
+  {title:'Keep them posted',body:'Tap On my way, In line, and Near the front as you go. Your paid time starts when you tap In line.',
    art:()=>`<div class="card">${steps('nearfront')}<div class="btns"><span class="btn small">I'm at the front</span><span class="pos"><span class="meta">Place in line</span><span class="mono" style="font-weight:700;font-size:18px">3</span></span></div></div>`},
   {title:'Finish with the code',body:'At the front, ask your customer for their 4-digit swap code and enter it. That completes the job and records your earnings. If the code doesn\'t match, don\'t give up the spot.',
    art:()=>`<div class="card"><div class="codebox"><span class="mono" style="letter-spacing:.3em;font-size:20px;font-weight:700;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">4827</span><span class="btn small">Complete swap</span></div><div class="meta">Swap complete. You earned $66.</div></div>`}]}
@@ -496,6 +554,10 @@ function render(){
 
 // ---------- actions ----------
 $('#view').addEventListener('click',async e=>{
+  const st=e.target.closest('[data-star]'),tg=e.target.closest('[data-tag]');
+  if(st||tg){const id=+(st||tg).dataset.id,d=rateDraft[id]=rateDraft[id]||{stars:0,tags:[]};
+    if(st)d.stars=+st.dataset.star;else{const t=tg.dataset.tag;d.tags=d.tags.includes(t)?d.tags.filter(x=>x!==t):[...d.tags,t]}
+    render();return}
   const b=e.target.closest('[data-act]');if(!b||b.disabled)return;
   const a=b.dataset.act,id=b.dataset.id;b.disabled=true;
   try{
@@ -507,7 +569,10 @@ $('#view').addEventListener('click',async e=>{
     if(a==='advance'){const r=await api(`/lines/${id}/advance`,{method:'POST'});toast(`${r.line.ownerName} can see you're ${STAGES[idx(r.line.status)].short.toLowerCase()}.`)}
     if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});toast('Line released. Other waiters can claim it now.')}
     if(a==='position'){const r=await api(`/lines/${id}/position`,{method:'POST',body:{pos:+document.getElementById('pos-'+id).value}});toast(`Place in line updated to ${r.line.pos}.`)}
-    if(a==='swap'){const r=await api(`/lines/${id}/swap`,{method:'POST',body:{code:document.getElementById('code-'+id).value}});toast(`Swap complete. You earned ${money(r.line.hours*r.line.rate)}.`)}
+    if(a==='swap'){const r=await api(`/lines/${id}/swap`,{method:'POST',body:{code:document.getElementById('code-'+id).value}});toast(`Swap complete. You earned ${money(r.line.bill.waiterPay)}.`)}
+    if(a==='extend'){const r=await api(`/lines/${id}/extend`,{method:'POST'});toast(`Added 30 minutes. ${fmtShort(r.line.bill.approvedHours)} approved in total.`)}
+    if(a==='leave'){const r=await api(`/lines/${id}/leave`,{method:'POST'});toast(`Shift ended. You earned ${money(r.line.bill.waiterPay)}.`)}
+    if(a==='rate'){const d=rateDraft[id];await api(`/lines/${id}/rate`,{method:'POST',body:{stars:d.stars,tags:d.tags}});delete rateDraft[id];toast('Thanks. Your rating counts in 3 days.')}
     await load(true);
   }catch(err){toast(err.message);b.disabled=false}
 });
@@ -515,8 +580,13 @@ $('#view').addEventListener('click',async e=>{
 // ---------- data ----------
 async function load(force){
   if(!me)return;
-  const [mine,open,shifts]=await Promise.all(['mine','open','shifts'].map(s=>api('/lines?scope='+s).then(r=>r.lines)));
-  const json=JSON.stringify([mine,open,shifts]);
+  const t0=Date.now();
+  const [m1,o1,s1,info]=await Promise.all([...['mine','open','shifts'].map(s=>api('/lines?scope='+s)),api('/me')]);
+  clockSkew=m1.now-Math.round((t0+Date.now())/2);
+  const mine=m1.lines,open=o1.lines,shifts=s1.lines;
+  if(info.user){me=info.user;myRatings=info.ratings;TAGS=info.tags||TAGS}
+  // The clock fields change every refresh; leave them out when deciding whether to redraw.
+  const json=JSON.stringify([mine,open,shifts,myRatings],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
   if(!force&&json===lastJSON)return;
   // Don't redraw while someone is typing in the page; the next check picks it up.
   const typing=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#view')&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
