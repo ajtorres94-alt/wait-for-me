@@ -160,19 +160,28 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 </head>
 <body>
 
+<style>
+.auth{display:flex;flex-direction:column;gap:16px}
+.auth .pitch{font-size:16px;color:var(--muted);max-width:40ch}
+.auth .ticket{align-self:flex-start}
+.switch{background:none;border:0;color:var(--info);font-weight:700;padding:6px 0;text-align:left}
+.loading{color:var(--muted);text-align:center;padding:40px 0}
+.btn.block{width:100%}
+.btn[disabled]{opacity:.55}
+.note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
+</style>
 <header class="appbar"><div class="appbar-in gutter">
   <div class="logo"><span class="stub">No.1</span><h1>Wait For Me!</h1></div>
-  <div class="roles" role="group" aria-label="Choose a side">
+  <div class="roles" role="group" aria-label="Choose a side" id="roles" hidden>
     <button id="role-customer" aria-pressed="true" data-role="customer">Book</button>
     <button id="role-waiter" aria-pressed="false" data-role="waiter">Earn</button>
   </div>
 </div></header>
 <main class="app gutter">
   <h2 class="screen-title" id="screenTitle"></h2>
-  <div id="view"></div>
-  <p class="sample">Prototype with sample data. Nothing here is saved or charged.</p>
+  <div id="view"><div class="loading">Loading…</div></div>
 </main>
-<nav class="tabbar" aria-label="Sections"><div class="tabbar-in gutter" role="tablist" id="tabs"></div></nav>
+<nav class="tabbar" aria-label="Sections" id="tabbar" hidden><div class="tabbar-in gutter" role="tablist" id="tabs"></div></nav>
 <div class="toast" id="toast" role="status" hidden></div>
 
 <script>
@@ -183,37 +192,30 @@ const STAGES=[
  {k:'inline',label:'Holding your spot',short:'In line'},
  {k:'nearfront',label:'Almost at the front',short:'Near front'},
  {k:'handoff',label:'Ready for the swap',short:'Swap'},
- {k:'done',label:'Done and paid',short:'Done'}];
+ {k:'done',label:'Done',short:'Done'}];
 const idx=k=>STAGES.findIndex(s=>s.k===k);
 const FEE=0.15;
-const money=n=>'$'+n.toFixed(2).replace(/\.00$/,'');
-
-let jobs=[
- {id:1,owner:'me',place:'DMV office, Riverside',what:'Real ID appointment walk-in',start:'Today 7:40 AM',hours:3,rate:22,status:'inline',waiter:'Marisol T.',pos:14,cat:'Errands',dist:'—',notes:'I\'ll come by at 10:30. Text me when you\'re about 10 people out.'},
- {id:2,owner:'me',place:'Kogi-style ramen pop-up, Silver Lake',what:'Dinner for 4',start:'Sat 4:30 PM',hours:2,rate:20,status:'open',waiter:null,pos:null,cat:'Food',dist:'—',notes:'Doors open at 6. Put my name down for a party of 4.'},
- {id:3,owner:'Jordan P.',place:'Croissant bakery, Pasadena',what:'Weekend pastry drop',start:'Sun 6:00 AM',hours:2.5,rate:18,status:'enroute',waiter:'me',pos:null,cat:'Food',dist:'3.1 mi',notes:'Buy 6 almond croissants, I\'ll Venmo back.'},
- {id:4,owner:'Priya K.',place:'Sneaker release, Downtown LA',what:'Limited release, size 10',start:'Sat 5:00 AM',hours:5,rate:25,status:'open',waiter:null,pos:null,cat:'Releases',dist:'6.4 mi',notes:'Line forms overnight. Bring a chair.'},
- {id:5,owner:'Dev S.',place:'Passport agency, Westwood',what:'Urgent passport pickup',start:'Mon 7:00 AM',hours:3,rate:24,status:'open',waiter:null,pos:null,cat:'Errands',dist:'11.2 mi',notes:'I need to be there for the window. Hold my spot until 9.'},
- {id:6,owner:'Ana R.',place:'Outlet mall, Ontario',what:'Black Friday doorbuster TV',start:'Fri 3:00 AM',hours:4,rate:22,status:'open',waiter:null,pos:null,cat:'Releases',dist:'18.0 mi',notes:'Swap 30 min before doors open.'},
- {id:7,owner:'Chris L.',place:'Theme park ride reopening, Anaheim',what:'Rope drop for new ride',start:'Sat 7:00 AM',hours:2,rate:20,status:'open',waiter:null,pos:null,cat:'Events',dist:'24.5 mi',notes:'You\'ll need a park ticket, I\'ll cover it.'}
-];
-const PEOPLE={
- 'Marisol T.':{ini:'MT',rating:4.9,waits:212,look:'Red baseball cap, gray hoodie'},
- 'me':{ini:'AN',rating:4.8,waits:37,look:'Black jacket, orange beanie'},
- 'Jordan P.':{ini:'JP',rating:4.7,waits:9},'Priya K.':{ini:'PK',rating:5.0,waits:3},'Dev S.':{ini:'DS',rating:4.6,waits:12},'Ana R.':{ini:'AR',rating:4.9,waits:6},'Chris L.':{ini:'CL',rating:4.8,waits:4}};
-jobs[0].code='4827';jobs[1].code='6153';jobs[2].code='2290';
-const newCode=()=>String(1000+Math.floor(Math.random()*9000));
-function whoCard(name,kind){
-  const p=PEOPLE[name]||{ini:name.slice(0,2).toUpperCase(),rating:5,waits:0};
-  const label=name==='me'?'You':name;
-  return`<div class="who"><div class="avatar" aria-hidden="true">${p.ini}</div><div><b>${esc(label)}</b><span class="verified">✓ ID verified</span>
-    <div class="meta">★ ${p.rating.toFixed(1)} · ${p.waits} ${kind==='waiter'?'waits completed':'lines posted'}</div>
-    ${kind==='waiter'&&p.look?`<div class="look">Look for: <b>${esc(p.look)}</b></div>`:''}</div></div>`}
-let nextId=8, role='customer', tab={customer:'mine',waiter:'find'}, filter='All', paidOut=86;
-
+const money=n=>'$'+(Math.round(n*100)/100).toFixed(2).replace(/\.00$/,'');
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2600)}
+const initials=n=>String(n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase();
+function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3000)}
+const store={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
+
+let me=null, role=store.get('wfm_role')==='waiter'?'waiter':'customer', tab={customer:'mine',waiter:'find'}, filter='All', authMode='signup';
+let data={mine:[],open:[],shifts:[]}, lastJSON='';
+
+async function api(path,{method='GET',body}={}){
+  let r;
+  try{r=await fetch('/api'+path,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,credentials:'same-origin'})}
+  catch{throw new Error('You seem to be offline. Check your connection and try again.')}
+  let j={};try{j=await r.json()}catch{}
+  if(r.status===401&&path!=='/login'){me=null;render()}
+  if(!r.ok)throw new Error(j.error||'Something went wrong. Try again.');
+  return j;
+}
+
+// ---------- shared bits ----------
 function pillFor(s){
   if(s==='open')return'<span class="pill open">Open</span>';
   if(s==='handoff')return'<span class="pill ready">Ready for swap</span>';
@@ -221,13 +223,13 @@ function pillFor(s){
   return`<span class="pill active">${STAGES[idx(s)].short}</span>`}
 function steps(s){const i=idx(s);return`<ol class="steps" aria-label="Progress: ${STAGES[i].label}">${STAGES.slice(1).map((st,j)=>`<li class="${j+1<=i?'on':''}" title="${st.short}"></li>`).join('')}</ol>`}
 function facts(j,mode){
-  const pay=j.hours*j.rate;
-  const total=mode==='customer'?pay*(1+FEE):pay;
-  return`<div class="facts"><div><span>Starts</span><b>${esc(j.start)}</b></div><div><span>Est. wait</span><b>${j.hours} hr</b></div><div><span>${mode==='customer'?'You pay':'You earn'}</span><b>${money(total)}</b></div></div>`}
+  const pay=j.hours*j.rate,total=mode==='customer'?pay*(1+FEE):pay;
+  return`<div class="facts"><div><span>Starts</span><b>${esc(j.startText)}</b></div><div><span>Est. wait</span><b>${j.hours} hr</b></div><div><span>${mode==='customer'?'You pay':'You earn'}</span><b>${money(total)}</b></div></div>`}
+function whoCard(name,sub,look){
+  return`<div class="who"><div class="avatar" aria-hidden="true">${esc(initials(name))}</div><div><b>${esc(name)}</b><div class="meta">${esc(sub)}</div>
+    ${look!==undefined?`<div class="look">${look?`Look for: <b>${esc(look)}</b>`:'They haven\'t said what they\'re wearing yet.'}</div>`:''}</div></div>`}
 
-function setRole(r){if(r===role)return;role=r;document.querySelectorAll('.roles button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.role===r));render();window.scrollTo(0,0)}
-document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
-
+// ---------- tabs ----------
 const svg=p=>`<svg viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`;
 const ICONS={
  mine:svg('<path d="M4 6h16v4a2 2 0 0 0 0 4v4H4v-4a2 2 0 0 0 0-4z"/><path d="M14.5 7v2M14.5 11v2M14.5 15v2"/>'),
@@ -237,140 +239,161 @@ const ICONS={
  shifts:svg('<circle cx="12" cy="12" r="8"/><path d="M12 8v4.2l2.8 1.8"/>')};
 const TITLES={mine:'My lines',post:'Post a line',account:'Account',find:'Find lines',shifts:'My shifts'};
 function renderTabs(){
-  const mine=jobs.filter(j=>j.owner==='me'&&j.status!=='done').length;
-  const open=jobs.filter(j=>j.status==='open'&&j.owner!=='me').length;
-  const shifts=jobs.filter(j=>j.waiter==='me'&&j.status!=='done').length;
-  const t=role==='customer'?[['mine','My lines',mine],['post','Post',null],['account','Account',null]]:[['find','Find lines',open],['shifts','My shifts',shifts],['account','Account',null]];
+  const mine=data.mine.filter(j=>j.status!=='done').length, open=data.open.length, shifts=data.shifts.filter(j=>j.status!=='done').length;
+  const t=role==='customer'?[['mine','My lines',mine],['post','Post',0],['account','Account',0]]:[['find','Find lines',open],['shifts','My shifts',shifts],['account','Account',0]];
   $('#tabs').innerHTML=t.map(([k,l,c])=>`<button role="tab" id="tab-${k}" class="${k==='post'?'plus':''}" aria-selected="${tab[role]===k}" data-k="${k}"><span class="ic">${ICONS[k]}${c?`<span class="badge">${c}</span>`:''}</span>${l}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
 }
+function setRole(r){if(r===role)return;role=r;store.set('wfm_role',r);render();window.scrollTo(0,0)}
+document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
+
+// ---------- screens ----------
+function authScreen(){
+  const up=authMode==='signup';
+  return`<div class="auth">
+   <div class="ticket"><div><div class="lbl">Now serving</div><div class="num">You</div></div><div class="sep"></div><div class="txt">Book someone to hold your spot in line, or get paid to wait.</div></div>
+   <form class="post" id="authForm" novalidate>
+    ${up?`<div class="field"><label for="a-name">Your name</label><input id="a-name" autocomplete="name" placeholder="First name and last initial"></div>`:''}
+    <div class="field"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email"></div>
+    <div class="field"><label for="a-pass">Password</label><input id="a-pass" type="password" autocomplete="${up?'new-password':'current-password'}" placeholder="${up?'At least 8 characters':''}"></div>
+    <button class="btn block" type="submit">${up?'Create account':'Sign in'}</button>
+    <span class="meta" id="authErr" role="alert"></span>
+   </form>
+   <button class="switch" id="authSwitch">${up?'Already have an account? Sign in':'New here? Create an account'}</button></div>`}
 
 function customerMine(){
-  const mine=jobs.filter(j=>j.owner==='me').sort((a,b)=>(a.status==='done')-(b.status==='done'));
-  if(!mine.length)return`<div class="empty">No lines yet. Post one and a waiter can claim it.</div>`;
+  const mine=data.mine.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
+  if(!mine.length)return`<div class="empty">No lines yet. Tap <b>Post</b> to have someone hold your spot.</div>`;
   return`<div class="list">${mine.map(j=>{
-    const i=idx(j.status);
-    let ticket='';
-    if(j.status==='inline'||j.status==='nearfront')ticket=`<div class="ticket"><div><div class="lbl">Place</div><div class="num">${j.pos??'—'}</div></div><div class="sep"></div><div class="txt">${esc(j.waiter)} is holding your spot. ${j.status==='nearfront'?'Head over now.':'You\'ll get a heads-up when they\'re close.'}</div></div>`;
-    if(j.status==='handoff')ticket=`<div class="ticket"><div><div class="lbl">Swap code</div><div class="num mono" style="font-family:var(--f-display)">${j.code}</div></div><div class="sep"></div><div class="txt">${esc(j.waiter)} is at the front. Find them and read out this code. They enter it to hand over your spot.</div></div>`;
-    else if(j.waiter&&j.status!=='done')ticket+=`<div class="hint">Your swap code is <b class="mono">${j.code}</b>. Only share it in person when you take over the spot.</div>`;
-    let actions='';
+    const i=idx(j.status);let ticket='',actions='';
+    if(j.status==='inline'||j.status==='nearfront')ticket=`<div class="ticket"><div><div class="lbl">Place</div><div class="num">${j.pos??'—'}</div></div><div class="sep"></div><div class="txt">${esc(j.waiterName)} is holding your spot. ${j.status==='nearfront'?'Head over now.':'You\'ll see it here when they\'re close.'}</div></div>`;
+    if(j.status==='handoff')ticket=`<div class="ticket"><div><div class="lbl">Swap code</div><div class="num">${esc(j.code)}</div></div><div class="sep"></div><div class="txt">${esc(j.waiterName)} is at the front. Find them and read out this code. They enter it to hand over your spot.</div></div>`;
+    else if(j.waiterId&&j.status!=='done')ticket+=`<div class="hint">Your swap code is <b class="mono">${esc(j.code)}</b>. Only share it in person when you take over the spot.</div>`;
     if(j.status==='open')actions=`<button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
-    if(j.status==='handoff')actions=`<button class="btn ghost small" data-act="swap" data-id="${j.id}">Demo: ${esc(j.waiter)} enters your code</button>`;
-    if(j.waiter&&j.waiter!=='me'&&['claimed','enroute','inline','nearfront'].includes(j.status))actions=`<button class="btn ghost small" data-act="advance" data-id="${j.id}">Demo: send the next update from ${esc(j.waiter)}</button>`;
-    if(j.status==='done')actions=`<span class="meta">Paid ${money(j.hours*j.rate*(1+FEE))} · Thanks for waiting with us</span>`;
-    return`<article class="card" id="job-${j.id}"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
+    if(j.status==='done')actions=`<span class="meta">Completed with ${esc(j.waiterName)} · ${money(j.hours*j.rate*(1+FEE))}</span>`;
+    return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
       ${j.status!=='open'?steps(j.status):''}
-      <div class="stepnote"><span><b>${STAGES[i].label}</b></span><span>${j.waiter?'Your waiter':'Visible to nearby waiters'}</span></div>
-      ${j.waiter&&j.status!=='done'?whoCard(j.waiter,'waiter'):''}${ticket}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
+      <div class="stepnote"><span><b>${STAGES[i].label}</b></span><span>${j.waiterId?'Your waiter':'Visible to waiters now'}</span></div>
+      ${j.waiterId&&j.status!=='done'?whoCard(j.waiterName,'Your waiter',j.waiterLook||''):''}${ticket}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
 
 function customerPost(){
   return`<form class="post" id="postForm" novalidate>
    <div class="meta">Tell waiters where to go and how long you expect it to take.</div>
-   <div class="field"><label for="f-place">Where is the line?</label><input id="f-place" required placeholder="e.g. Taco truck at Grand Park"></div>
-   <div class="field"><label for="f-what">What's it for?</label><input id="f-what" required placeholder="e.g. Lunch for 2, opening day"></div>
+   <div class="field"><label for="f-place">Where is the line?</label><input id="f-place" maxlength="120" placeholder="e.g. Taco truck at Grand Park"></div>
+   <div class="field"><label for="f-what">What's it for?</label><input id="f-what" maxlength="120" placeholder="e.g. Lunch for 2, opening day"></div>
    <div class="two"><div class="field"><label for="f-cat">Type</label><select id="f-cat"><option>Food</option><option>Releases</option><option>Errands</option><option>Events</option></select></div>
-   <div class="field"><label for="f-start">When should they arrive?</label><input id="f-start" required placeholder="Sat 9:00 AM"></div></div>
-   <div class="two"><div class="field"><label for="f-hours">Estimated wait (hours)</label><input id="f-hours" type="number" min="0.5" step="0.5" value="2"></div>
-   <div class="field"><label for="f-rate">Hourly rate</label><input id="f-rate" type="number" min="15" step="1" value="20"><small>Minimum $15/hr</small></div></div>
-   <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" placeholder="When you'll arrive, how to reach you, anything to buy"></textarea></div>
+   <div class="field"><label for="f-start">When should they arrive?</label><input id="f-start" maxlength="40" placeholder="Sat 9:00 AM"></div></div>
+   <div class="two"><div class="field"><label for="f-hours">Estimated wait (hours)</label><input id="f-hours" type="number" min="0.5" max="24" step="0.5" value="2" inputmode="decimal"></div>
+   <div class="field"><label for="f-rate">Hourly rate</label><input id="f-rate" type="number" min="15" max="200" step="1" value="20" inputmode="numeric"><small>Minimum $15/hr</small></div></div>
+   <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" maxlength="500" placeholder="When you'll arrive, how to reach you, anything to buy"></textarea></div>
    <div class="quote" id="quote"></div>
-   <div class="btns"><button class="btn" type="submit">Post line</button><span class="meta" id="formErr" role="alert"></span></div></form>`}
-
+   <button class="btn block" type="submit">Post line</button><span class="meta" id="formErr" role="alert"></span></form>`}
 function updateQuote(){
   const h=+$('#f-hours').value||0,r=+$('#f-rate').value||0,base=h*r,fee=base*FEE;
   $('#quote').innerHTML=`<div><span>Waiter pay (${h} hr × ${money(r)})</span><span class="mono">${money(base)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(fee)}</span></div><div class="total"><span>Estimated total</span><span class="mono">${money(base+fee)}</span></div>`}
 
 function waiterFind(){
   const cats=['All','Food','Releases','Errands','Events'];
-  const open=jobs.filter(j=>j.status==='open'&&j.owner!=='me'&&(filter==='All'||j.cat===filter));
+  const open=data.open.filter(j=>filter==='All'||j.cat===filter);
   return`<div class="list"><div class="filters" role="group" aria-label="Filter by type">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
-   ${open.length?open.map(j=>`<article class="card" id="job-${j.id}"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · ${esc(j.dist)} away · posted by ${esc(j.owner)}</div></div><span class="pill open">${money(j.rate)}/hr</span></div>
+   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)}</div></div><span class="pill open">${money(j.rate)}/hr</span></div>
      ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}
-     <div class="btns"><button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></div></article>`).join(''):`<div class="empty">No open lines in this category right now.</div>`}</div>`}
+     <button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></article>`).join(''):`<div class="empty">No open lines${filter==='All'?'':' in this category'} right now. New ones show up here automatically.</div>`}</div>`}
 
 function waiterShifts(){
-  const mine=jobs.filter(j=>j.waiter==='me').sort((a,b)=>(a.status==='done')-(b.status==='done'));
-  const active=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+j.hours*j.rate,0);
-  return`<div class="list"><div class="earn"><div><div class="meta">Paid out this week</div><b class="mono">${money(paidOut)}</b></div><div class="meta">${money(active)} pending on active shifts</div></div>
+  const mine=data.shifts.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
+  const pending=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+j.hours*j.rate,0);
+  const earned=mine.filter(j=>j.status==='done').reduce((s,j)=>s+j.hours*j.rate,0);
+  const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the front',handoff:'I\'m at the front'};
+  return`<div class="list"><div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">${money(pending)} on active shifts</div></div>
    ${mine.length?mine.map(j=>{
-     const i=idx(j.status),next=STAGES[i+1];
-     const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the front',handoff:'I\'m at the front, ready to swap'};
-     let ctl='';
+     const i=idx(j.status),next=STAGES[i+1];let ctl='';
      if(next&&verbs[next.k])ctl+=`<button class="btn small" data-act="advance" data-id="${j.id}">${verbs[next.k]}</button>`;
-     if(j.status==='handoff')ctl+=`<div class="codebox" style="width:100%"><label class="meta" for="code-${j.id}" style="width:100%">Ask ${esc(j.owner)} for their 4-digit swap code, then enter it to hand over the spot.</label><input id="code-${j.id}" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off"><button class="btn small" data-act="code" data-id="${j.id}">Complete swap</button></div><div class="hint">Demo: ${esc(j.owner)}'s code is <b class="mono">${j.code}</b></div>`;
-     if(j.status==='inline'||j.status==='nearfront')ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" value="${j.pos??''}"><button class="btn ghost small" data-act="pos" data-id="${j.id}">Update</button></span>`;
-     if(j.status==='done')ctl=`<span class="meta">Earned ${money(j.hours*j.rate)} · paid out</span>`;
-     return`<article class="card" id="job-${j.id}"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">For ${esc(j.owner)} · ${esc(j.what)}</div></div>${pillFor(j.status)}</div>
+     if(j.status==='claimed'||j.status==='enroute')ctl+=`<button class="btn ghost small" data-act="release" data-id="${j.id}">Release line</button>`;
+     if(j.status==='inline'||j.status==='nearfront')ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span>`;
+     if(j.status==='handoff')ctl+=`<div class="codebox" style="width:100%"><label class="meta" for="code-${j.id}" style="width:100%">Ask ${esc(j.ownerName)} for their 4-digit swap code, then enter it to hand over the spot.</label><input id="code-${j.id}" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off"><button class="btn small" data-act="swap" data-id="${j.id}">Complete swap</button></div>`;
+     if(j.status==='done')ctl=`<span class="meta">Earned ${money(j.hours*j.rate)}</span>`;
+     const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">What you're wearing, so ${esc(j.ownerName)} can spot you. Pick something easy to see.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
+     return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
        ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
-       ${j.status!=='done'?whoCard(j.owner,'customer'):''}
-       ${['claimed','enroute','inline','nearfront','handoff'].includes(j.status)?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">What you're wearing today, so ${esc(j.owner)} can spot you. Pick something easy to see.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" value="${esc(PEOPLE.me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:''}
-       ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}<div class="btns">${ctl}</div></article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from Find lines.</div>`}</div>`}
+       ${j.status!=='done'?whoCard(j.ownerName,'Your customer'):''}${outfit}
+       ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}<div class="btns">${ctl}</div></article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
 
-function profileHead(kind){
-  return`<article class="card"><div class="who" style="background:none;padding:0"><div class="avatar" aria-hidden="true">AN</div><div><b>Andrew</b><span class="verified">✓ ID verified</span>
-    <div class="meta">${kind==='customer'?'Customer since Oct 2026':'Waiter since Oct 2026 · ★ 4.8 · 37 waits'}</div></div></div></article>`}
-function customerAccount(){
-  const done=jobs.filter(j=>j.owner==='me'&&j.status==='done');
-  return`<div class="list">${profileHead('customer')}
-  <article class="card section"><h2>Payment method</h2>
-    <div class="kv"><div><span class="card-brand">VISA •••• 4242</span><small>Default · expires 08/29</small></div><button class="btn ghost small" data-demo="Card changes go through the secure payment form in the live app.">Change</button></div>
-    <div class="kv"><div>Apple Pay / Google Pay<small>Not set up</small></div><button class="btn ghost small" data-demo="Wallet payments get added in the live app.">Add</button></div></article>
-  <article class="card section"><h2>How you're charged</h2>
-    <ul class="checks"><li>Posting a line is free. Cancel any time before a waiter claims it.</li><li>When a waiter claims it, we place a hold on your card for the estimate.</li><li>You're charged only after your swap code is used, for the waiter's pay plus a 15% service fee.</li></ul></article>
-  <article class="card section"><h2>Receipts</h2>
-    ${done.length?done.map(j=>{const b=j.hours*j.rate;return`<div class="kv"><div>${esc(j.place)}<small>Waiter ${money(b)} + service fee ${money(b*FEE)}</small></div><b class="mono">${money(b*(1+FEE))}</b></div>`}).join(''):`<div class="hint">Receipts appear here after a swap. Try the DMV line under My lines.</div>`}</article></div>`}
-function waiterAccount(){
-  return`<div class="list">${profileHead('waiter')}
-  <article class="card section"><h2>Verification</h2>
-    <ul class="checks"><li>Government ID checked</li><li>Selfie matches ID photo</li><li>Background check cleared</li><li>Profile photo matches ID</li></ul></article>
-  <article class="card section"><h2>Payout account</h2>
-    <div class="kv"><div><span class="card-brand">Bank •••• 6789</span><small>Standard payout: 1–2 business days, free</small></div><button class="btn ghost small" data-demo="Bank changes go through the secure payout form in the live app.">Change</button></div>
-    <div class="kv"><div>Instant payout to debit card<small>Arrives in minutes</small></div><button class="btn ghost small" data-demo="Instant payouts get added in the live app.">Set up</button></div></article>
-  <article class="card section"><h2>Earnings</h2>
-    <div class="kv"><div>Paid out this week</div><b class="mono">${money(paidOut)}</b></div>
-    <div class="kv"><div>You keep<small>100% of your hourly rate, plus tips</small></div><b class="mono">100%</b></div></article></div>`}
-document.addEventListener('click',e=>{const b=e.target.closest('[data-demo]');if(b)toast(b.dataset.demo)});
+function account(){
+  const done=data.mine.filter(j=>j.status==='done');
+  return`<div class="list">
+  <article class="card">${whoCard(me.name,me.email)}</article>
+  <article class="card section"><h2>What you wear when waiting</h2>
+    <div class="codebox"><label class="meta" for="acct-look" style="width:100%">Customers see this so they can find you in line.</label><input id="acct-look" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit">Save</button></div></article>
+  <article class="card section"><h2>Payments</h2>
+    <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other. Prices shown include the 15% service fee you'll charge once payments are live.</div></article>
+  ${done.length?`<article class="card section"><h2>Completed lines</h2>${done.map(j=>{const b=j.hours*j.rate;return`<div class="kv"><div>${esc(j.place)}<small>Waiter ${money(b)} + service fee ${money(b*FEE)}</small></div><b class="mono">${money(b*(1+FEE))}</b></div>`}).join('')}</article>`:''}
+  <button class="btn ghost block" data-act="logout">Sign out</button></div>`}
 
+// ---------- render ----------
 function render(){
+  const signedIn=!!me;
+  $('#roles').hidden=!signedIn;$('#tabbar').hidden=!signedIn;
+  const v=$('#view');
+  if(!signedIn){
+    $('#screenTitle').textContent=authMode==='signup'?'Create your account':'Sign in';
+    v.innerHTML=authScreen();
+    $('#authSwitch').onclick=()=>{authMode=authMode==='signup'?'login':'signup';render()};
+    $('#authForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
+      try{const body={email:$('#a-email').value,password:$('#a-pass').value};if(authMode==='signup')body.name=$('#a-name').value;
+        me=(await api(authMode==='signup'?'/signup':'/login',{method:'POST',body})).user;await load(true);toast(authMode==='signup'?`Welcome, ${me.name.split(' ')[0]}.`:'Signed in.')}
+      catch(err){$('#authErr').textContent=err.message;btn.disabled=false}});
+    return}
+  document.querySelectorAll('.roles button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.role===role));
   renderTabs();
-  const v=$('#view'),t=tab[role];
+  const t=tab[role];
   $('#screenTitle').textContent=TITLES[t];
-  v.innerHTML=t==='account'?(role==='customer'?customerAccount():waiterAccount()):role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
+  v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
   if(t==='post'){['f-hours','f-rate'].forEach(id=>$('#'+id).addEventListener('input',updateQuote));updateQuote();
-    $('#postForm').addEventListener('submit',e=>{e.preventDefault();
-      const place=$('#f-place').value.trim(),what=$('#f-what').value.trim(),start=$('#f-start').value.trim(),h=+$('#f-hours').value,r=+$('#f-rate').value;
-      if(!place||!what||!start){$('#formErr').textContent='Add where, what, and when so waiters know what they\'re signing up for.';return}
-      if(r<15){$('#formErr').textContent='Set the rate to at least $15/hr.';return}
-      jobs.unshift({id:nextId++,owner:'me',place,what,start,hours:h||1,rate:r,status:'open',waiter:null,pos:null,cat:$('#f-cat').value,dist:'—',notes:$('#f-notes').value.trim()});
-      tab.customer='mine';render();toast('Line posted. Waiters nearby can claim it now.')})}
+    $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
+      try{await api('/lines',{method:'POST',body:{place:$('#f-place').value,what:$('#f-what').value,cat:$('#f-cat').value,startText:$('#f-start').value,hours:+$('#f-hours').value,rate:+$('#f-rate').value,notes:$('#f-notes').value}});
+        tab.customer='mine';await load(true);window.scrollTo(0,0);toast('Line posted. Waiters can claim it now.')}
+      catch(err){$('#formErr').textContent=err.message;btn.disabled=false}})}
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
 }
 
-$('#view').addEventListener('click',e=>{
-  const b=e.target.closest('[data-act]');if(!b)return;
-  const j=jobs.find(x=>x.id==b.dataset.id);if(!j)return;
-  const a=b.dataset.act;
-  if(a==='cancel'){jobs=jobs.filter(x=>x!==j);toast('Request cancelled. You weren\'t charged.')}
-  if(a==='outfit'){const v=document.getElementById('outfit-'+j.id).value.trim();if(!v){toast('Describe at least one item your customer can spot from a distance.');return}PEOPLE.me.look=v;toast(`${j.owner} will look for: ${v}`)}
-  if(a==='code'){const v=document.getElementById('code-'+j.id).value.trim();
-    if(v!==j.code){toast('That code doesn\'t match. Check it with the customer and try again.');return}
-    j.status='done';paidOut+=j.hours*j.rate;toast(`Swap complete. ${money(j.hours*j.rate)} is on its way to your bank.`)}
-  if(a==='claim'){j.status='claimed';j.waiter='me';j.code=j.code||newCode();toast(`Claimed. Head to ${j.place} by ${j.start}.`)}
-  if(a==='advance'){j.status=STAGES[idx(j.status)+1].k;if(j.status==='inline'&&!j.pos)j.pos=30;if(j.status==='nearfront'&&(j.pos??99)>5)j.pos=5;if(j.status==='handoff')j.pos=1;const lbl=STAGES[idx(j.status)].label;toast(j.waiter==='me'?`${j.owner} was notified: ${lbl.toLowerCase()}.`:`Update from ${j.waiter}: ${lbl.toLowerCase()}.`)}
-  if(a==='pos'){const v=+document.getElementById('pos-'+j.id).value;if(v>0){j.pos=v;toast(`Place in line updated to ${v}.`)}}
-  if(a==='swap'){j.status='done';if(j.waiter==='me')paidOut+=j.hours*j.rate;toast('Swap confirmed. Your waiter has been paid.')}
-  render();
-  const c=document.getElementById('job-'+j.id);if(c){c.classList.add('flash');setTimeout(()=>c.classList.remove('flash'),900)}
+// ---------- actions ----------
+$('#view').addEventListener('click',async e=>{
+  const b=e.target.closest('[data-act]');if(!b||b.disabled)return;
+  const a=b.dataset.act,id=b.dataset.id;b.disabled=true;
+  try{
+    if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='login';render();return}
+    if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
+    if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
+    if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.`);tab.waiter='shifts'}
+    if(a==='advance'){const r=await api(`/lines/${id}/advance`,{method:'POST'});toast(`${r.line.ownerName} can see you're ${STAGES[idx(r.line.status)].short.toLowerCase()}.`)}
+    if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});toast('Line released. Other waiters can claim it now.')}
+    if(a==='position'){const r=await api(`/lines/${id}/position`,{method:'POST',body:{pos:+document.getElementById('pos-'+id).value}});toast(`Place in line updated to ${r.line.pos}.`)}
+    if(a==='swap'){const r=await api(`/lines/${id}/swap`,{method:'POST',body:{code:document.getElementById('code-'+id).value}});toast(`Swap complete. You earned ${money(r.line.hours*r.line.rate)}.`)}
+    await load(true);
+  }catch(err){toast(err.message);b.disabled=false}
 });
 
-render();
-</script>
-
-<script>
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+// ---------- data ----------
+async function load(force){
+  if(!me)return;
+  const [mine,open,shifts]=await Promise.all(['mine','open','shifts'].map(s=>api('/lines?scope='+s).then(r=>r.lines)));
+  const json=JSON.stringify([mine,open,shifts]);
+  if(!force&&json===lastJSON)return;
+  // Don't redraw while someone is typing in the page; the next check picks it up.
+  const typing=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#view')&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+  if(!force&&typing)return;
+  data={mine,open,shifts};lastJSON=json;render();
 }
+setInterval(()=>{if(me&&document.visibilityState==='visible')load(false).catch(()=>{})},5000);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load(false).catch(()=>{})});
+
+(async()=>{
+  try{me=(await api('/me')).user}catch{me=null}
+  if(me){try{await load(true)}catch(err){toast(err.message);render()}}else render();
+})();
+
+if("serviceWorker" in navigator){window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}))}
 </script>
 </body>
 </html>
