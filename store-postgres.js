@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS lines (
 CREATE INDEX IF NOT EXISTS lines_status_idx ON lines(status);
 CREATE INDEX IF NOT EXISTS lines_owner_idx ON lines(owner_id);
 CREATE INDEX IF NOT EXISTS lines_waiter_idx ON lines(waiter_id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT NOT NULL DEFAULT '';
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS checkin_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS done_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS outcome TEXT;
@@ -60,13 +61,14 @@ CREATE INDEX IF NOT EXISTS ratings_ratee_idx ON ratings(ratee_id);
 `;
 
 const LINE_SELECT = `
-SELECT l.*, o.name AS owner_name, w.name AS waiter_name, w.look AS waiter_look
+SELECT l.*, o.name AS owner_name, o.avatar AS owner_avatar,
+  w.name AS waiter_name, w.look AS waiter_look, w.avatar AS waiter_avatar
 FROM lines l
 JOIN users o ON o.id = l.owner_id
 LEFT JOIN users w ON w.id = l.waiter_id`;
 
 function user(r) {
-  return r && { id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, createdAt: r.created_at };
+  return r && { id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "", createdAt: r.created_at };
 }
 function line(r) {
   return (
@@ -77,6 +79,8 @@ function line(r) {
       ownerName: r.owner_name,
       waiterName: r.waiter_name,
       waiterLook: r.waiter_look,
+      ownerAvatar: r.owner_avatar || "",
+      waiterAvatar: r.waiter_avatar || null,
       place: r.place,
       what: r.what,
       cat: r.cat,
@@ -124,8 +128,11 @@ module.exports = {
     const r = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
     return user(r.rows[0]) || null;
   },
-  async updateUserLook(id, look) {
-    const r = await pool.query("UPDATE users SET look = $2 WHERE id = $1 RETURNING *", [id, look]);
+  async updateUser(id, fields) {
+    const r = await pool.query(
+      "UPDATE users SET look = COALESCE($2, look), avatar = COALESCE($3, avatar) WHERE id = $1 RETURNING *",
+      [id, fields.look ?? null, fields.avatar ?? null]
+    );
     return user(r.rows[0]) || null;
   },
 

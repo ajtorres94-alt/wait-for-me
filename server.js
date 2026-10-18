@@ -107,7 +107,8 @@ async function currentUser(req) {
   return store.userBySession(sha256(token));
 }
 
-const publicUser = (u) => u && { id: u.id, name: u.name, email: u.email, look: u.look };
+const publicUser = (u) => u && { id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "" };
+const AVATARS = Array.from({ length: 10 }, (_, i) => `a${i}`);
 
 // Only the customer who posted a line ever sees its swap code.
 function lineFor(viewer, l) {
@@ -231,8 +232,13 @@ async function api(req, res, urlPath, query) {
 
   if (urlPath === "/api/me" && method === "PATCH") {
     const b = await readBody(req);
-    const look = text(b.look, "what you're wearing", 120, { required: false });
-    return send(res, 200, { user: publicUser(await store.updateUserLook(me.id, look)) });
+    const fields = {};
+    if (b.look !== undefined) fields.look = text(b.look, "what you're wearing", 120, { required: false });
+    if (b.avatar !== undefined) {
+      if (b.avatar !== "" && !AVATARS.includes(b.avatar)) fail(400, "Pick one of the avatars.");
+      fields.avatar = b.avatar;
+    }
+    return send(res, 200, { user: publicUser(await store.updateUser(me.id, fields)) });
   }
 
   if (urlPath === "/api/lines" && method === "GET") {

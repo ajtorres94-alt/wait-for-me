@@ -15,7 +15,10 @@ function withNames(l) {
   if (!l) return null;
   const o = users.find((u) => u.id === l.ownerId);
   const w = l.waiterId ? users.find((u) => u.id === l.waiterId) : null;
-  return { ...l, ownerName: o ? o.name : "", waiterName: w ? w.name : null, waiterLook: w ? w.look : null };
+  return {
+    ...l, ownerName: o ? o.name : "", ownerAvatar: o ? o.avatar : "",
+    waiterName: w ? w.name : null, waiterLook: w ? w.look : null, waiterAvatar: w ? w.avatar : null,
+  };
 }
 
 module.exports = {
@@ -24,16 +27,16 @@ module.exports = {
 
   async createUser({ name, email, pwHash }) {
     if (users.some((u) => u.email === email)) return null;
-    const u = { id: nextUser++, name, email, pwHash, look: "", createdAt: new Date() };
+    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", createdAt: new Date() };
     users.push(u);
     return u;
   },
   async userByEmail(email) {
     return users.find((u) => u.email === email) || null;
   },
-  async updateUserLook(id, look) {
+  async updateUser(id, fields) {
     const u = users.find((x) => x.id === id);
-    if (u) u.look = look;
+    if (u) for (const k of ["look", "avatar"]) if (fields[k] !== undefined) u[k] = fields[k];
     return u || null;
   },
 

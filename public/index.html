@@ -25,7 +25,7 @@ img{max-width:100%}
 /* Layout: a single phone-width app column; a role switch on top, a "take-a-number" ticket as the signature element */
 :root{
   --bg:#EEF0F6; --surface:#FFFFFF; --ink:#1A1F3D; --muted:#5D6485; --line:#D9DCE8;
-  --ticket:#FFC21A; --ticket-ink:#2A1E00; --primary:#1A1F3D; --on-primary:#FFFFFF;
+  --ticket:#FFC21A; --logo:#FFCD44; --ticket-ink:#2A1E00; --primary:#1A1F3D; --on-primary:#FFFFFF;
   --good:#1D8A55; --good-bg:#DDF3E7; --warn:#B45309; --warn-bg:#FDEBD3; --info:#2F45D8; --info-bg:#E2E6FC;
   --f-display:"Bungee","Arial Black",Impact,sans-serif;
   --f-body:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -33,11 +33,11 @@ img{max-width:100%}
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#10132A; --surface:#1A1F3D; --ink:#ECEEF8; --muted:#A3A9C9; --line:#2D3359;
-  --ticket:#FFC933; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
+  --ticket:#FFC933; --logo:#FFD561; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
   --good:#5BD49A; --good-bg:#16382A; --warn:#F5A65B; --warn-bg:#3E2A14; --info:#9DABFF; --info-bg:#252C5A; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#10132A; --surface:#1A1F3D; --ink:#ECEEF8; --muted:#A3A9C9; --line:#2D3359;
-  --ticket:#FFC933; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
+  --ticket:#FFC933; --logo:#FFD561; --ticket-ink:#2A1E00; --primary:#FFC933; --on-primary:#1A1F3D;
   --good:#5BD49A; --good-bg:#16382A; --warn:#F5A65B; --warn-bg:#3E2A14; --info:#9DABFF; --info-bg:#252C5A; color-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.5;
@@ -57,7 +57,7 @@ button{cursor:pointer}
 .appbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-bottom:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
 .appbar-in{max-width:560px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding-block:10px}
 .logo{display:flex;align-items:center;gap:8px;min-width:0}
-.logo .stub{font-family:var(--f-display);background:var(--ticket);color:var(--ticket-ink);padding:3px 6px;border-radius:3px;font-size:11px;transform:rotate(-4deg)}
+.logo .stub{font-family:var(--f-display);background:var(--logo);color:var(--ticket-ink);padding:3px 6px;border-radius:3px;font-size:11px;transform:rotate(-4deg)}
 .logo h1{font-family:var(--f-display);font-size:17px;font-weight:400;white-space:nowrap}
 .sample{font-size:12px;color:var(--muted)}
 
@@ -216,8 +216,42 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .stars{display:flex;gap:4px}
 .stars button{border:0;background:none;font-size:32px;line-height:1;padding:2px 4px;color:var(--line);min-width:44px;min-height:44px}
 .stars button.on{color:var(--ticket);text-shadow:0 0 1px var(--ticket-ink)}
+.intro{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:#1A1F3D;color:#FFFFFF;
+  padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+.intro-in{display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center}
+.intro-ticket{--n:14px;width:176px;height:112px;display:grid;place-items:center;background:#FFCD44;color:#1A1F3D;border-radius:10px;transform:rotate(-4deg);
+  -webkit-mask:radial-gradient(circle var(--n) at 0 50%,#0000 98%,#000) left/51% 100% no-repeat,radial-gradient(circle var(--n) at 100% 50%,#0000 98%,#000) right/51% 100% no-repeat;
+  mask:radial-gradient(circle var(--n) at 0 50%,#0000 98%,#000) left/51% 100% no-repeat,radial-gradient(circle var(--n) at 100% 50%,#0000 98%,#000) right/51% 100% no-repeat}
+.intro-ticket span{font-family:var(--f-display);font-size:58px;line-height:1}
+.intro-word{font-family:var(--f-display);font-size:30px;margin-top:10px}
+.intro-tag{font-size:15px;color:#C9CEE6}
+.intro-tap{margin-top:22px;border:2px solid #FFCD44;background:transparent;color:#FFCD44;font-weight:800;border-radius:99px;padding:10px 24px;min-height:44px;visibility:hidden}
+.intro.needs-tap .intro-tap{visibility:visible}
+.intro.out{opacity:0;pointer-events:none}
+@media (prefers-reduced-motion:no-preference){
+  .intro-ticket{animation:pop .7s cubic-bezier(.2,1.6,.4,1) both}
+  .intro-word{animation:rise .5s .35s ease-out both}
+  .intro-tag{animation:rise .5s .5s ease-out both}
+  .intro.needs-tap .intro-tap{animation:rise .4s .3s ease-out both,pulse 1.6s 1s ease-in-out infinite}
+  .intro{transition:opacity .35s ease}}
+@keyframes pop{0%{transform:scale(.3) rotate(-14deg);opacity:0}70%{transform:scale(1.08) rotate(-2deg);opacity:1}100%{transform:scale(1) rotate(-4deg)}}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes pulse{50%{transform:scale(1.05)}}
+.avatar.pic{background:none;border-color:var(--logo);padding:0;overflow:hidden}
+.avatar.pic svg,.avpick svg{width:100%;height:100%;display:block}
+.avgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.avpick{border:3px solid transparent;border-radius:50%;padding:0;background:none;aspect-ratio:1;max-width:100%;min-width:0}
+.avpick[aria-pressed="true"]{border-color:var(--ink)}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
 </style>
+<div class="intro" id="intro" role="dialog" aria-label="Wait For Me!">
+  <div class="intro-in">
+    <div class="intro-ticket" aria-hidden="true"><span>W!</span></div>
+    <div class="intro-word">Wait For Me!</div>
+    <div class="intro-tag">Someone holds your spot.</div>
+    <button class="intro-tap" type="button" id="introTap">Tap to start</button>
+  </div>
+</div>
 <header class="appbar"><div class="appbar-in gutter">
   <div class="logo"><span class="stub">No.1</span><h1>Wait For Me!</h1></div>
   <div class="roles" role="group" aria-label="Choose a side" id="roles" hidden>
@@ -305,9 +339,43 @@ function rateHTML(j,name,kind){
    <div class="filters">${(TAGS[kind]||[]).map(t=>`<button type="button" class="chip" aria-pressed="${d.tags.includes(t)}" data-tag="${esc(t)}" data-id="${j.id}">${esc(t)}</button>`).join('')}</div>
    <button class="btn small" data-act="rate" data-id="${j.id}"${d.stars?'':' disabled'}>Submit rating</button>
    <div class="hint">Ratings stay private for 3 days, then count toward their profile.</div></div>`}
-function whoCard(name,sub,look){
-  return`<div class="who"><div class="avatar" aria-hidden="true">${esc(initials(name))}</div><div><b>${esc(name)}</b><div class="meta">${esc(sub)}</div>
+function whoCard(name,sub,look,av){
+  return`<div class="who">${av&&AVATARS[+av.slice(1)]?`<div class="avatar pic">${avatarSVG(av,name)}</div>`:`<div class="avatar" aria-hidden="true">${esc(initials(name))}</div>`}<div><b>${esc(name)}</b><div class="meta">${esc(sub)}</div>
     ${look!==undefined?`<div class="look">${look?`Look for: <b>${esc(look)}</b>`:'They haven\'t said what they\'re wearing yet.'}</div>`:''}</div></div>`}
+
+// ---------- avatars: 10 simple illustrated faces ----------
+const AV_INK='#1A1F3D';
+const AVATARS=[
+ {name:'Short hair',bg:'#E2E6FC',skin:'#F2C9A8',hair:'#3A2618',shirt:'#2F45D8',style:'short'},
+ {name:'Long hair',bg:'#FCE1E4',skin:'#C68A5E',hair:'#1E140E',shirt:'#D94F6A',style:'long'},
+ {name:'Cap',bg:'#FFF1C2',skin:'#8D5A3B',hair:'#1E140E',shirt:'#1A1F3D',style:'cap',acc:'#E2552D'},
+ {name:'Curly hair',bg:'#DDF3E7',skin:'#5C3A24',hair:'#17100B',shirt:'#1D8A55',style:'curly'},
+ {name:'Beanie',bg:'#E6EEF8',skin:'#F5D7C0',hair:'#C9A15A',shirt:'#5B6B8C',style:'beanie',acc:'#F2A93B'},
+ {name:'Bun',bg:'#F1E6FA',skin:'#E8B48F',hair:'#6B3E1F',shirt:'#7A4CC2',style:'bun'},
+ {name:'Beard',bg:'#FDE2CF',skin:'#C68A5E',hair:'#2B1D14',shirt:'#B4531F',style:'beard'},
+ {name:'Glasses',bg:'#E0F2F1',skin:'#F2C9A8',hair:'#9AA0A6',shirt:'#2A7F7A',style:'glasses'},
+ {name:'Headphones',bg:'#FFE8EC',skin:'#8D5A3B',hair:'#1E140E',shirt:'#3B3F55',style:'headphones',acc:'#E2552D'},
+ {name:'Ponytail',bg:'#EAF4D9',skin:'#F5D7C0',hair:'#B23A2A',shirt:'#4E8A2E',style:'ponytail'}];
+const SHORT_HAIR=c=>`<path d="M19 26c0-9 6-14 13-14s13 5 13 14c-2-4-6-7-13-7s-11 3-13 7z" fill="${c}"/>`;
+function avatarSVG(id,label){
+  const i=+String(id||'').slice(1),A=AVATARS[i];if(!A)return'';
+  let back='',front='';
+  switch(A.style){
+   case'short':front=SHORT_HAIR(A.hair);break;
+   case'long':back=`<path d="M17 29c0-11 7-18 15-18s15 7 15 18v15H17z" fill="${A.hair}"/>`;front=SHORT_HAIR(A.hair);break;
+   case'cap':front=`<path d="M19 25c0-8 6-13 13-13s13 5 13 13z" fill="${A.acc}"/><path d="M31 24h19q-1 3.5-8 3.5H31z" fill="${A.acc}"/>`;break;
+   case'curly':front=[[20,23,6],[23,16,6],[30,12,6.5],[37,13,6.5],[43,18,6],[45,25,5]].map(([x,y,r])=>`<circle cx="${x}" cy="${y}" r="${r}" fill="${A.hair}"/>`).join('');break;
+   case'beanie':front=`<path d="M18.5 25c0-9 6-14.5 13.5-14.5S45.5 16 45.5 25z" fill="${A.acc}"/><rect x="18" y="21.5" width="28" height="5.5" rx="2.75" fill="${A.acc}" opacity=".75"/><circle cx="32" cy="9.5" r="3.2" fill="${A.acc}"/>`;break;
+   case'bun':front=`<circle cx="32" cy="10.5" r="5.5" fill="${A.hair}"/>`+SHORT_HAIR(A.hair);break;
+   case'beard':front=`<path d="M20 29q1.5 12.5 12 12.5T44 29q-3 5-12 5t-12-5z" fill="${A.hair}"/><path d="M21 22c2-6 6-9 11-9s9 3 11 9c-3-2-7-3-11-3s-8 1-11 3z" fill="${A.hair}"/>`;break;
+   case'glasses':front=SHORT_HAIR(A.hair)+`<g stroke="${AV_INK}" stroke-width="1.5" fill="none"><circle cx="27.5" cy="27" r="3.8"/><circle cx="36.5" cy="27" r="3.8"/><path d="M31.3 27h1.4"/></g>`;break;
+   case'headphones':front=SHORT_HAIR(A.hair)+`<path d="M18 28a14 14 0 0 1 28 0" stroke="${A.acc}" stroke-width="3" fill="none"/><rect x="15" y="25" width="5.5" height="9" rx="2.75" fill="${A.acc}"/><rect x="43.5" y="25" width="5.5" height="9" rx="2.75" fill="${A.acc}"/>`;break;
+   case'ponytail':back=`<path d="M43 19q12 5 6 22q-2-11-8-15z" fill="${A.hair}"/>`;front=SHORT_HAIR(A.hair);break;
+  }
+  const smile=A.style==='beard'?`<path d="M28.5 33q3.5 2.5 7 0" stroke="${AV_INK}" stroke-width="1.6" fill="none" stroke-linecap="round"/>`:`<path d="M28 32q4 3.5 8 0" stroke="${AV_INK}" stroke-width="1.6" fill="none" stroke-linecap="round"/>`;
+  return`<svg viewBox="0 0 64 64" role="img" aria-label="${esc(label||A.name+' avatar')}"><circle cx="32" cy="32" r="32" fill="${A.bg}"/>${back}
+   <path d="M10 64c2-12 11-18 22-18s20 6 22 18z" fill="${A.shirt}"/><rect x="27" y="36" width="10" height="10" rx="3" fill="${A.skin}"/>
+   <circle cx="32" cy="27" r="13" fill="${A.skin}"/><circle cx="27.5" cy="27" r="1.6" fill="${AV_INK}"/><circle cx="36.5" cy="27" r="1.6" fill="${AV_INK}"/>${smile}${front}</svg>`}
 
 // ---------- tabs ----------
 const svg=p=>`<svg viewBox="0 0 24 24" aria-hidden="true">${p}</svg>`;
@@ -359,7 +427,7 @@ function customerMine(){
     return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
       ${j.status!=='open'?steps(j.status):''}
       <div class="stepnote"><span><b>${STAGES[i].label}</b></span><span>${j.waiterId?'Your waiter':'Visible to waiters now'}</span></div>
-      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||''):''}${ticket}${meterHTML(j,'customer')}${extra}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
+      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${meterHTML(j,'customer')}${extra}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
 
 function customerPost(){
   return`<form class="post" id="postForm" novalidate>
@@ -431,16 +499,19 @@ function waiterShifts(){
      const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">What you're wearing, so ${esc(j.ownerName)} can spot you. Pick something easy to see.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
      return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
        ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos&&j.status!=='done'?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
-       ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating)):''}${meterHTML(j,'waiter')}${outfit}
+       ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
        ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${extra}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
 
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
   return`<div class="list">
-  <article class="card">${whoCard(me.name,me.email)}
+  <article class="card">${whoCard(me.name,me.email,undefined,me.avatar)}
     <div class="kv"><div>As a waiter</div><b>${myRatings?ratingTxt(myRatings.waiter):'—'}</b></div>
     <div class="kv"><div>As a booker</div><b>${myRatings?ratingTxt(myRatings.booker):'—'}</b></div>
     <div class="hint">Ratings count 3 days after each job, and your average shows once you have 3.</div></article>
+  <article class="card section"><h2>Your avatar</h2>
+    <div class="avgrid" role="group" aria-label="Choose an avatar">${AVATARS.map((A,i)=>`<button type="button" class="avpick" data-act="avatar" data-av="a${i}" aria-pressed="${me.avatar==='a'+i}">${avatarSVG('a'+i)}</button>`).join('')}</div>
+    <button type="button" class="btn ghost small" data-act="avatar" data-av="" aria-pressed="${!me.avatar}">Use my initials instead</button></article>
   <article class="card section"><h2>What you wear when waiting</h2>
     <div class="codebox"><label class="meta" for="acct-look" style="width:100%">Customers see this so they can find you in line.</label><input id="acct-look" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit">Save</button></div></article>
   <article class="card section"><h2>Payments</h2>
@@ -458,7 +529,7 @@ const TUTORIALS={
   {title:'Post your line',body:'Tell us where the line is, when to arrive, how long you expect to wait, and what you\'ll pay per hour. You see the most it can cost before you post, and you only pay for the time your waiter actually spends in line.',
    art:()=>`<div class="card"><div class="quote" style="background:none;padding:0"><div><span>Waiter pay (3 hr × $22.00/hr)</span><span class="mono">$66</span></div><div><span>Service fee (15%)</span><span class="mono">$9.90</span></div><div class="total"><span>Estimated total</span><span class="mono">$75.90</span></div></div></div>`},
   {title:'A waiter claims it',body:'You\'ll see who\'s holding your spot and what they\'re wearing, so you can find them in the crowd.',
-   art:()=>`<div class="card">${whoCard('Marisol T','Your waiter','Red cap, gray hoodie')}</div>`},
+   art:()=>`<div class="card">${whoCard('Marisol T','Your waiter','Red cap, gray hoodie','a2')}</div>`},
   {title:'Follow along',body:'Their status and place in line update live. When they\'re near the front, head over.',
    art:()=>`<div class="card">${steps('inline')}${T_TICKET('Place','14','Marisol T is holding your spot.')}</div>`},
   {title:'Swap in with your code',body:'At the front, read your 4-digit swap code to your waiter. They enter it and the spot is yours. Never share the code until you\'re there in person.',
@@ -467,7 +538,7 @@ const TUTORIALS={
   {title:'Find a line',body:'Browse open lines and see what each one pays before you commit. Claim the ones that fit your day.',
    art:()=>`<div class="card"><div class="row"><div><h3>Croissant bakery, Pasadena</h3><div class="meta">Weekend pastry drop</div></div><span class="pill open">$18.00/hr</span></div><div class="facts"><div><span>Starts</span><b>Sun 6:00 AM</b></div><div><span>Est. wait</span><b>2h 30m</b></div><div><span>You earn</span><b>$45</b></div></div><span class="btn small" style="text-align:center">Claim this line</span></div>`},
   {title:'Say what you\'re wearing',body:'Pick something easy to spot, like a bright cap or jacket. Your customer sees it so they can find you.',
-   art:()=>`<div class="card">${whoCard(me?me.name:'You','Your waiter','Orange beanie, black jacket')}</div>`},
+   art:()=>`<div class="card">${whoCard(me?me.name:'You','Your waiter','Orange beanie, black jacket',(me&&me.avatar)||'a4')}</div>`},
   {title:'Keep them posted',body:'Tap On my way, In line, and Near the front as you go. Your paid time starts when you tap In line.',
    art:()=>`<div class="card">${steps('nearfront')}<div class="btns"><span class="btn small">I'm at the front</span><span class="pos"><span class="meta">Place in line</span><span class="mono" style="font-weight:700;font-size:18px">3</span></span></div></div>`},
   {title:'Finish with the code',body:'At the front, ask your customer for their 4-digit swap code and enter it. That completes the job and records your earnings. If the code doesn\'t match, don\'t give up the spot.',
@@ -518,10 +589,20 @@ async function tryChime(){
   }catch{}
   return false;
 }
-// Phones only allow sound after a touch, so if the launch chime is blocked it plays on the first tap instead.
-(async()=>{if(await tryChime())return;
-  const first=()=>{tryChime();off()},off=()=>{removeEventListener('pointerdown',first,true);removeEventListener('keydown',first,true)};
-  addEventListener('pointerdown',first,true);addEventListener('keydown',first,true);setTimeout(off,15000)})();
+// ---------- intro: logo pops up and the chime plays ----------
+// Phones (iPhones especially) block sound until the screen is touched. If that happens,
+// the intro waits for a tap, then plays the chime and opens the app.
+(()=>{
+  const intro=$('#intro'),reduce=matchMedia('(prefers-reduced-motion: reduce)').matches,start=Date.now();
+  const hide=()=>{if(intro.hidden||intro.classList.contains('out'))return;intro.classList.add('out');setTimeout(()=>{intro.hidden=true},reduce?0:380)};
+  (async()=>{
+    const played=await tryChime();
+    if(played){setTimeout(hide,Math.max(0,1800-(Date.now()-start)));return}
+    intro.classList.add('needs-tap');
+    const go=()=>{tryChime();hide();intro.removeEventListener('click',go);removeEventListener('keydown',go)};
+    intro.addEventListener('click',go);addEventListener('keydown',go);
+  })();
+})();
 
 // ---------- render ----------
 function render(){
@@ -563,6 +644,7 @@ $('#view').addEventListener('click',async e=>{
   try{
     if(a==='tut-customer'||a==='tut-waiter'){b.disabled=false;openTut(a==='tut-customer'?'customer':'waiter');return}
     if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='login';render();return}
+    if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
     if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.`);tab.waiter='shifts'}
