@@ -2,44 +2,41 @@
 
 Book someone to hold your spot in line, or get paid to wait.
 
-This is the clickable prototype packaged as an installable web app. It uses sample data, nothing is saved between visits, and no payments are processed.
+Real accounts and shared data: a line posted on one phone shows up for waiters on every other phone, and updates (claimed, on the way, place in line, swap) appear within about 5 seconds.
 
-## Files
+## What's in here
 
 | File | What it does |
 | --- | --- |
-| `server.js` | Tiny Node server with no dependencies. Serves the `public` folder on Railway's `PORT`. |
-| `package.json` | Tells Railway to run `npm start`. |
-| `public/index.html` | The app. |
-| `public/manifest.webmanifest` | App name, icon, and colors for "Add to Home Screen". |
-| `public/sw.js` | Makes the app installable and lets it open without a connection. |
-| `public/icons/` | App icons. |
+| `server.js` | Serves the app and the API: sign-up, sign-in, posting, claiming, status updates, swap codes. |
+| `store-postgres.js` | Saves everything in Postgres. Used automatically when `DATABASE_URL` is set. |
+| `store-memory.js` | Keeps data in memory when there's no database. Data resets on every redeploy. |
+| `package.json` | Tells Railway to install the Postgres library and run `npm start`. |
+| `public/` | The app itself, its icons, and the install files. |
 
-## Run it on your computer (optional)
+## Update the repo
 
-Needs Node 18 or newer.
+Replace everything in the `wait-for-me` GitHub repo with the files in this folder (keep `package.json` at the top level). Commit, and Railway redeploys on its own.
 
-```
-npm start
-```
+The app works right away, but without a database every redeploy wipes accounts and lines. Add Postgres next.
 
-Then open http://localhost:3000.
+## Add the database on Railway (one time)
 
-## Deploy to Railway
+1. Open your Railway project and click **+ Create** (or **New**), then **Database → Add PostgreSQL**.
+2. Click your **wait-for-me** service, open **Variables**, and click **New Variable**.
+3. Name it `DATABASE_URL`. For the value, type `${{Postgres.DATABASE_URL}}` (or pick it from the reference dropdown). Save.
+4. Railway redeploys. Open **Deployments → View logs**; you should see `storage: postgres`.
+5. Check it anytime at `/api/health` on your site. It shows `"storage":"postgres"` when the database is connected.
 
-1. Create a new GitHub repo named `wait-for-me` and upload everything in this folder to it.
-2. In Railway, click **New Project → Deploy from GitHub repo** and pick `wait-for-me`.
-3. Railway detects Node and runs `npm start`. Wait for the deploy to show **Active**.
-4. Open the service, go to **Settings → Networking**, and click **Generate Domain**.
-5. Open that link on your phone.
+The app creates its own tables on first start.
 
-## Install it on your phone
+## How the swap code works
 
-- **iPhone (Safari):** tap Share, then **Add to Home Screen**.
-- **Android (Chrome):** tap the ⋮ menu, then **Install app** or **Add to Home screen**.
+Only the customer can see their 4-digit code. At the front of the line, the customer reads it to the waiter in person, and the waiter types it in to finish the job. Wrong codes are rejected.
 
-It opens full screen with its own icon, like a native app.
+## Not built yet
 
-## Updating
-
-Change files, commit, and push to GitHub. Railway redeploys automatically, and the app on your phone picks up the new version the next time it opens.
+- Card payments and waiter payouts (planned: Stripe Connect)
+- ID checks for waiters
+- Push notifications (the app refreshes while it's open)
+- Password reset

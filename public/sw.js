@@ -1,5 +1,5 @@
 // Service worker: lets phones install the app and open it without a connection.
-const CACHE = "wait-for-me-v1";
+const CACHE = "wait-for-me-v2";
 const FILES = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -17,6 +17,7 @@ self.addEventListener("activate", (e) => {
 // Network first, so every redeploy shows up right away; cache is the offline fallback.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  if (new URL(e.request.url).pathname.startsWith("/api/")) return; // live data is never cached
   e.respondWith(
     fetch(e.request)
       .then((res) => {
