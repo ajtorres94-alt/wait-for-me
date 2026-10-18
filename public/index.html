@@ -168,6 +168,38 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .loading{color:var(--muted);text-align:center;padding:40px 0}
 .btn.block{width:100%}
 .btn[disabled]{opacity:.55}
+.wheels{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.wlabel{font-size:13px;font-weight:700}
+.wheel-wrap{position:relative;height:180px;background:var(--bg);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.wheel-wrap:focus-within{outline:3px solid var(--info);outline-offset:2px}
+.wheel-band{position:absolute;left:6px;right:6px;top:72px;height:36px;border-radius:8px;background:color-mix(in srgb,var(--ticket) 34%,transparent);border:1px solid color-mix(in srgb,var(--ticket) 70%,transparent)}
+.wheel{position:relative;height:100%;overflow-y:auto;scroll-snap-type:y mandatory;overscroll-behavior:contain;scrollbar-width:none;padding-block:72px;outline:none;
+  -webkit-mask-image:linear-gradient(transparent,#000 30%,#000 70%,transparent);mask-image:linear-gradient(transparent,#000 30%,#000 70%,transparent)}
+.wheel::-webkit-scrollbar{display:none}
+.wheel>div{height:36px;display:grid;place-items:center;scroll-snap-align:center;font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:16px;color:var(--muted);cursor:pointer;white-space:nowrap}
+.wheel>div.on{color:var(--ink);font-weight:700;font-size:17px}
+.tut{position:fixed;inset:0;z-index:30;background:var(--bg);display:flex;flex-direction:column;
+  padding:calc(16px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));overflow-y:auto}
+.tut-in{max-width:520px;width:100%;margin:0 auto;flex:1;display:flex;flex-direction:column;gap:18px}
+.tut-top{display:flex;justify-content:space-between;align-items:center}
+.tut-kicker{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.tut-skip{background:none;border:0;color:var(--muted);font-weight:700;padding:8px 0;min-height:36px}
+.tut-art{flex:1;min-height:230px;display:grid;place-items:center;border-radius:18px;padding:22px 16px;
+  background:repeating-linear-gradient(-45deg,transparent 0 14px,color-mix(in srgb,var(--line) 45%,transparent) 14px 15px),var(--surface);border:1px solid var(--line)}
+.tut-art>*{width:100%;max-width:340px;pointer-events:none}
+.tut-art .card{box-shadow:0 10px 30px rgb(0 0 0 / .08)}
+.tut h2{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+.tut p{margin:0;font-size:16px;line-height:1.5;color:var(--muted);max-width:44ch}
+.tut-dots{display:flex;gap:6px}
+.tut-dots i{width:8px;height:8px;border-radius:4px;background:var(--line);transition:width .2s}
+.tut-dots i.on{width:22px;background:var(--ticket)}
+.tut-nav{display:flex;gap:10px}
+.tut-nav .btn{flex:1}
+@media (prefers-reduced-motion:no-preference){.tut-step{animation:tutIn .28s ease-out}}
+@keyframes tutIn{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+.mini-btns{display:flex;flex-direction:column;gap:8px}
+.toggle{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.toggle input{width:48px;height:28px;accent-color:var(--ink)}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
 </style>
 <header class="appbar"><div class="appbar-in gutter">
@@ -183,6 +215,8 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 </main>
 <nav class="tabbar" aria-label="Sections" id="tabbar" hidden><div class="tabbar-in gutter" role="tablist" id="tabs"></div></nav>
 <div class="toast" id="toast" role="status" hidden></div>
+<div class="tut" id="tut" role="dialog" aria-modal="true" aria-labelledby="tutTitle" hidden></div>
+
 
 <script>
 const STAGES=[
@@ -224,7 +258,7 @@ function pillFor(s){
 function steps(s){const i=idx(s);return`<ol class="steps" aria-label="Progress: ${STAGES[i].label}">${STAGES.slice(1).map((st,j)=>`<li class="${j+1<=i?'on':''}" title="${st.short}"></li>`).join('')}</ol>`}
 function facts(j,mode){
   const pay=j.hours*j.rate,total=mode==='customer'?pay*(1+FEE):pay;
-  return`<div class="facts"><div><span>Starts</span><b>${esc(j.startText)}</b></div><div><span>Est. wait</span><b>${j.hours} hr</b></div><div><span>${mode==='customer'?'You pay':'You earn'}</span><b>${money(total)}</b></div></div>`}
+  return`<div class="facts"><div><span>Starts</span><b>${esc(j.startText)}</b></div><div><span>Est. wait</span><b>${fmtShort(j.hours)}</b></div><div><span>${mode==='customer'?'You pay':'You earn'}</span><b>${money(total)}</b></div></div>`}
 function whoCard(name,sub,look){
   return`<div class="who"><div class="avatar" aria-hidden="true">${esc(initials(name))}</div><div><b>${esc(name)}</b><div class="meta">${esc(sub)}</div>
     ${look!==undefined?`<div class="look">${look?`Look for: <b>${esc(look)}</b>`:'They haven\'t said what they\'re wearing yet.'}</div>`:''}</div></div>`}
@@ -283,14 +317,40 @@ function customerPost(){
    <div class="field"><label for="f-what">What's it for?</label><input id="f-what" maxlength="120" placeholder="e.g. Lunch for 2, opening day"></div>
    <div class="two"><div class="field"><label for="f-cat">Type</label><select id="f-cat"><option>Food</option><option>Releases</option><option>Errands</option><option>Events</option></select></div>
    <div class="field"><label for="f-start">When should they arrive?</label><input id="f-start" maxlength="40" placeholder="Sat 9:00 AM"></div></div>
-   <div class="two"><div class="field"><label for="f-hours">Estimated wait (hours)</label><input id="f-hours" type="number" min="0.5" max="24" step="0.5" value="2" inputmode="decimal"></div>
-   <div class="field"><label for="f-rate">Hourly rate</label><input id="f-rate" type="number" min="15" max="200" step="1" value="20" inputmode="numeric"><small>Minimum $15/hr</small></div></div>
+   <div class="wheels">${wheelHTML('hours','Estimated wait',HOURS,fmtHours,wheel.hours)}${wheelHTML('rate','Hourly rate',RATES,fmtRate,wheel.rate)}</div>
    <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" maxlength="500" placeholder="When you'll arrive, how to reach you, anything to buy"></textarea></div>
    <div class="quote" id="quote"></div>
    <button class="btn block" type="submit">Post line</button><span class="meta" id="formErr" role="alert"></span></form>`}
+// ---------- scroll wheels ----------
+const HOURS=Array.from({length:96},(_,i)=>(i+1)/4);   // 15 min … 24 hr
+const RATES=Array.from({length:741},(_,i)=>15+i/4);   // $15.00 … $200.00
+const WHEELS={hours:{items:HOURS,fmt:v=>fmtHours(v)},rate:{items:RATES,fmt:v=>fmtRate(v)}};
+const ROW=36;
+let wheel={hours:7,rate:20};                           // 2 hr, $20.00
+function fmtHours(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh} hr ${m} min`:hh?`${hh} hr`:`${m} min`}
+function fmtShort(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh}h ${m}m`:hh?`${hh} hr`:`${m} min`}
+function fmtRate(r){return'$'+r.toFixed(2)}
+function wheelHTML(key,label,items,fmt,i){
+  return`<div class="field"><span class="wlabel" id="wl-${key}">${label}</span><div class="wheel-wrap"><div class="wheel-band" aria-hidden="true"></div>
+   <div class="wheel" id="w-${key}" tabindex="0" role="spinbutton" aria-labelledby="wl-${key}" aria-valuemin="0" aria-valuemax="${items.length-1}" aria-valuenow="${i}" aria-valuetext="${fmt(items[i])}">${items.map((v,k)=>`<div data-i="${k}"${k===i?' class="on"':''}>${fmt(v)}</div>`).join('')}</div></div></div>`}
+function initWheel(key){
+  const el=$('#w-'+key),{items,fmt}=WHEELS[key],smooth=matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth';
+  el.scrollTop=wheel[key]*ROW;
+  let raf=0;
+  const set=i=>{i=Math.max(0,Math.min(items.length-1,i));if(i===wheel[key])return;
+    el.children[wheel[key]]?.classList.remove('on');el.children[i].classList.add('on');wheel[key]=i;
+    el.setAttribute('aria-valuenow',i);el.setAttribute('aria-valuetext',fmt(items[i]));
+    try{navigator.vibrate&&navigator.vibrate(4)}catch{}
+    updateQuote()};
+  const go=i=>{i=Math.max(0,Math.min(items.length-1,i));el.scrollTo({top:i*ROW,behavior:smooth})};
+  el.addEventListener('scroll',()=>{cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>set(Math.round(el.scrollTop/ROW)))},{passive:true});
+  el.addEventListener('click',e=>{const d=e.target.closest('[data-i]');if(d)go(+d.dataset.i)});
+  el.addEventListener('keydown',e=>{const step={ArrowUp:-1,ArrowDown:1,PageUp:-4,PageDown:4}[e.key];
+    if(step){e.preventDefault();go(wheel[key]+step)}else if(e.key==='Home'){e.preventDefault();go(0)}else if(e.key==='End'){e.preventDefault();go(items.length-1)}});
+}
 function updateQuote(){
-  const h=+$('#f-hours').value||0,r=+$('#f-rate').value||0,base=h*r,fee=base*FEE;
-  $('#quote').innerHTML=`<div><span>Waiter pay (${h} hr × ${money(r)})</span><span class="mono">${money(base)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(fee)}</span></div><div class="total"><span>Estimated total</span><span class="mono">${money(base+fee)}</span></div>`}
+  const h=HOURS[wheel.hours],r=RATES[wheel.rate],base=h*r,fee=base*FEE;
+  $('#quote').innerHTML=`<div><span>Waiter pay (${fmtHours(h)} × ${fmtRate(r)}/hr)</span><span class="mono">${money(base)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(fee)}</span></div><div class="total"><span>Estimated total</span><span class="mono">${money(base+fee)}</span></div>`}
 
 function waiterFind(){
   const cats=['All','Food','Releases','Errands','Events'];
@@ -328,7 +388,82 @@ function account(){
   <article class="card section"><h2>Payments</h2>
     <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other. Prices shown include the 15% service fee you'll charge once payments are live.</div></article>
   ${done.length?`<article class="card section"><h2>Completed lines</h2>${done.map(j=>{const b=j.hours*j.rate;return`<div class="kv"><div>${esc(j.place)}<small>Waiter ${money(b)} + service fee ${money(b*FEE)}</small></div><b class="mono">${money(b*(1+FEE))}</b></div>`}).join('')}</article>`:''}
+  <article class="card section"><h2>How it works</h2>
+    <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
+  <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
   <button class="btn ghost block" data-act="logout">Sign out</button></div>`}
+
+// ---------- tutorials ----------
+const T_TICKET=(lbl,num,txt)=>`<div class="ticket"><div><div class="lbl">${lbl}</div><div class="num">${num}</div></div><div class="sep"></div><div class="txt">${txt}</div></div>`;
+const TUTORIALS={
+ customer:{kicker:'Booking a waiter',done:'Start booking',steps:[
+  {title:'Post your line',body:'Tell us where the line is, when to arrive, how long you expect to wait, and what you\'ll pay per hour. You see the full price, including the 15% service fee, before you post.',
+   art:()=>`<div class="card"><div class="quote" style="background:none;padding:0"><div><span>Waiter pay (3 hr × $22.00/hr)</span><span class="mono">$66</span></div><div><span>Service fee (15%)</span><span class="mono">$9.90</span></div><div class="total"><span>Estimated total</span><span class="mono">$75.90</span></div></div></div>`},
+  {title:'A waiter claims it',body:'You\'ll see who\'s holding your spot and what they\'re wearing, so you can find them in the crowd.',
+   art:()=>`<div class="card">${whoCard('Marisol T','Your waiter','Red cap, gray hoodie')}</div>`},
+  {title:'Follow along',body:'Their status and place in line update live. When they\'re near the front, head over.',
+   art:()=>`<div class="card">${steps('inline')}${T_TICKET('Place','14','Marisol T is holding your spot.')}</div>`},
+  {title:'Swap in with your code',body:'At the front, read your 4-digit swap code to your waiter. They enter it and the spot is yours. Never share the code until you\'re there in person.',
+   art:()=>`<div class="card">${T_TICKET('Swap code','4827','Read this to your waiter at the front.')}</div>`}]},
+ waiter:{kicker:'Earning as a waiter',done:'Start earning',steps:[
+  {title:'Find a line',body:'Browse open lines and see what each one pays before you commit. Claim the ones that fit your day.',
+   art:()=>`<div class="card"><div class="row"><div><h3>Croissant bakery, Pasadena</h3><div class="meta">Weekend pastry drop</div></div><span class="pill open">$18.00/hr</span></div><div class="facts"><div><span>Starts</span><b>Sun 6:00 AM</b></div><div><span>Est. wait</span><b>2h 30m</b></div><div><span>You earn</span><b>$45</b></div></div><span class="btn small" style="text-align:center">Claim this line</span></div>`},
+  {title:'Say what you\'re wearing',body:'Pick something easy to spot, like a bright cap or jacket. Your customer sees it so they can find you.',
+   art:()=>`<div class="card">${whoCard(me?me.name:'You','Your waiter','Orange beanie, black jacket')}</div>`},
+  {title:'Keep them posted',body:'Tap On my way, In line, and Near the front as you go, and update your place in line when it moves.',
+   art:()=>`<div class="card">${steps('nearfront')}<div class="btns"><span class="btn small">I'm at the front</span><span class="pos"><span class="meta">Place in line</span><span class="mono" style="font-weight:700;font-size:18px">3</span></span></div></div>`},
+  {title:'Finish with the code',body:'At the front, ask your customer for their 4-digit swap code and enter it. That completes the job and records your earnings. If the code doesn\'t match, don\'t give up the spot.',
+   art:()=>`<div class="card"><div class="codebox"><span class="mono" style="letter-spacing:.3em;font-size:20px;font-weight:700;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">4827</span><span class="btn small">Complete swap</span></div><div class="meta">Swap complete. You earned $66.</div></div>`}]}
+};
+let tut=null; // {who, i, back}
+function openTut(who){tut={who,i:0,back:document.activeElement};drawTut();$('#tut').hidden=false;document.body.style.overflow='hidden'}
+function closeTut(){if(!tut)return;store.set('wfm_tut_'+tut.who,'1');$('#tut').hidden=true;document.body.style.overflow='';const b=tut.back;tut=null;b&&b.focus&&b.focus()}
+function drawTut(){
+  const T=TUTORIALS[tut.who],st=T.steps[tut.i],last=tut.i===T.steps.length-1;
+  $('#tut').innerHTML=`<div class="tut-in"><div class="tut-top"><span class="tut-kicker">${T.kicker} · ${tut.i+1} of ${T.steps.length}</span><button class="tut-skip" data-tut="skip">Skip</button></div>
+   <div class="tut-step" style="display:flex;flex-direction:column;gap:18px;flex:1"><div class="tut-art" aria-hidden="true" inert>${st.art()}</div>
+   <h2 id="tutTitle">${st.title}</h2><p>${st.body}</p></div>
+   <div class="tut-dots" aria-hidden="true">${T.steps.map((_,k)=>`<i class="${k===tut.i?'on':''}"></i>`).join('')}</div>
+   <div class="tut-nav">${tut.i?'<button class="btn ghost" data-tut="back">Back</button>':''}<button class="btn" data-tut="next" id="tutNext">${last?T.done:'Next'}</button></div></div>`;
+  $('#tutNext').focus();
+}
+$('#tut').addEventListener('click',e=>{const a=e.target.closest('[data-tut]')?.dataset.tut;if(!a||!tut)return;
+  if(a==='skip')return closeTut();
+  if(a==='back'){tut.i=Math.max(0,tut.i-1);return drawTut()}
+  if(tut.i<TUTORIALS[tut.who].steps.length-1){tut.i++;drawTut()}else closeTut()});
+document.addEventListener('keydown',e=>{if(!tut)return;
+  if(e.key==='Escape')closeTut();
+  if(e.key==='Tab'){const f=[...$('#tut').querySelectorAll('button')];const i=f.indexOf(document.activeElement);e.preventDefault();f[(i+(e.shiftKey?-1:1)+f.length)%f.length].focus()}});
+function maybeTut(){if(me&&!tut&&!store.get('wfm_tut_'+role))openTut(role)}
+
+// ---------- opening sound: three rising bell notes, one per word of "Wait For Me" ----------
+let audioCtx=null,chimed=false;
+const soundOn=()=>store.get('wfm_sound')!=='off';
+function playChime(){
+  const ctx=audioCtx,t0=ctx.currentTime+0.02,master=ctx.createGain();
+  master.gain.value=0.32;master.connect(ctx.destination);
+  [[783.99,0,1.1],[1046.5,0.13,1.1],[1318.51,0.26,1.7]].forEach(([f,at,len])=>{
+    [[1,1],[2.76,0.22],[5.4,0.07]].forEach(([mult,amp])=>{
+      const o=ctx.createOscillator(),g=ctx.createGain(),t=t0+at,d=len/(mult>1?mult*0.6:1);
+      o.type='sine';o.frequency.value=f*mult;
+      g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(amp,t+0.006);g.gain.exponentialRampToValueAtTime(0.0001,t+d);
+      o.connect(g);g.connect(master);o.start(t);o.stop(t+d+0.05)});
+  });
+}
+async function tryChime(){
+  if(chimed||!soundOn())return true;
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return true;
+    audioCtx=audioCtx||new AC();
+    if(audioCtx.state!=='running')await Promise.race([audioCtx.resume(),new Promise(r=>setTimeout(r,250))]);
+    if(audioCtx.state==='running'){chimed=true;playChime();return true}
+  }catch{}
+  return false;
+}
+// Phones only allow sound after a touch, so if the launch chime is blocked it plays on the first tap instead.
+(async()=>{if(await tryChime())return;
+  const first=()=>{tryChime();off()},off=()=>{removeEventListener('pointerdown',first,true);removeEventListener('keydown',first,true)};
+  addEventListener('pointerdown',first,true);addEventListener('keydown',first,true);setTimeout(off,15000)})();
 
 // ---------- render ----------
 function render(){
@@ -349,12 +484,14 @@ function render(){
   const t=tab[role];
   $('#screenTitle').textContent=TITLES[t];
   v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
-  if(t==='post'){['f-hours','f-rate'].forEach(id=>$('#'+id).addEventListener('input',updateQuote));updateQuote();
+  if(t==='post'){initWheel('hours');initWheel('rate');updateQuote();
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
-      try{await api('/lines',{method:'POST',body:{place:$('#f-place').value,what:$('#f-what').value,cat:$('#f-cat').value,startText:$('#f-start').value,hours:+$('#f-hours').value,rate:+$('#f-rate').value,notes:$('#f-notes').value}});
+      try{await api('/lines',{method:'POST',body:{place:$('#f-place').value,what:$('#f-what').value,cat:$('#f-cat').value,startText:$('#f-start').value,hours:HOURS[wheel.hours],rate:RATES[wheel.rate],notes:$('#f-notes').value}});
         tab.customer='mine';await load(true);window.scrollTo(0,0);toast('Line posted. Waiters can claim it now.')}
       catch(err){$('#formErr').textContent=err.message;btn.disabled=false}})}
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
+  const st=$('#sound-toggle');if(st)st.onchange=()=>{store.set('wfm_sound',st.checked?'on':'off');if(st.checked){chimed=false;tryChime()}toast(st.checked?'Opening sound on.':'Opening sound off.')};
+  maybeTut();
 }
 
 // ---------- actions ----------
@@ -362,6 +499,7 @@ $('#view').addEventListener('click',async e=>{
   const b=e.target.closest('[data-act]');if(!b||b.disabled)return;
   const a=b.dataset.act,id=b.dataset.id;b.disabled=true;
   try{
+    if(a==='tut-customer'||a==='tut-waiter'){b.disabled=false;openTut(a==='tut-customer'?'customer':'waiter');return}
     if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='login';render();return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
@@ -383,6 +521,8 @@ async function load(force){
   // Don't redraw while someone is typing in the page; the next check picks it up.
   const typing=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#view')&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if(!force&&typing)return;
+  // Keep a half-filled Post form intact; just refresh the tab badges.
+  if(!force&&role==='customer'&&tab.customer==='post'){data={mine,open,shifts};lastJSON=json;renderTabs();return}
   data={mine,open,shifts};lastJSON=json;render();
 }
 setInterval(()=>{if(me&&document.visibilityState==='visible')load(false).catch(()=>{})},5000);

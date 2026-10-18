@@ -131,6 +131,9 @@ const num = (v, field, min, max) => {
   return Math.round(n * 100) / 100;
 };
 
+// Hours and rates move in quarter steps (15 minutes, 25 cents).
+const quarter = (n) => Math.round(n * 4) / 4;
+
 // Simple per-IP limit for sign-in and sign-up attempts.
 const attempts = new Map();
 function limitAuth(req) {
@@ -207,8 +210,8 @@ async function api(req, res, urlPath, query) {
       what: text(b.what, "what it's for", 120),
       cat: CATS.includes(b.cat) ? b.cat : "Errands",
       startText: text(b.startText, "when the waiter should arrive", 40),
-      hours: num(b.hours, "Estimated wait", 0.5, 24),
-      rate: num(b.rate, "Hourly rate", 15, 200),
+      hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
+      rate: quarter(num(b.rate, "Hourly rate", 15, 200)),
       notes: text(b.notes, "notes", 500, { required: false }),
       code: String(crypto.randomInt(1000, 10000)),
     });
