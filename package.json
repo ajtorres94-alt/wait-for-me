@@ -1,0 +1,14 @@
+{
+  "name": "wait-for-me",
+  "version": "0.1.0",
+  "description": "Wait For Me! — book someone to hold your spot in line, or get paid to wait.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
