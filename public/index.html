@@ -251,6 +251,13 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .card.danger{border-color:var(--warn)}
 .btn.danger-btn{background:#B42318;color:#fff}
 .hint a{color:var(--info)}
+.offers{display:flex;flex-direction:column;gap:10px;border-top:1px dashed var(--line);padding-top:12px}
+.offer{display:flex;flex-direction:column;gap:8px;background:var(--bg);border-radius:12px;padding:10px}
+.offer .who{background:none;padding:0}
+.offer-row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.counter{display:flex;flex-direction:column;gap:8px;background:var(--bg);border-radius:12px;padding:12px}
+.stepper{display:flex;gap:8px;align-items:center}
+.stepper input{flex:1;min-width:0;text-align:center;font-size:18px;font-weight:700;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
 </style>
 <div class="intro" id="intro" role="dialog" aria-label="Wait For Me!">
@@ -295,7 +302,7 @@ const initials=n=>String(n||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).joi
 function toast(msg){const t=$('#toast');t.textContent=msg;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,3000)}
 const store={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k,v){try{localStorage.setItem(k,v)}catch{}}};
 
-let delOpen=false;
+let delOpen=false,offerOpen=null;const offerDraft={};
 let me=null, role=store.get('wfm_role')==='waiter'?'waiter':'customer', tab={customer:'mine',waiter:'find'}, filter='All', authMode='signup';
 let data={mine:[],open:[],shifts:[]}, lastJSON='';
 
@@ -430,7 +437,14 @@ function customerMine(){
     else if(active)ticket+=`<div class="hint">Your swap code is <b class="mono">${esc(j.code)}</b>. Only share it in person when you take over the spot.</div>`;
     if(active&&!j.checkinAt)extra=`<div class="hint">The clock starts when ${esc(j.waiterName)} checks in at the line. You only pay for time they actually spend in line.</div>`;
     if(active&&b.nearUp)extra+=`<div class="warnnote">${b.timeUp?'Your approved time is up.':'Your approved time is almost up.'} Add time, or ${esc(j.waiterName)} can end the shift when it runs out.</div>`;
-    if(j.status==='open')actions=`<button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
+    if(j.status==='open'){
+      actions=`<button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
+      if(j.offers&&j.offers.length)extra=`<div class="offers"><b>${j.offers.length===1?'1 waiter offered':j.offers.length+' waiters offered'} a different rate</b>${j.offers.map(o=>`
+        <div class="offer">${whoCard(o.waiterName,ratingTxt(o.waiterRating),undefined,o.waiterAvatar)}
+          <div class="offer-row"><span><b class="mono">${fmtRate(o.rate)}/hr</b><span class="meta"> · up to ${money(billOf({...j,rate:o.rate}).approved*o.rate*(1+FEE))}</span></span>
+          <span class="btns"><button class="btn small" data-act="accept-offer" data-id="${j.id}" data-offer="${o.id}">Accept</button><button class="btn ghost small" data-act="decline-offer" data-id="${j.id}" data-offer="${o.id}">Decline</button></span></div></div>`).join('')}
+        <div class="hint">Accepting books that waiter at their rate. You listed ${fmtRate(j.rate)}/hr.</div></div>`;
+    }
     if(active)actions=`<button class="btn ${b.nearUp?'':'ghost '}small" data-act="extend" data-id="${j.id}">Add 30 min (up to +${money(0.5*j.rate*(1+FEE))})</button>`;
     if(j.status==='done'){
       extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed (15-min steps, 1 hr min)</span><span class="mono">${fmtShort(b.billed)}</span></div><div><span>Waiter pay</span><span class="mono">${money(b.pay)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(b.fee)}</span></div><div class="total"><span>Total</span><span class="mono">${money(b.total)}</span></div></div>
@@ -453,10 +467,10 @@ function customerPost(){
    <button class="btn block" type="submit">Post line</button><span class="meta" id="formErr" role="alert"></span></form>`}
 // ---------- scroll wheels ----------
 const HOURS=Array.from({length:96},(_,i)=>(i+1)/4);   // 15 min … 24 hr
-const RATES=Array.from({length:741},(_,i)=>15+i/4);   // $15.00 … $200.00
+const RATES=Array.from({length:781},(_,i)=>5+i/4);    // $5.00 … $200.00
 const WHEELS={hours:{items:HOURS,fmt:v=>fmtHours(v)},rate:{items:RATES,fmt:v=>fmtRate(v)}};
 const ROW=36;
-let wheel={hours:7,rate:20};                           // 2 hr, $20.00
+let wheel={hours:7,rate:60};                           // 2 hr, $20.00
 function fmtHours(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh} hr ${m} min`:hh?`${hh} hr`:`${m} min`}
 function fmtShort(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh}h ${m}m`:hh?`${hh} hr`:`${m} min`}
 function fmtRate(r){return'$'+r.toFixed(2)}
@@ -510,7 +524,11 @@ function waiterFind(){
    ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)} (${ratingTxt(j.ownerRating)})</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}
      <div class="hint">Paid for time in line from check-in to swap, 1 hour minimum.</div>
-     <button class="btn small" data-act="claim" data-id="${j.id}">Claim this line</button></article>`).join(''):`<div class="empty">No open lines${near.on&&near.radius?` within ${near.radius} miles`:''}${filter==='All'?'':' in this category'} right now. New ones show up here automatically.</div>`}</div>`}
+     ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for ${esc(j.ownerName)} to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
+     :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
+        <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="5" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>
+        <div class="btns"><button class="btn small" data-act="offer" data-id="${j.id}">Send offer</button><button class="btn ghost small" data-act="offer-cancel" data-id="${j.id}">Cancel</button></div></div>`
+     :`<div class="btns"><button class="btn small" data-act="claim" data-id="${j.id}">Claim at ${fmtRate(j.rate)}/hr</button><button class="btn ghost small" data-act="offer-open" data-id="${j.id}">Offer a different rate</button></div>`}</article>`).join(''):`<div class="empty">No open lines${near.on&&near.radius?` within ${near.radius} miles`:''}${filter==='All'?'':' in this category'} right now. New ones show up here automatically.</div>`}</div>`}
 
 function waiterShifts(){
   const mine=data.shifts.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
@@ -528,7 +546,7 @@ function waiterShifts(){
      if(j.status!=='done'&&b.timeUp)extra+=`<div class="warnnote">The approved time is up. If ${esc(j.ownerName)} doesn't add time, you can end the shift and be paid for the full ${fmtShort(b.approved)}.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (time's up)</button>`;
      else if(j.status!=='done'&&b.nearUp)extra+=`<div class="warnnote">Approved time is almost up. Ask ${esc(j.ownerName)} to add time if the line is still moving.</div>`;
      if(j.status==='done'){ctl='';extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed (15-min steps, 1 hr min)</span><span class="mono">${fmtShort(b.billed)}</span></div><div class="total"><span>You earned</span><span class="mono">${money(b.pay)}</span></div></div>${rateHTML(j,j.ownerName,'booker')}`}
-     const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">What you're wearing, so ${esc(j.ownerName)} can spot you. Pick something easy to see.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
+     const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">Optional: what you're wearing, so ${esc(j.ownerName)} can spot you.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
      return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
        ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos&&j.status!=='done'?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
@@ -545,7 +563,7 @@ function account(){
     <div class="avgrid" role="group" aria-label="Choose an avatar">${AVATARS.map((A,i)=>`<button type="button" class="avpick" data-act="avatar" data-av="a${i}" aria-pressed="${me.avatar==='a'+i}">${avatarSVG('a'+i)}</button>`).join('')}</div>
     <button type="button" class="btn ghost small" data-act="avatar" data-av="" aria-pressed="${!me.avatar}">Use my initials instead</button></article>
   <article class="card section"><h2>What you wear when waiting</h2>
-    <div class="codebox"><label class="meta" for="acct-look" style="width:100%">Customers see this so they can find you in line.</label><input id="acct-look" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit">Save</button></div></article>
+    <div class="codebox"><label class="meta" for="acct-look" style="width:100%">Optional. Customers see this so they can find you in line.</label><input id="acct-look" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit">Save</button></div></article>
   <article class="card section"><h2>Payments</h2>
     <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other using the totals shown on each finished line.</div></article>
   ${done.length?`<article class="card section"><h2>Completed lines</h2>${done.map(j=>{const b=billOf(j);return`<div class="kv"><div>${esc(j.place)}<small>${fmtShort(b.billed)} billed · waiter ${money(b.pay)} + fee ${money(b.fee)}</small></div><b class="mono">${money(b.total)}</b></div>`}).join('')}</article>`:''}
@@ -574,11 +592,11 @@ const TUTORIALS={
   {title:'Swap in with your code',body:'At the front, read your 4-digit swap code to your waiter. They enter it and the spot is yours. Never share the code until you\'re there in person.',
    art:()=>`<div class="card">${T_TICKET('Swap code','4827','Read this to your waiter at the front.')}</div>`}]},
  waiter:{kicker:'Earning as a waiter',done:'Start earning',steps:[
-  {title:'Find a line',body:'Browse open lines and see what each one pays before you commit. Claim the ones that fit your day.',
+  {title:'Find a line',body:'Browse open lines and see what each one pays. Claim at the listed rate, or offer your own rate and let the customer decide.',
    art:()=>`<div class="card"><div class="row"><div><h3>Croissant bakery, Pasadena</h3><div class="meta">Weekend pastry drop</div></div><span class="pill open">$18.00/hr</span></div><div class="facts"><div><span>Starts</span><b>Sun 6:00 AM</b></div><div><span>Est. wait</span><b>2h 30m</b></div><div><span>You earn</span><b>$45</b></div></div><span class="btn small" style="text-align:center">Claim this line</span></div>`},
-  {title:'Say what you\'re wearing',body:'Pick something easy to spot, like a bright cap or jacket. Your customer sees it so they can find you.',
+  {title:'Help them find you',body:'If you like, say what you\'re wearing, like a bright cap or jacket. Your customer sees it so they can spot you.',
    art:()=>`<div class="card">${whoCard(me?me.name:'You','Your waiter','Orange beanie, black jacket',(me&&me.avatar)||'a4')}</div>`},
-  {title:'Keep them posted',body:'Tap On my way, In line, and Near the front as you go. Your paid time starts when you tap In line.',
+  {title:'Check in and share updates',body:'Tap I\'m in line when you join it, since that starts your paid time. Other updates are up to you, but customers love them.',
    art:()=>`<div class="card">${steps('nearfront')}<div class="btns"><span class="btn small">I'm at the front</span><span class="pos"><span class="meta">Place in line</span><span class="mono" style="font-weight:700;font-size:18px">3</span></span></div></div>`},
   {title:'Finish with the code',body:'At the front, ask your customer for their 4-digit swap code and enter it. That completes the job and records your earnings. If the code doesn\'t match, don\'t give up the spot.',
    art:()=>`<div class="card"><div class="codebox"><span class="mono" style="letter-spacing:.3em;font-size:20px;font-weight:700;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">4827</span><span class="btn small">Complete swap</span></div><div class="meta">Swap complete. You earned $66.</div></div>`}]}
@@ -680,6 +698,9 @@ $('#view').addEventListener('click',async e=>{
   if(st||tg){const id=+(st||tg).dataset.id,d=rateDraft[id]=rateDraft[id]||{stars:0,tags:[]};
     if(st)d.stars=+st.dataset.star;else{const t=tg.dataset.tag;d.tags=d.tags.includes(t)?d.tags.filter(x=>x!==t):[...d.tags,t]}
     render();return}
+  const stp=e.target.closest('[data-step]');
+  if(stp){const inp=document.getElementById('offer-'+stp.dataset.id);const v=Math.min(200,Math.max(5,(parseFloat(inp.value)||0)+(+stp.dataset.step)));
+    inp.value=v.toFixed(2);offerDraft[+stp.dataset.id]=v;return}
   const b=e.target.closest('[data-act]');if(!b||b.disabled)return;
   const a=b.dataset.act,id=b.dataset.id;b.disabled=true;
   try{
@@ -691,6 +712,12 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
+    if(a==='offer-open'||a==='offer-cancel'){offerOpen=a==='offer-open'?+id:null;b.disabled=false;render();return}
+    if(a==='offer'){const v=Math.round(parseFloat(document.getElementById('offer-'+id).value)*4)/4;
+      await api(`/lines/${id}/offer`,{method:'POST',body:{rate:v}});offerOpen=null;delete offerDraft[id];toast(`Offer sent: ${fmtRate(v)}/hr.`)}
+    if(a==='withdraw-offer'){await api(`/lines/${id}/withdraw-offer`,{method:'POST'});toast('Offer withdrawn.')}
+    if(a==='accept-offer'){const r=await api(`/lines/${id}/accept-offer`,{method:'POST',body:{offerId:+b.dataset.offer}});toast(`Booked ${r.line.waiterName} at ${fmtRate(r.line.rate)}/hr.`)}
+    if(a==='decline-offer'){await api(`/lines/${id}/decline-offer`,{method:'POST',body:{offerId:+b.dataset.offer}});toast('Offer declined.')}
     if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.`);tab.waiter='shifts'}
     if(a==='advance'){const r=await api(`/lines/${id}/advance`,{method:'POST'});toast(`${r.line.ownerName} can see you're ${STAGES[idx(r.line.status)].short.toLowerCase()}.`)}
     if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});toast('Line released. Other waiters can claim it now.')}
@@ -702,6 +729,8 @@ $('#view').addEventListener('click',async e=>{
     await load(true);
   }catch(err){toast(err.message);b.disabled=false}
 });
+
+$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}});
 
 // ---------- data ----------
 async function load(force){

@@ -5,6 +5,8 @@ const users = [];
 const sessions = new Map(); // tokenHash -> { userId, createdAt }
 const lines = [];
 const ratings = [];
+const offers = [];
+let nextOffer = 1;
 let nextUser = 1;
 let nextLine = 1;
 let nextRating = 1;
@@ -96,6 +98,7 @@ module.exports = {
     const i = lines.findIndex((x) => x.id === id && x.status === expectStatus);
     if (i < 0) return false;
     lines.splice(i, 1);
+    for (let k = offers.length - 1; k >= 0; k--) if (offers[k].lineId === id) offers.splice(k, 1);
     return true;
   },
 
@@ -122,6 +125,39 @@ module.exports = {
       s.count++;
     }
     return out;
+  },
+
+  // ---- rate offers from waiters ----
+  async upsertOffer(lineId, waiterId, rate) {
+    let o = offers.find((x) => x.lineId === lineId && x.waiterId === waiterId && x.status === "pending");
+    if (o) Object.assign(o, { rate, createdAt: new Date() });
+    else offers.push((o = { id: nextOffer++, lineId, waiterId, rate, status: "pending", createdAt: new Date() }));
+    return o;
+  },
+  async getOffer(id) {
+    return offers.find((x) => x.id === id) || null;
+  },
+  async pendingOffers(lineIds) {
+    return offers
+      .filter((o) => o.status === "pending" && lineIds.includes(o.lineId))
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((o) => {
+        const w = users.find((u) => u.id === o.waiterId);
+        return { ...o, waiterName: w ? w.name : "", waiterAvatar: w ? w.avatar : "" };
+      });
+  },
+  async setOfferStatus(id, status) {
+    const o = offers.find((x) => x.id === id);
+    if (o && o.status === "pending") o.status = status;
+    return o || null;
+  },
+  async closeOtherOffers(lineId, exceptId) {
+    for (const o of offers) if (o.lineId === lineId && o.id !== exceptId && o.status === "pending") o.status = "declined";
+  },
+  async withdrawOffer(lineId, waiterId) {
+    const o = offers.find((x) => x.lineId === lineId && x.waiterId === waiterId && x.status === "pending");
+    if (o) o.status = "withdrawn";
+    return !!o;
   },
 
   // Test-only: move a line's check-in time back (used by automated tests).

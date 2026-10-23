@@ -61,6 +61,16 @@ CREATE TABLE IF NOT EXISTS ratings (
   UNIQUE (line_id, rater_id)
 );
 CREATE INDEX IF NOT EXISTS ratings_ratee_idx ON ratings(ratee_id);
+CREATE TABLE IF NOT EXISTS offers (
+  id SERIAL PRIMARY KEY,
+  line_id INT NOT NULL REFERENCES lines(id) ON DELETE CASCADE,
+  waiter_id INT NOT NULL REFERENCES users(id),
+  rate NUMERIC NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS offers_line_idx ON offers(line_id);
+CREATE UNIQUE INDEX IF NOT EXISTS offers_one_pending ON offers(line_id, waiter_id) WHERE status = 'pending';
 `;
 
 const LINE_SELECT = `
@@ -107,7 +117,12 @@ function line(r) {
   );
 }
 
+function offer(r) {
+  return r ? { id: r.id, lineId: r.line_id, waiterId: r.waiter_id, rate: Number(r.rate), status: r.status, createdAt: r.created_at } : null;
+}
+
 const COLS = {
+  rate: "rate",
   status: "status",
   pos: "pos",
   waiterId: "waiter_id",
@@ -254,5 +269,45 @@ module.exports = {
     );
     for (const row of q.rows) out[row.ratee_id][row.ratee_role] = { sum: row.sum, count: row.count };
     return out;
+  },
+  // ---- rate offers from waiters ----
+  async upsertOffer(lineId, waiterId, rate) {
+    const u = await pool.query(
+      "UPDATE offers SET rate = $3, created_at = now() WHERE line_id = $1 AND waiter_id = $2 AND status = 'pending' RETURNING *",
+      [lineId, waiterId, rate]
+    );
+    if (u.rows[0]) return offer(u.rows[0]);
+    const r = await pool.query(
+      "INSERT INTO offers (line_id, waiter_id, rate) VALUES ($1, $2, $3) RETURNING *",
+      [lineId, waiterId, rate]
+    );
+    return offer(r.rows[0]);
+  },
+  async getOffer(id) {
+    const r = await pool.query("SELECT * FROM offers WHERE id = $1", [id]);
+    return offer(r.rows[0]);
+  },
+  async pendingOffers(lineIds) {
+    if (!lineIds.length) return [];
+    const r = await pool.query(
+      `SELECT o.*, u.name AS waiter_name, u.avatar AS waiter_avatar FROM offers o JOIN users u ON u.id = o.waiter_id
+       WHERE o.status = 'pending' AND o.line_id = ANY($1::int[]) ORDER BY o.created_at`,
+      [lineIds]
+    );
+    return r.rows.map((row) => ({ ...offer(row), waiterName: row.waiter_name, waiterAvatar: row.waiter_avatar || "" }));
+  },
+  async setOfferStatus(id, status) {
+    const r = await pool.query("UPDATE offers SET status = $2 WHERE id = $1 AND status = 'pending' RETURNING *", [id, status]);
+    return offer(r.rows[0]);
+  },
+  async closeOtherOffers(lineId, exceptId) {
+    await pool.query("UPDATE offers SET status = 'declined' WHERE line_id = $1 AND id <> $2 AND status = 'pending'", [lineId, exceptId]);
+  },
+  async withdrawOffer(lineId, waiterId) {
+    const r = await pool.query(
+      "UPDATE offers SET status = 'withdrawn' WHERE line_id = $1 AND waiter_id = $2 AND status = 'pending'",
+      [lineId, waiterId]
+    );
+    return r.rowCount > 0;
   },
 };

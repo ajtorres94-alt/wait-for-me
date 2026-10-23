@@ -138,7 +138,9 @@ function summarize(s) {
 // Adds billing, ratings, and "can I rate this?" to lines for this viewer.
 async function decorate(viewer, list) {
   const now = Date.now();
-  const ids = [...new Set(list.flatMap((l) => [l.ownerId, l.waiterId]).filter(Boolean))];
+  const openIds = list.filter((l) => l.status === "open").map((l) => l.id);
+  const offers = await store.pendingOffers(openIds);
+  const ids = [...new Set([...list.flatMap((l) => [l.ownerId, l.waiterId]), ...offers.map((o) => o.waiterId)].filter(Boolean))];
   const sums = await store.ratingSummaries(ids, new Date(now - RATING_DELAY_MS));
   const doneIds = list.filter((l) => l.status === "done").map((l) => l.id);
   const mine = await store.ratingsByRater(viewer.id, doneIds);
@@ -147,6 +149,18 @@ async function decorate(viewer, list) {
     out.bill = billing(l, now);
     out.ownerRating = summarize(sums[l.ownerId] && sums[l.ownerId].booker);
     if (l.waiterId) out.waiterRating = summarize(sums[l.waiterId] && sums[l.waiterId].waiter);
+    if (l.status === "open") {
+      const forLine = offers.filter((o) => o.lineId === l.id);
+      if (l.ownerId === viewer.id) {
+        out.offers = forLine.map((o) => ({
+          id: o.id, rate: o.rate, waiterName: o.waiterName, waiterAvatar: o.waiterAvatar,
+          waiterRating: summarize(sums[o.waiterId] && sums[o.waiterId].waiter),
+        }));
+      } else {
+        const mine = forLine.find((o) => o.waiterId === viewer.id);
+        out.myOffer = mine ? { id: mine.id, rate: mine.rate } : null;
+      }
+    }
     if (l.status === "done" && (l.ownerId === viewer.id || l.waiterId === viewer.id)) {
       const r = mine.find((x) => x.lineId === l.id);
       out.myRating = r ? r.stars : null;
@@ -168,6 +182,10 @@ const num = (v, field, min, max) => {
   if (!Number.isFinite(n) || n < min || n > max) fail(400, `${field} must be between ${min} and ${max}.`);
   return Math.round(n * 100) / 100;
 };
+
+// Rates are set between bookers and waiters; these are only sanity limits.
+const MIN_RATE = 5;
+const MAX_RATE = 200;
 
 // Hours and rates move in quarter steps (15 minutes, 25 cents).
 const quarter = (n) => Math.round(n * 4) / 4;
@@ -270,7 +288,7 @@ async function api(req, res, urlPath, query) {
       cat: CATS.includes(b.cat) ? b.cat : "Errands",
       startText: text(b.startText, "when the waiter should arrive", 40),
       hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
-      rate: quarter(num(b.rate, "Hourly rate", 15, 200)),
+      rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
       notes: text(b.notes, "notes", 500, { required: false }),
       code: String(crypto.randomInt(1000, 10000)),
     });
@@ -279,7 +297,7 @@ async function api(req, res, urlPath, query) {
     return send(res, 201, { line: await one(me, line) });
   }
 
-  const m = urlPath.match(/^\/api\/lines\/(\d+)\/(cancel|claim|advance|position|release|swap|extend|leave|rate)$/);
+  const m = urlPath.match(/^\/api\/lines\/(\d+)\/(cancel|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer)$/);
   if (m && method === "POST") {
     const id = Number(m[1]);
     const action = m[2];
@@ -299,6 +317,36 @@ async function api(req, res, urlPath, query) {
       if (l.ownerId === me.id) fail(400, "You can't claim your own line.");
       updated = await store.updateLine(id, "open", { status: "claimed", waiterId: me.id });
       if (!updated) fail(409, "Someone else just claimed this line.");
+      await store.closeOtherOffers(id, 0);
+      return send(res, 200, { line: await one(me, updated) });
+    }
+
+    // ---- waiters can offer a different rate; the booker accepts or declines ----
+    if (action === "offer") {
+      if (l.ownerId === me.id) fail(400, "You can't make an offer on your own line.");
+      if (l.status !== "open") fail(409, "This line was already claimed.");
+      const rate = quarter(num(b.rate, "Your rate", MIN_RATE, MAX_RATE));
+      if (rate === Number(l.rate)) fail(400, "That's the listed rate. Tap Claim to take it at that rate.");
+      await store.upsertOffer(id, me.id, rate);
+      return send(res, 200, { line: await one(me, l) });
+    }
+    if (action === "withdraw-offer") {
+      if (!(await store.withdrawOffer(id, me.id))) fail(409, "You don't have an open offer on this line.");
+      return send(res, 200, { line: await one(me, l) });
+    }
+    if (action === "accept-offer" || action === "decline-offer") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who posted this line can answer offers.");
+      const o = await store.getOffer(Number(b.offerId));
+      if (!o || o.lineId !== id || o.status !== "pending") fail(409, "That offer is no longer available.");
+      if (action === "decline-offer") {
+        await store.setOfferStatus(o.id, "declined");
+        return send(res, 200, { line: await one(me, l) });
+      }
+      if (l.status !== "open") fail(409, "This line was already claimed.");
+      updated = await store.updateLine(id, "open", { status: "claimed", waiterId: o.waiterId, rate: o.rate });
+      if (!updated) fail(409, "This line was just claimed.");
+      await store.setOfferStatus(o.id, "accepted");
+      await store.closeOtherOffers(id, o.id);
       return send(res, 200, { line: await one(me, updated) });
     }
 
