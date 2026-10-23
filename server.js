@@ -10,6 +10,7 @@ const ROOT = path.join(__dirname, "public");
 const store = process.env.DATABASE_URL ? require("./store-postgres") : require("./store-memory");
 const { billing } = require("./billing");
 const { geocode } = require("./geocode");
+const { computeMetrics } = require("./metrics");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
@@ -106,7 +107,10 @@ async function currentUser(req) {
   const token = cookies(req)[COOKIE];
   if (!token) return null;
   const u = await store.userBySession(sha256(token));
-  return u && !u.suspended ? u : null;
+  if (!u || u.suspended) return null;
+  // Remember when each person last used the app (at most every 10 minutes) for the dashboard.
+  if (!u.lastSeenAt || Date.now() - new Date(u.lastSeenAt).getTime() > 10 * 60 * 1000) store.touchUser(u.id).catch(() => {});
+  return u;
 }
 
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
@@ -607,6 +611,10 @@ async function api(req, res, urlPath, query) {
         })),
       });
     }
+    if (urlPath === "/api/admin/metrics" && method === "GET") {
+      const q = new URL(req.url, "http://x").searchParams;
+      return send(res, 200, computeMetrics(await store.metricsData(), { days: q.get("days"), tz: q.get("tz") }));
+    }
     const am = urlPath.match(/^\/api\/admin\/(lines|users)\/(\d+)\/(remove|suspend|unsuspend|reset-password)$/);
     if (am && method === "POST") {
       const id = Number(am[2]);
@@ -634,6 +642,9 @@ async function api(req, res, urlPath, query) {
     fail(404, "Not found.");
   }
 
+  if (process.env.WFM_TEST_HOOKS === "1" && process.env.WFM_SEED_FILE && urlPath === "/api/test/seed-metrics" && method === "POST" && store._seedMetrics) {
+    return send(res, 200, { users: await store._seedMetrics(require(process.env.WFM_SEED_FILE)()) });
+  }
   // Test-only hook for automated tests (never enabled in production).
   if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/shift" && method === "POST" && store._shiftCheckin) {
     const b = await readBody(req);
@@ -645,7 +656,7 @@ async function api(req, res, urlPath, query) {
 
 // ---------- static files ----------
 // Privacy, terms, and support pages. SUPPORT_EMAIL and COMPANY_NAME come from Railway variables.
-const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html" };
+const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html", "/dashboard": "dashboard.html" };
 function servePage(res, file) {
   fs.readFile(path.join(ROOT, file), "utf8", (err, html) => {
     if (err) return res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
@@ -708,8 +719,8 @@ store
   .init()
   .then(() => {
     server.listen(PORT, () => console.log(`Wait For Me! on port ${PORT}, storage: ${store.kind}`));
-    // Fill in map coordinates for open lines posted before this feature existed.
-    store.openLinesMissingGeo().then(async (rows) => {
+    // Fill in map coordinates and city names for lines posted before those existed.
+    store.linesMissingGeo().then(async (rows) => {
       for (const r of rows) {
         const g = await geocode(r.place);
         if (g) await store.setLineGeo(r.id, g);

@@ -11,20 +11,29 @@ const cache = new Map();
 let last = 0;
 let chain = Promise.resolve();
 
+// "Los Angeles, CA" style name for the dashboard's location breakdown.
+function areaName(a) {
+  if (!a) return null;
+  const city = a.city || a.town || a.village || a.hamlet || a.suburb || a.county || "";
+  const iso = a["ISO3166-2-lvl4"] || "";
+  const st = iso.startsWith("US-") ? iso.slice(3) : a.state || "";
+  return [city, st].filter(Boolean).join(", ") || null;
+}
+
 function lookup(q) {
   const run = async () => {
     const wait = Math.max(0, last + 1100 - Date.now());
     if (wait) await new Promise((r) => setTimeout(r, wait));
     last = Date.now();
     const url = new URL(BASE);
-    url.search = new URLSearchParams({ q, format: "jsonv2", limit: "1", countrycodes: "us" }).toString();
+    url.search = new URLSearchParams({ q, format: "jsonv2", limit: "1", countrycodes: "us", addressdetails: "1" }).toString();
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), 6000);
     try {
       const r = await fetch(url, { headers: { "User-Agent": UA, "Accept-Language": "en" }, signal: ctl.signal });
       if (!r.ok) return null;
       const j = await r.json();
-      return j[0] ? { lat: Number(j[0].lat), lng: Number(j[0].lon) } : null;
+      return j[0] ? { lat: Number(j[0].lat), lng: Number(j[0].lon), area: areaName(j[0].address) } : null;
     } catch {
       return null;
     } finally {
@@ -51,4 +60,4 @@ async function geocode(text) {
   return out;
 }
 
-module.exports = { geocode };
+module.exports = { geocode, areaName };

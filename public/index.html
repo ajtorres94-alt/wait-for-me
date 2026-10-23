@@ -642,7 +642,7 @@ function account(){
   <article class="card section"><h2>How it works</h2>
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
   <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
-  ${me.isAdmin?`<article class="card section"><h2>Admin</h2><div class="links"><a href="/admin" target="_blank" rel="noopener">Open the admin page</a></div></article>`:''}
+  ${me.isAdmin?`<article class="card section"><h2>Admin</h2><div class="links"><a href="/dashboard" target="_blank" rel="noopener">Creator dashboard</a><a href="/admin" target="_blank" rel="noopener">Open the admin page</a></div></article>`:''}
   <article class="card section"><h2>Help and legal</h2>
     <div class="links"><a href="/support" target="_blank" rel="noopener">Support</a><a href="/privacy" target="_blank" rel="noopener">Privacy policy</a><a href="/terms" target="_blank" rel="noopener">Terms of service</a></div></article>
   <button class="btn ghost block" data-act="logout">Sign out</button>

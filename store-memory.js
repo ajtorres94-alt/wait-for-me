@@ -35,7 +35,7 @@ module.exports = {
   // ---- users and sessions ----
   async createUser({ name, email, pwHash }) {
     if (users.some((u) => u.email === email)) return null;
-    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date() };
+    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date(), lastSeenAt: null };
     users.push(u);
     return u;
   },
@@ -82,7 +82,7 @@ module.exports = {
     const now = new Date();
     const l = {
       id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null, outcome: null,
-      approvedHours: f.hours, lat: null, lng: null, geoApprox: null, swapFails: 0, codeResetAt: null,
+      approvedHours: f.hours, lat: null, lng: null, geoApprox: null, area: null, swapFails: 0, codeResetAt: null,
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now, ...f,
     };
     lines.push(l);
@@ -114,10 +114,14 @@ module.exports = {
   },
   async setLineGeo(id, geo) {
     const l = lines.find((x) => x.id === id);
-    if (l) Object.assign(l, { lat: geo.lat, lng: geo.lng, geoApprox: geo.approx });
+    if (l) Object.assign(l, { lat: geo.lat, lng: geo.lng, geoApprox: geo.approx, area: geo.area || l.area || null });
   },
-  async openLinesMissingGeo() {
-    return lines.filter((l) => l.status === "open" && l.lat == null).map((l) => ({ id: l.id, place: l.place }));
+  async linesMissingGeo() {
+    return lines.filter((l) => l.lat == null || l.area == null).map((l) => ({ id: l.id, place: l.place })).reverse().slice(0, 500);
+  },
+  async touchUser(id) {
+    const u = users.find((x) => x.id === id);
+    if (u) u.lastSeenAt = new Date();
   },
   async deleteLine(id, expectStatus) {
     const i = lines.findIndex((x) => x.id === id && x.status === expectStatus);
@@ -231,6 +235,36 @@ module.exports = {
         posted: lines.filter((l) => l.ownerId === u.id).length,
         worked: lines.filter((l) => l.waiterId === u.id && l.status === "done").length,
       }));
+  },
+  async metricsData() {
+    return {
+      users: users.filter((u) => !u.email.endsWith("@deleted.invalid")).map(({ id, name, createdAt, lastSeenAt, suspended, noshows }) => ({ id, name, createdAt, lastSeenAt, suspended, noshows })),
+      lines: lines.map((l) => ({ ...l })),
+      ratings: ratings.map(({ stars, rateeRole, createdAt }) => ({ stars, rateeRole, createdAt })),
+      offers: offers.map(({ status, createdAt }) => ({ status, createdAt })),
+      messages: messages.map(({ createdAt }) => ({ createdAt })),
+    };
+  },
+  // Test-only: add made-up history for the dashboard (used by automated tests).
+  async _seedMetrics(d) {
+    const base = nextUser;
+    const map = new Map();
+    for (const u of d.users) {
+      const id = nextUser++;
+      map.set(u.id, id);
+      users.push({ look: "", avatar: "", pwHash: "", email: `seed${id}@t.dev`, ...u, id, createdAt: new Date(u.createdAt), lastSeenAt: u.lastSeenAt && new Date(u.lastSeenAt) });
+    }
+    const dates = ["startAt", "createdAt", "claimedAt", "checkinAt", "doneAt"];
+    for (const l of d.lines) {
+      const row = { what: "Thing", notes: "", code: "0000", pos: null, swapFails: 0, ...l, id: nextLine++, ownerId: map.get(l.ownerId), waiterId: l.waiterId && map.get(l.waiterId), startText: "" };
+      for (const k of dates) if (row[k]) row[k] = new Date(row[k]);
+      row.updatedAt = row.createdAt;
+      lines.push(row);
+    }
+    for (const r of d.ratings) ratings.push({ id: nextRating++, ...r, createdAt: new Date(r.createdAt) });
+    for (const o of d.offers) offers.push({ id: nextOffer++, lineId: 0, waiterId: 0, rate: 20, ...o, createdAt: new Date(o.createdAt) });
+    for (const m of d.messages) messages.push({ id: nextMessage++, lineId: 0, senderId: 0, body: "x", createdAt: new Date(m.createdAt) });
+    return nextUser - base;
   },
   async adminRemoveLine(id) {
     const i = lines.findIndex((x) => x.id === id);

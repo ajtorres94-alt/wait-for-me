@@ -95,6 +95,8 @@ CREATE TABLE IF NOT EXISTS message_reads (
   last_id INT NOT NULL DEFAULT 0,
   PRIMARY KEY (line_id, user_id)
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS area TEXT;
 `;
 
 const LINE_SELECT = `
@@ -108,7 +110,7 @@ function user(r) {
   return (
     r && {
       id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "",
-      suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at,
+      suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at, lastSeenAt: r.last_seen_at || null,
     }
   );
 }
@@ -144,6 +146,7 @@ function line(r) {
       lat: r.lat,
       lng: r.lng,
       geoApprox: r.geo_approx,
+      area: r.area || null,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -277,11 +280,17 @@ module.exports = {
     return r.rows[0] ? this.getLine(id) : null;
   },
   async setLineGeo(id, geo) {
-    await pool.query("UPDATE lines SET lat = $2, lng = $3, geo_approx = $4 WHERE id = $1", [id, geo.lat, geo.lng, geo.approx]);
+    await pool.query("UPDATE lines SET lat = $2, lng = $3, geo_approx = $4, area = COALESCE($5, area) WHERE id = $1", [
+      id, geo.lat, geo.lng, geo.approx, geo.area || null,
+    ]);
   },
-  async openLinesMissingGeo() {
-    const r = await pool.query("SELECT id, place FROM lines WHERE status = 'open' AND lat IS NULL ORDER BY id LIMIT 200");
+  // Lines that still need map coordinates or a city name (newest first, so recent activity fills in first).
+  async linesMissingGeo() {
+    const r = await pool.query("SELECT id, place FROM lines WHERE lat IS NULL OR area IS NULL ORDER BY id DESC LIMIT 500");
     return r.rows;
+  },
+  async touchUser(id) {
+    await pool.query("UPDATE users SET last_seen_at = now() WHERE id = $1", [id]);
   },
   // Removes personal details but keeps finished jobs and ratings intact for the other person.
   async deleteUser(id) {
@@ -451,6 +460,29 @@ module.exports = {
     const sets = cols.map((c) => `${c} = ${c} - ($2 || ' minutes')::interval`).join(", ");
     const r = await pool.query(`UPDATE lines SET ${sets} WHERE id = $1`, [id, String(minutes)]);
     return r.rowCount > 0;
+  },
+  // Everything the creator dashboard needs, in one pass. Personal details are left out.
+  async metricsData() {
+    const [u, l, r, o, m] = await Promise.all([
+      pool.query("SELECT id, created_at, last_seen_at, suspended, noshows, name FROM users WHERE email NOT LIKE '%@deleted.invalid'"),
+      pool.query(`SELECT id, owner_id, waiter_id, place, cat, status, outcome, start_at, created_at, claimed_at, checkin_at,
+        done_at, hours, approved_hours, rate, lat, lng, area, checkin_verified FROM lines`),
+      pool.query("SELECT stars, ratee_role, created_at FROM ratings"),
+      pool.query("SELECT status, created_at FROM offers"),
+      pool.query("SELECT created_at FROM messages"),
+    ]);
+    return {
+      users: u.rows.map((x) => ({ id: x.id, name: x.name, createdAt: x.created_at, lastSeenAt: x.last_seen_at, suspended: !!x.suspended, noshows: x.noshows || 0 })),
+      lines: l.rows.map((x) => ({
+        id: x.id, ownerId: x.owner_id, waiterId: x.waiter_id, place: x.place, cat: x.cat, status: x.status, outcome: x.outcome,
+        startAt: x.start_at, createdAt: x.created_at, claimedAt: x.claimed_at, checkinAt: x.checkin_at, doneAt: x.done_at,
+        hours: Number(x.hours), approvedHours: x.approved_hours == null ? Number(x.hours) : Number(x.approved_hours),
+        rate: Number(x.rate), lat: x.lat, lng: x.lng, area: x.area, checkinVerified: x.checkin_verified,
+      })),
+      ratings: r.rows.map((x) => ({ stars: x.stars, rateeRole: x.ratee_role, createdAt: x.created_at })),
+      offers: o.rows.map((x) => ({ status: x.status, createdAt: x.created_at })),
+      messages: m.rows.map((x) => ({ createdAt: x.created_at })),
+    };
   },
   async adminRemoveLine(id) {
     const r = await pool.query("DELETE FROM lines WHERE id = $1", [id]);
