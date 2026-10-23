@@ -105,20 +105,37 @@ async function startSession(req, userId) {
 async function currentUser(req) {
   const token = cookies(req)[COOKIE];
   if (!token) return null;
-  return store.userBySession(sha256(token));
+  const u = await store.userBySession(sha256(token));
+  return u && !u.suspended ? u : null;
 }
 
-const publicUser = (u) => u && { id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "" };
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+const isAdmin = (u) => !!u && ADMIN_EMAILS.includes(String(u.email).toLowerCase());
+
+const publicUser = (u) =>
+  u && { id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "", isAdmin: isAdmin(u) };
 const AVATARS = Array.from({ length: 10 }, (_, i) => `a${i}`);
 
-// Only the customer who posted a line ever sees its swap code.
+// What each person may see. Only the booker sees the swap code. Until a waiter is on the
+// line, other users don't see the booker's name, avatar, or notes.
 function lineFor(viewer, l) {
   const out = { ...l };
-  if (l.ownerId !== viewer.id) delete out.code;
-  if (l.ownerId !== viewer.id && l.waiterId !== viewer.id) {
+  const isOwner = l.ownerId === viewer.id;
+  const isWaiter = l.waiterId === viewer.id;
+  if (!isOwner) delete out.code;
+  if (!isOwner && !isWaiter) {
     delete out.waiterLook;
     delete out.pos;
+    delete out.ownerName;
+    delete out.ownerAvatar;
+    delete out.notes;
+    delete out.checkinDist;
   }
+  delete out.swapFails;
+  if (!isOwner) delete out.codeResetAt;
   return out;
 }
 
@@ -135,7 +152,41 @@ function summarize(s) {
   return { avg: Math.round((s.sum / s.count) * 10) / 10, count: s.count };
 }
 
-// Adds billing, ratings, and "can I rate this?" to lines for this viewer.
+// ---- timing rules ----
+const EXPIRE_MS = 2 * 3600 * 1000; // open lines leave Find lines 2 hours after their start time
+const NOSHOW_MS = 15 * 60 * 1000; // a booker can report a no-show 15 minutes after the start time
+const GRACE_MS = 30 * 60 * 1000; // waiter can end the shift 30 minutes after reaching the front
+const FREE_CANCEL_MS = 2 * 3600 * 1000; // cancelling 2+ hours before the start is free
+const CHECKIN_RADIUS_M = 800; // a check-in within about half a mile of the line counts as verified
+const SWAP_TRIES = 5;
+
+const startMs = (l) => (l.startAt ? new Date(l.startAt).getTime() : null);
+const isExpired = (l, now = Date.now()) => l.status === "open" && startMs(l) != null && startMs(l) + EXPIRE_MS < now;
+
+function noShowAllowedAt(l) {
+  if (!["claimed", "enroute"].includes(l.status) || l.checkinAt) return null;
+  const s = startMs(l);
+  if (s != null) return s + NOSHOW_MS;
+  return l.claimedAt ? new Date(l.claimedAt).getTime() + 60 * 60 * 1000 : null;
+}
+
+function cancelOutcome(l, now = Date.now()) {
+  if (l.checkinAt) return "cancelled_inline";
+  const s = startMs(l);
+  if (l.status === "enroute" || s == null || s - now < FREE_CANCEL_MS) return "cancelled_late";
+  return "cancelled_free";
+}
+
+function metersBetween(a, b) {
+  const R = 6371000;
+  const r = (x) => (x * Math.PI) / 180;
+  const dLat = r(b.lat - a.lat);
+  const dLng = r(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+// Adds billing, ratings, offers, unread messages, and allowed actions for this viewer.
 async function decorate(viewer, list) {
   const now = Date.now();
   const openIds = list.filter((l) => l.status === "open").map((l) => l.id);
@@ -144,27 +195,39 @@ async function decorate(viewer, list) {
   const sums = await store.ratingSummaries(ids, new Date(now - RATING_DELAY_MS));
   const doneIds = list.filter((l) => l.status === "done").map((l) => l.id);
   const mine = await store.ratingsByRater(viewer.id, doneIds);
+  const chatIds = list.filter((l) => l.waiterId && (l.ownerId === viewer.id || l.waiterId === viewer.id)).map((l) => l.id);
+  const unread = await store.unreadCounts(viewer.id, chatIds);
   return list.map((l) => {
     const out = lineFor(viewer, l);
+    const isOwner = l.ownerId === viewer.id;
     out.bill = billing(l, now);
+    out.expired = isExpired(l, now);
     out.ownerRating = summarize(sums[l.ownerId] && sums[l.ownerId].booker);
     if (l.waiterId) out.waiterRating = summarize(sums[l.waiterId] && sums[l.waiterId].waiter);
+    if (chatIds.includes(l.id)) out.unread = unread[l.id] || 0;
     if (l.status === "open") {
       const forLine = offers.filter((o) => o.lineId === l.id);
-      if (l.ownerId === viewer.id) {
+      if (isOwner) {
         out.offers = forLine.map((o) => ({
           id: o.id, rate: o.rate, waiterName: o.waiterName, waiterAvatar: o.waiterAvatar,
           waiterRating: summarize(sums[o.waiterId] && sums[o.waiterId].waiter),
         }));
       } else {
-        const mine = forLine.find((o) => o.waiterId === viewer.id);
-        out.myOffer = mine ? { id: mine.id, rate: mine.rate } : null;
+        const mo = forLine.find((o) => o.waiterId === viewer.id);
+        out.myOffer = mo ? { id: mo.id, rate: mo.rate } : null;
       }
     }
-    if (l.status === "done" && (l.ownerId === viewer.id || l.waiterId === viewer.id)) {
+    if (isOwner && l.waiterId && l.status !== "done") {
+      out.cancelAs = cancelOutcome(l, now);
+      out.noShowAt = noShowAllowedAt(l);
+    }
+    if (l.waiterId === viewer.id && l.status === "handoff" && l.handoffAt) {
+      out.graceEndsAt = new Date(l.handoffAt).getTime() + GRACE_MS;
+    }
+    if (l.status === "done" && l.waiterId && (isOwner || l.waiterId === viewer.id)) {
       const r = mine.find((x) => x.lineId === l.id);
       out.myRating = r ? r.stars : null;
-      out.canRate = !r && !!l.doneAt && now - new Date(l.doneAt).getTime() < RATE_WINDOW_MS;
+      out.canRate = !r && l.outcome !== "cancelled_free" && !!l.doneAt && now - new Date(l.doneAt).getTime() < RATE_WINDOW_MS;
     }
     return out;
   });
@@ -190,20 +253,58 @@ const MAX_RATE = 200;
 // Hours and rates move in quarter steps (15 minutes, 25 cents).
 const quarter = (n) => Math.round(n * 4) / 4;
 
-// Simple per-IP limit for sign-in and sign-up attempts.
-const attempts = new Map();
-function limitAuth(req) {
-  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+// Theme parks and similar venues don't allow holding places in line for others.
+const BLOCKED_VENUES =
+  /\b(disney ?land|disney ?world|disney|magic kingdom|epcot|california adventure|universal studios|universal orlando|islands of adventure|epic universe|six flags|magic mountain|knott'?s|legoland|sea ?world|busch gardens|cedar point|kings island|dollywood|theme park|amusement park|water park)\b/i;
+function checkVenue(...texts) {
+  if (texts.some((t) => BLOCKED_VENUES.test(t || "")))
+    fail(400, "Theme parks don't allow holding places in line for others, so we can't post this line.");
+}
+
+function parseStart(v) {
+  const t = Date.parse(v);
+  if (!Number.isFinite(t)) fail(400, "Pick when the waiter should arrive.");
   const now = Date.now();
-  const rec = attempts.get(ip) || { n: 0, start: now };
-  if (now - rec.start > 15 * 60 * 1000) {
+  if (t < now - 5 * 60 * 1000) fail(400, "The start time has already passed. Pick a time in the future.");
+  if (t > now + 60 * 86400 * 1000) fail(400, "Pick a start time within the next 60 days.");
+  return new Date(t);
+}
+
+function lineFields(b) {
+  const place = text(b.place, "where the line is", 120);
+  const what = text(b.what, "what it's for", 120);
+  const notes = text(b.notes, "notes", 500, { required: false });
+  checkVenue(place, what, notes);
+  const startAt = parseStart(b.startAt);
+  return {
+    place, what, notes,
+    cat: CATS.includes(b.cat) ? b.cat : "Errands",
+    startAt,
+    startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
+    hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
+    rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
+  };
+}
+
+// Simple per-key rate limits (sign-in by IP; posting, offers, and messages by user).
+const buckets = new Map();
+function limit(key, max, windowMs, message) {
+  const now = Date.now();
+  const rec = buckets.get(key) || { n: 0, start: now };
+  if (now - rec.start > windowMs) {
     rec.n = 0;
     rec.start = now;
   }
   rec.n++;
-  attempts.set(ip, rec);
-  if (rec.n > 20) fail(429, "Too many attempts. Wait 15 minutes and try again.");
+  buckets.set(key, rec);
+  if (rec.n > max) fail(429, message);
 }
+function limitAuth(req) {
+  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
+  limit(`auth:${ip}`, 20, 15 * 60 * 1000, "Too many attempts. Wait 15 minutes and try again.");
+}
+
+const newCode = () => String(crypto.randomInt(1000, 10000));
 
 // ---------- API ----------
 async function api(req, res, urlPath, query) {
@@ -214,6 +315,7 @@ async function api(req, res, urlPath, query) {
   if (method === "POST" && urlPath === "/api/signup") {
     limitAuth(req);
     const b = await readBody(req);
+    if (b.adult !== true) fail(400, "You must be 18 or older to use Wait For Me!.");
     const name = text(b.name, "your name", 60);
     const email = text(b.email, "your email", 120).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter a valid email address.");
@@ -230,6 +332,7 @@ async function api(req, res, urlPath, query) {
     const email = String(b.email || "").trim().toLowerCase();
     const u = email && (await store.userByEmail(email));
     if (!u || !checkPassword(String(b.password || ""), u.pwHash)) fail(401, "That email and password don't match.");
+    if (u.suspended) fail(403, "This account is suspended. Contact support if you think this is a mistake.");
     return send(res, 200, { user: publicUser(u) }, { "Set-Cookie": await startSession(req, u.id) });
   }
 
@@ -281,23 +384,35 @@ async function api(req, res, urlPath, query) {
 
   if (urlPath === "/api/lines" && method === "POST") {
     const b = await readBody(req);
-    const line = await store.createLine({
-      ownerId: me.id,
-      place: text(b.place, "where the line is", 120),
-      what: text(b.what, "what it's for", 120),
-      cat: CATS.includes(b.cat) ? b.cat : "Errands",
-      startText: text(b.startText, "when the waiter should arrive", 40),
-      hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
-      rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
-      notes: text(b.notes, "notes", 500, { required: false }),
-      code: String(crypto.randomInt(1000, 10000)),
-    });
+    limit(`post:${me.id}`, 20, 86400 * 1000, "You've posted a lot of lines today. Try again tomorrow.");
+    if ((await store.countLines(me.id, { openOnly: true })) >= 10)
+      fail(429, "You have 10 open lines already. Cancel or wait for one to be claimed before posting more.");
+    const f = lineFields(b);
+    const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
     // Look up map coordinates in the background so posting stays instant.
     geocode(line.place).then((g) => g && store.setLineGeo(line.id, g)).catch(() => {});
     return send(res, 201, { line: await one(me, line) });
   }
 
-  const m = urlPath.match(/^\/api\/lines\/(\d+)\/(cancel|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer)$/);
+  const mm = urlPath.match(/^\/api\/lines\/(\d+)\/messages$/);
+  if (mm) {
+    const id = Number(mm[1]);
+    const l = await store.getLine(id);
+    if (!l || !l.waiterId || (l.ownerId !== me.id && l.waiterId !== me.id)) fail(404, "Messages aren't available for this line.");
+    if (method === "POST") {
+      if (l.status === "done") fail(409, "This job is finished, so messages are closed.");
+      limit(`msg:${me.id}`, 30, 60 * 1000, "You're sending messages too fast. Wait a moment.");
+      const b = await readBody(req);
+      await store.addMessage(id, me.id, text(b.body, "a message", 500));
+    }
+    const list = await store.listMessages(id);
+    if (list.length) await store.markRead(id, me.id, list[list.length - 1].id);
+    return send(res, 200, { messages: list.map((x) => ({ ...x, mine: x.senderId === me.id })) });
+  }
+
+  const m = urlPath.match(
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow)$/
+  );
   if (m && method === "POST") {
     const id = Number(m[1]);
     const action = m[2];
@@ -308,14 +423,27 @@ async function api(req, res, urlPath, query) {
 
     if (action === "cancel") {
       if (l.ownerId !== me.id) fail(403, "Only the person who posted this line can cancel it.");
-      if (l.status !== "open") fail(409, "A waiter already claimed this line, so it can't be cancelled here yet.");
+      if (l.status !== "open") fail(409, "A waiter is already on this line. Use Cancel booking instead.");
       if (!(await store.deleteLine(id, "open"))) fail(409, "A waiter just claimed this line.");
       return send(res, 200, { ok: true });
     }
 
+    if (action === "edit") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who posted this line can edit it.");
+      if (l.status !== "open") fail(409, "A waiter already claimed this line, so it can't be edited.");
+      const f = lineFields(b);
+      const fields = { ...f, approvedHours: f.hours };
+      if (f.place !== l.place) Object.assign(fields, { lat: null, lng: null, geoApprox: null });
+      updated = await store.updateLine(id, "open", fields);
+      if (!updated) fail(409, "A waiter just claimed this line.");
+      if (f.place !== l.place) geocode(f.place).then((g) => g && store.setLineGeo(id, g)).catch(() => {});
+      return send(res, 200, { line: await one(me, updated) });
+    }
+
     if (action === "claim") {
       if (l.ownerId === me.id) fail(400, "You can't claim your own line.");
-      updated = await store.updateLine(id, "open", { status: "claimed", waiterId: me.id });
+      if (isExpired(l)) fail(409, "This line's start time has passed.");
+      updated = await store.updateLine(id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date() });
       if (!updated) fail(409, "Someone else just claimed this line.");
       await store.closeOtherOffers(id, 0);
       return send(res, 200, { line: await one(me, updated) });
@@ -324,7 +452,9 @@ async function api(req, res, urlPath, query) {
     // ---- waiters can offer a different rate; the booker accepts or declines ----
     if (action === "offer") {
       if (l.ownerId === me.id) fail(400, "You can't make an offer on your own line.");
-      if (l.status !== "open") fail(409, "This line was already claimed.");
+      if (l.status !== "open" || isExpired(l)) fail(409, "This line is no longer open.");
+      if ((await store.countOffersSince(me.id, new Date(Date.now() - 3600 * 1000))) >= 30)
+        fail(429, "You've sent a lot of offers this hour. Try again later.");
       const rate = quarter(num(b.rate, "Your rate", MIN_RATE, MAX_RATE));
       if (rate === Number(l.rate)) fail(400, "That's the listed rate. Tap Claim to take it at that rate.");
       await store.upsertOffer(id, me.id, rate);
@@ -343,13 +473,14 @@ async function api(req, res, urlPath, query) {
         return send(res, 200, { line: await one(me, l) });
       }
       if (l.status !== "open") fail(409, "This line was already claimed.");
-      updated = await store.updateLine(id, "open", { status: "claimed", waiterId: o.waiterId, rate: o.rate });
+      updated = await store.updateLine(id, "open", { status: "claimed", waiterId: o.waiterId, rate: o.rate, claimedAt: new Date() });
       if (!updated) fail(409, "This line was just claimed.");
       await store.setOfferStatus(o.id, "accepted");
       await store.closeOtherOffers(id, o.id);
       return send(res, 200, { line: await one(me, updated) });
     }
 
+    // ---- booker actions on a booked line ----
     if (action === "extend") {
       if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can add time.");
       if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "Time can only be added while a waiter is on this line.");
@@ -359,10 +490,30 @@ async function api(req, res, urlPath, query) {
       if (!updated) fail(409, "This line changed. Refresh and try again.");
       return send(res, 200, { line: await one(me, updated) });
     }
+    if (action === "cancel-booking") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can cancel it.");
+      if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "This line can't be cancelled now.");
+      const outcome = cancelOutcome(l);
+      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome });
+      if (!updated) fail(409, "This line changed. Refresh and try again.");
+      return send(res, 200, { line: await one(me, updated) });
+    }
+    if (action === "report-noshow") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can report a no-show.");
+      const at = noShowAllowedAt(l);
+      if (at == null) fail(409, "Your waiter has already checked in at the line.");
+      if (Date.now() < at) fail(409, "You can report a no-show 15 minutes after the start time.");
+      const waiterId = l.waiterId;
+      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
+      if (!updated) fail(409, "This line changed. Refresh and try again.");
+      await store.incNoShows(waiterId);
+      return send(res, 200, { line: await one(me, updated) });
+    }
 
     if (action === "rate") {
       if (l.ownerId !== me.id && l.waiterId !== me.id) fail(403, "Only people on this job can rate it.");
-      if (l.status !== "done" || !l.doneAt) fail(409, "You can rate once the job is finished.");
+      if (l.status !== "done" || !l.doneAt || !l.waiterId) fail(409, "You can rate once the job is finished.");
+      if (l.outcome === "cancelled_free") fail(409, "This booking was cancelled before it started.");
       if (Date.now() - new Date(l.doneAt).getTime() > RATE_WINDOW_MS) fail(409, "Ratings close 7 days after a job.");
       const stars = Number(b.stars);
       if (!Number.isInteger(stars) || stars < 1 || stars > 5) fail(400, "Pick 1 to 5 stars.");
@@ -383,8 +534,27 @@ async function api(req, res, urlPath, query) {
       if (!WAITER_STEPS.slice(0, -1).includes(l.status)) fail(409, "This line can't move forward from here.");
       const next = STAGES[STAGES.indexOf(l.status) + 1];
       const fields = { status: next };
-      if (next === "handoff") fields.pos = 1;
-      if (next === "inline") fields.checkinAt = new Date();
+      if (next === "handoff") Object.assign(fields, { pos: 1, handoffAt: new Date() });
+      if (next === "inline") {
+        // Check-in: compare the waiter's location with the line's location.
+        const lat = Number(b.lat);
+        const lng = Number(b.lng);
+        const acc = Math.min(Math.max(Number(b.accuracy) || 0, 0), 500);
+        const hasPos = Number.isFinite(lat) && Number.isFinite(lng) && b.lat !== null && b.lng !== null;
+        const exact = l.lat != null && l.lng != null && !l.geoApprox;
+        if (exact && !hasPos) fail(400, "Turn on location for this app so we can confirm you're at the line, then try again.");
+        let verified = false;
+        let dist = null;
+        if (hasPos && l.lat != null) {
+          dist = Math.round(metersBetween({ lat, lng }, { lat: l.lat, lng: l.lng }));
+          if (exact && dist - acc > CHECKIN_RADIUS_M) {
+            const mi = (dist / 1609.34).toFixed(1);
+            fail(400, `You're about ${mi} miles from the line. Check in once you're there.`);
+          }
+          verified = exact && dist - acc <= CHECKIN_RADIUS_M;
+        }
+        Object.assign(fields, { checkinAt: new Date(), checkinVerified: verified, checkinDist: dist });
+      }
       updated = await store.updateLine(id, l.status, fields);
     } else if (action === "position") {
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the line before updating your place.");
@@ -392,18 +562,76 @@ async function api(req, res, urlPath, query) {
       updated = await store.updateLine(id, l.status, { pos });
     } else if (action === "release") {
       if (!["claimed", "enroute"].includes(l.status)) fail(409, "You can only release a line before you're in it.");
-      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null });
+      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
     } else if (action === "swap") {
       if (l.status !== "handoff") fail(409, "Mark that you're at the front before completing the swap.");
-      if (String(b.code || "").trim() !== l.code) fail(400, "That code doesn't match. Check it with the customer and try again.");
-      updated = await store.updateLine(id, "handoff", { status: "done", doneAt: new Date(), outcome: "swapped" });
+      if (String(b.code || "").trim() !== l.code) {
+        const fails = (l.swapFails || 0) + 1;
+        if (fails >= SWAP_TRIES) {
+          await store.updateLine(id, "handoff", { swapFails: 0, code: newCode(), codeResetAt: new Date() });
+          fail(400, "Too many wrong codes. For safety we gave the booker a new code. Ask them for it.");
+        }
+        await store.updateLine(id, "handoff", { swapFails: fails });
+        fail(400, `That code doesn't match. ${SWAP_TRIES - fails} ${SWAP_TRIES - fails === 1 ? "try" : "tries"} left before the code resets.`);
+      }
+      updated = await store.updateLine(id, "handoff", { status: "done", doneAt: new Date(), outcome: "swapped", swapFails: 0 });
     } else if (action === "leave") {
       if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a shift while you're in line.");
-      if (!billing(l).timeUp) fail(409, "You can end the shift once the approved time runs out. Ask your customer to add time if the line is still moving.");
-      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "time_up" });
+      const graceOver = l.status === "handoff" && l.handoffAt && Date.now() >= new Date(l.handoffAt).getTime() + GRACE_MS;
+      if (graceOver) {
+        updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "customer_noshow" });
+      } else {
+        if (!billing(l).timeUp)
+          fail(409, "You can end the shift once the approved time runs out, or 30 minutes after you reach the front if the booker doesn't show.");
+        updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "time_up" });
+      }
     }
     if (!updated) fail(409, "This line changed. Refresh and try again.");
     return send(res, 200, { line: await one(me, updated) });
+  }
+
+  // ---- admin (only for emails listed in the ADMIN_EMAILS variable) ----
+  if (urlPath.startsWith("/api/admin/")) {
+    if (!isAdmin(me)) fail(404, "Not found.");
+    if (urlPath === "/api/admin/overview" && method === "GET") {
+      const [lines, users] = await Promise.all([store.adminLines(), store.adminUsers()]);
+      return send(res, 200, {
+        lines: lines.map((l) => ({
+          id: l.id, place: l.place, what: l.what, status: l.status, outcome: l.outcome, startText: l.startText,
+          startAt: l.startAt, rate: l.rate, ownerId: l.ownerId, ownerName: l.ownerName, waiterId: l.waiterId,
+          waiterName: l.waiterName, checkinVerified: l.checkinVerified, createdAt: l.createdAt, bill: billing(l),
+        })),
+        users: users.map((u) => ({
+          id: u.id, name: u.name, email: u.email, suspended: u.suspended, noshows: u.noshows,
+          posted: u.posted, worked: u.worked, createdAt: u.createdAt,
+        })),
+      });
+    }
+    const am = urlPath.match(/^\/api\/admin\/(lines|users)\/(\d+)\/(remove|suspend|unsuspend|reset-password)$/);
+    if (am && method === "POST") {
+      const id = Number(am[2]);
+      if (am[1] === "lines" && am[3] === "remove") {
+        if (!(await store.adminRemoveLine(id))) fail(404, "That line doesn't exist.");
+        return send(res, 200, { ok: true });
+      }
+      if (am[1] === "users") {
+        const u = await store.userById(id);
+        if (!u) fail(404, "That user doesn't exist.");
+        if (am[3] === "suspend" || am[3] === "unsuspend") {
+          if (u.id === me.id) fail(400, "You can't suspend your own account.");
+          await store.updateUser(id, { suspended: am[3] === "suspend" });
+          if (am[3] === "suspend") await store.deleteSessionsFor(id);
+          return send(res, 200, { ok: true });
+        }
+        if (am[3] === "reset-password") {
+          const temp = crypto.randomBytes(6).toString("base64url");
+          await store.updateUser(id, { pwHash: hashPassword(temp) });
+          await store.deleteSessionsFor(id);
+          return send(res, 200, { ok: true, tempPassword: temp });
+        }
+      }
+    }
+    fail(404, "Not found.");
   }
 
   // Test-only hook for automated tests (never enabled in production).
@@ -417,7 +645,7 @@ async function api(req, res, urlPath, query) {
 
 // ---------- static files ----------
 // Privacy, terms, and support pages. SUPPORT_EMAIL and COMPANY_NAME come from Railway variables.
-const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html" };
+const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html" };
 function servePage(res, file) {
   fs.readFile(path.join(ROOT, file), "utf8", (err, html) => {
     if (err) return res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");

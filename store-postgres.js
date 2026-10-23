@@ -71,6 +71,30 @@ CREATE TABLE IF NOT EXISTS offers (
 );
 CREATE INDEX IF NOT EXISTS offers_line_idx ON offers(line_id);
 CREATE UNIQUE INDEX IF NOT EXISTS offers_one_pending ON offers(line_id, waiter_id) WHERE status = 'pending';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS noshows INT NOT NULL DEFAULT 0;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS start_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS swap_fails INT NOT NULL DEFAULT 0;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS code_reset_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS checkin_verified BOOLEAN;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS checkin_dist_m INT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS handoff_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS lines_start_idx ON lines(start_at);
+CREATE TABLE IF NOT EXISTS messages (
+  id SERIAL PRIMARY KEY,
+  line_id INT NOT NULL REFERENCES lines(id) ON DELETE CASCADE,
+  sender_id INT NOT NULL REFERENCES users(id),
+  body TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS messages_line_idx ON messages(line_id, id);
+CREATE TABLE IF NOT EXISTS message_reads (
+  line_id INT NOT NULL REFERENCES lines(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id),
+  last_id INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (line_id, user_id)
+);
 `;
 
 const LINE_SELECT = `
@@ -81,7 +105,12 @@ JOIN users o ON o.id = l.owner_id
 LEFT JOIN users w ON w.id = l.waiter_id`;
 
 function user(r) {
-  return r && { id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "", createdAt: r.created_at };
+  return (
+    r && {
+      id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "",
+      suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at,
+    }
+  );
 }
 function line(r) {
   return (
@@ -98,6 +127,13 @@ function line(r) {
       what: r.what,
       cat: r.cat,
       startText: r.start_text,
+      startAt: r.start_at,
+      swapFails: r.swap_fails || 0,
+      codeResetAt: r.code_reset_at,
+      checkinVerified: r.checkin_verified,
+      checkinDist: r.checkin_dist_m,
+      handoffAt: r.handoff_at,
+      claimedAt: r.claimed_at,
       hours: Number(r.hours),
       rate: Number(r.rate),
       notes: r.notes,
@@ -130,6 +166,23 @@ const COLS = {
   doneAt: "done_at",
   outcome: "outcome",
   approvedHours: "approved_hours",
+  code: "code",
+  swapFails: "swap_fails",
+  codeResetAt: "code_reset_at",
+  checkinVerified: "checkin_verified",
+  checkinDist: "checkin_dist_m",
+  handoffAt: "handoff_at",
+  claimedAt: "claimed_at",
+  place: "place",
+  what: "what",
+  cat: "cat",
+  startText: "start_text",
+  startAt: "start_at",
+  hours: "hours",
+  notes: "notes",
+  lat: "lat",
+  lng: "lng",
+  geoApprox: "geo_approx",
 };
 
 module.exports = {
@@ -151,10 +204,21 @@ module.exports = {
   },
   async updateUser(id, fields) {
     const r = await pool.query(
-      "UPDATE users SET look = COALESCE($2, look), avatar = COALESCE($3, avatar) WHERE id = $1 RETURNING *",
-      [id, fields.look ?? null, fields.avatar ?? null]
+      `UPDATE users SET look = COALESCE($2, look), avatar = COALESCE($3, avatar),
+         suspended = COALESCE($4, suspended), pw_hash = COALESCE($5, pw_hash) WHERE id = $1 RETURNING *`,
+      [id, fields.look ?? null, fields.avatar ?? null, fields.suspended ?? null, fields.pwHash ?? null]
     );
     return user(r.rows[0]) || null;
+  },
+  async userById(id) {
+    const r = await pool.query("SELECT * FROM users WHERE id = $1", [id]);
+    return user(r.rows[0]) || null;
+  },
+  async incNoShows(id) {
+    await pool.query("UPDATE users SET noshows = noshows + 1 WHERE id = $1", [id]);
+  },
+  async deleteSessionsFor(userId) {
+    await pool.query("DELETE FROM sessions WHERE user_id = $1", [userId]);
   },
 
   async createSession(tokenHash, userId) {
@@ -174,9 +238,9 @@ module.exports = {
 
   async createLine(f) {
     const r = await pool.query(
-      `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6) RETURNING id`,
-      [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code]
+      `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10) RETURNING id`,
+      [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt]
     );
     return this.getLine(r.rows[0].id);
   },
@@ -188,8 +252,13 @@ module.exports = {
     let where, args;
     if (ownerId) [where, args] = ["l.owner_id = $1", [ownerId]];
     else if (waiterId) [where, args] = ["l.waiter_id = $1", [waiterId]];
-    else [where, args] = ["l.status = 'open' AND l.owner_id <> $1", [openExcept]];
-    const r = await pool.query(`${LINE_SELECT} WHERE ${where} ORDER BY l.created_at DESC LIMIT 200`, args);
+    else
+      [where, args] = [
+        "l.status = 'open' AND l.owner_id <> $1 AND (l.start_at IS NULL OR l.start_at > now() - interval '2 hours')",
+        [openExcept],
+      ];
+    const order = openExcept ? "l.start_at ASC NULLS LAST, l.created_at DESC" : "l.created_at DESC";
+    const r = await pool.query(`${LINE_SELECT} WHERE ${where} ORDER BY ${order} LIMIT 200`, args);
     return r.rows.map(line);
   },
   async updateLine(id, expectStatus, fields) {
@@ -220,6 +289,7 @@ module.exports = {
     try {
       await c.query("BEGIN");
       await c.query("DELETE FROM lines WHERE owner_id = $1 AND status = 'open'", [id]);
+      await c.query("UPDATE offers SET status = 'withdrawn' WHERE waiter_id = $1 AND status = 'pending'", [id]);
       await c.query("DELETE FROM sessions WHERE user_id = $1", [id]);
       await c.query(
         `UPDATE users SET name = 'Deleted user', email = $2, pw_hash = '', look = '', avatar = '' WHERE id = $1`,
@@ -291,7 +361,8 @@ module.exports = {
     if (!lineIds.length) return [];
     const r = await pool.query(
       `SELECT o.*, u.name AS waiter_name, u.avatar AS waiter_avatar FROM offers o JOIN users u ON u.id = o.waiter_id
-       WHERE o.status = 'pending' AND o.line_id = ANY($1::int[]) ORDER BY o.created_at`,
+       WHERE o.status = 'pending' AND o.line_id = ANY($1::int[]) AND o.created_at > now() - interval '12 hours'
+       ORDER BY o.created_at`,
       [lineIds]
     );
     return r.rows.map((row) => ({ ...offer(row), waiterName: row.waiter_name, waiterAvatar: row.waiter_avatar || "" }));
@@ -308,6 +379,81 @@ module.exports = {
       "UPDATE offers SET status = 'withdrawn' WHERE line_id = $1 AND waiter_id = $2 AND status = 'pending'",
       [lineId, waiterId]
     );
+    return r.rowCount > 0;
+  },
+  async countOffersSince(waiterId, since) {
+    const r = await pool.query("SELECT COUNT(*)::int AS n FROM offers WHERE waiter_id = $1 AND created_at > $2", [waiterId, since]);
+    return r.rows[0].n;
+  },
+
+  // ---- limits ----
+  async countLines(ownerId, { openOnly, since }) {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM lines WHERE owner_id = $1 ${openOnly ? "AND status = 'open'" : ""} ${since ? "AND created_at > $2" : ""}`,
+      since ? [ownerId, since] : [ownerId]
+    );
+    return r.rows[0].n;
+  },
+
+  // ---- messages between booker and waiter ----
+  async addMessage(lineId, senderId, body) {
+    const r = await pool.query("INSERT INTO messages (line_id, sender_id, body) VALUES ($1, $2, $3) RETURNING id", [lineId, senderId, body]);
+    return r.rows[0].id;
+  },
+  async listMessages(lineId) {
+    const r = await pool.query(
+      "SELECT id, sender_id, body, created_at FROM (SELECT * FROM messages WHERE line_id = $1 ORDER BY id DESC LIMIT 200) m ORDER BY id",
+      [lineId]
+    );
+    return r.rows.map((m) => ({ id: m.id, senderId: m.sender_id, body: m.body, createdAt: m.created_at }));
+  },
+  async markRead(lineId, userId, lastId) {
+    await pool.query(
+      `INSERT INTO message_reads (line_id, user_id, last_id) VALUES ($1, $2, $3)
+       ON CONFLICT (line_id, user_id) DO UPDATE SET last_id = GREATEST(message_reads.last_id, EXCLUDED.last_id)`,
+      [lineId, userId, lastId]
+    );
+  },
+  async unreadCounts(userId, lineIds) {
+    const out = {};
+    if (!lineIds.length) return out;
+    const r = await pool.query(
+      `SELECT m.line_id, COUNT(*)::int AS n FROM messages m
+       LEFT JOIN message_reads r ON r.line_id = m.line_id AND r.user_id = $1
+       WHERE m.line_id = ANY($2::int[]) AND m.sender_id <> $1 AND m.id > COALESCE(r.last_id, 0)
+       GROUP BY m.line_id`,
+      [userId, lineIds]
+    );
+    for (const row of r.rows) out[row.line_id] = row.n;
+    return out;
+  },
+  async countMessagesSince(senderId, since) {
+    const r = await pool.query("SELECT COUNT(*)::int AS n FROM messages WHERE sender_id = $1 AND created_at > $2", [senderId, since]);
+    return r.rows[0].n;
+  },
+
+  // ---- admin ----
+  async adminLines() {
+    const r = await pool.query(`${LINE_SELECT} ORDER BY l.created_at DESC LIMIT 150`);
+    return r.rows.map(line);
+  },
+  async adminUsers() {
+    const r = await pool.query(
+      `SELECT u.*, (SELECT COUNT(*) FROM lines WHERE owner_id = u.id)::int AS posted,
+         (SELECT COUNT(*) FROM lines WHERE waiter_id = u.id AND status = 'done')::int AS worked
+       FROM users u ORDER BY u.created_at DESC LIMIT 300`
+    );
+    return r.rows.map((row) => ({ ...user(row), posted: row.posted, worked: row.worked }));
+  },
+  // Test-only: move a line's timestamps back (used by automated tests when WFM_TEST_HOOKS=1).
+  async _shiftCheckin(id, minutes) {
+    const cols = ["checkin_at", "done_at", "handoff_at", "start_at", "claimed_at", "code_reset_at"];
+    const sets = cols.map((c) => `${c} = ${c} - ($2 || ' minutes')::interval`).join(", ");
+    const r = await pool.query(`UPDATE lines SET ${sets} WHERE id = $1`, [id, String(minutes)]);
+    return r.rowCount > 0;
+  },
+  async adminRemoveLine(id) {
+    const r = await pool.query("DELETE FROM lines WHERE id = $1", [id]);
     return r.rowCount > 0;
   },
 };

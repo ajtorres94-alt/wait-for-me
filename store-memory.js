@@ -6,12 +6,17 @@ const sessions = new Map(); // tokenHash -> { userId, createdAt }
 const lines = [];
 const ratings = [];
 const offers = [];
-let nextOffer = 1;
+const messages = [];
+const reads = new Map(); // "lineId:userId" -> last read message id
 let nextUser = 1;
 let nextLine = 1;
 let nextRating = 1;
+let nextOffer = 1;
+let nextMessage = 1;
 
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const OFFER_MS = 12 * 60 * 60 * 1000;
+const EXPIRE_MS = 2 * 60 * 60 * 1000;
 
 function withNames(l) {
   if (!l) return null;
@@ -27,21 +32,28 @@ module.exports = {
   kind: "memory",
   async init() {},
 
+  // ---- users and sessions ----
   async createUser({ name, email, pwHash }) {
     if (users.some((u) => u.email === email)) return null;
-    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", createdAt: new Date() };
+    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date() };
     users.push(u);
     return u;
   },
   async userByEmail(email) {
     return users.find((u) => u.email === email) || null;
   },
+  async userById(id) {
+    return users.find((u) => u.id === id) || null;
+  },
   async updateUser(id, fields) {
     const u = users.find((x) => x.id === id);
-    if (u) for (const k of ["look", "avatar"]) if (fields[k] !== undefined) u[k] = fields[k];
+    if (u) for (const k of ["look", "avatar", "suspended", "pwHash"]) if (fields[k] !== undefined) u[k] = fields[k];
     return u || null;
   },
-
+  async incNoShows(id) {
+    const u = users.find((x) => x.id === id);
+    if (u) u.noshows++;
+  },
   async createSession(tokenHash, userId) {
     sessions.set(tokenHash, { userId, createdAt: Date.now() });
   },
@@ -53,12 +65,25 @@ module.exports = {
   async deleteSession(tokenHash) {
     sessions.delete(tokenHash);
   },
+  async deleteSessionsFor(userId) {
+    for (const [k, s] of sessions) if (s.userId === userId) sessions.delete(k);
+  },
+  // Removes personal details but keeps finished jobs and ratings intact for the other person.
+  async deleteUser(id) {
+    for (let i = lines.length - 1; i >= 0; i--) if (lines[i].ownerId === id && lines[i].status === "open") lines.splice(i, 1);
+    for (const o of offers) if (o.waiterId === id && o.status === "pending") o.status = "withdrawn";
+    await this.deleteSessionsFor(id);
+    const u = users.find((x) => x.id === id);
+    if (u) Object.assign(u, { name: "Deleted user", email: `deleted-${id}@deleted.invalid`, pwHash: "", look: "", avatar: "" });
+  },
 
+  // ---- lines ----
   async createLine(f) {
     const now = new Date();
     const l = {
-      id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null,
-      outcome: null, approvedHours: f.hours, lat: null, lng: null, geoApprox: null, createdAt: now, updatedAt: now, ...f,
+      id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null, outcome: null,
+      approvedHours: f.hours, lat: null, lng: null, geoApprox: null, swapFails: 0, codeResetAt: null,
+      checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now, ...f,
     };
     lines.push(l);
     return withNames(l);
@@ -70,7 +95,14 @@ module.exports = {
     let r = lines;
     if (ownerId) r = r.filter((l) => l.ownerId === ownerId);
     if (waiterId) r = r.filter((l) => l.waiterId === waiterId);
-    if (openExcept) r = r.filter((l) => l.status === "open" && l.ownerId !== openExcept);
+    if (openExcept) {
+      const cutoff = Date.now() - EXPIRE_MS;
+      r = r.filter((l) => l.status === "open" && l.ownerId !== openExcept && (!l.startAt || new Date(l.startAt) > cutoff));
+      return r
+        .slice()
+        .sort((a, b) => (a.startAt ? +new Date(a.startAt) : Infinity) - (b.startAt ? +new Date(b.startAt) : Infinity) || b.createdAt - a.createdAt)
+        .map(withNames);
+    }
     return r.slice().sort((a, b) => b.createdAt - a.createdAt).map(withNames);
   },
   // Changes a line only if it is still in the expected status. Returns null otherwise.
@@ -87,19 +119,15 @@ module.exports = {
   async openLinesMissingGeo() {
     return lines.filter((l) => l.status === "open" && l.lat == null).map((l) => ({ id: l.id, place: l.place }));
   },
-  // Removes personal details but keeps finished jobs and ratings intact for the other person.
-  async deleteUser(id) {
-    for (let i = lines.length - 1; i >= 0; i--) if (lines[i].ownerId === id && lines[i].status === "open") lines.splice(i, 1);
-    for (const [k, s] of sessions) if (s.userId === id) sessions.delete(k);
-    const u = users.find((x) => x.id === id);
-    if (u) Object.assign(u, { name: "Deleted user", email: `deleted-${id}@deleted.invalid`, pwHash: "", look: "", avatar: "" });
-  },
   async deleteLine(id, expectStatus) {
     const i = lines.findIndex((x) => x.id === id && x.status === expectStatus);
     if (i < 0) return false;
     lines.splice(i, 1);
     for (let k = offers.length - 1; k >= 0; k--) if (offers[k].lineId === id) offers.splice(k, 1);
     return true;
+  },
+  async countLines(ownerId, { openOnly, since }) {
+    return lines.filter((l) => l.ownerId === ownerId && (!openOnly || l.status === "open") && (!since || l.createdAt > since)).length;
   },
 
   // ---- ratings ----
@@ -138,8 +166,9 @@ module.exports = {
     return offers.find((x) => x.id === id) || null;
   },
   async pendingOffers(lineIds) {
+    const cutoff = Date.now() - OFFER_MS;
     return offers
-      .filter((o) => o.status === "pending" && lineIds.includes(o.lineId))
+      .filter((o) => o.status === "pending" && lineIds.includes(o.lineId) && o.createdAt > cutoff)
       .sort((a, b) => a.createdAt - b.createdAt)
       .map((o) => {
         const w = users.find((u) => u.id === o.waiterId);
@@ -147,8 +176,8 @@ module.exports = {
       });
   },
   async setOfferStatus(id, status) {
-    const o = offers.find((x) => x.id === id);
-    if (o && o.status === "pending") o.status = status;
+    const o = offers.find((x) => x.id === id && x.status === "pending");
+    if (o) o.status = status;
     return o || null;
   },
   async closeOtherOffers(lineId, exceptId) {
@@ -159,12 +188,63 @@ module.exports = {
     if (o) o.status = "withdrawn";
     return !!o;
   },
+  async countOffersSince(waiterId, since) {
+    return offers.filter((o) => o.waiterId === waiterId && o.createdAt > since).length;
+  },
 
-  // Test-only: move a line's check-in time back (used by automated tests).
+  // ---- messages between booker and waiter ----
+  async addMessage(lineId, senderId, body) {
+    const m = { id: nextMessage++, lineId, senderId, body, createdAt: new Date() };
+    messages.push(m);
+    return m.id;
+  },
+  async listMessages(lineId) {
+    return messages.filter((m) => m.lineId === lineId).slice(-200).map(({ id, senderId, body, createdAt }) => ({ id, senderId, body, createdAt }));
+  },
+  async markRead(lineId, userId, lastId) {
+    const k = `${lineId}:${userId}`;
+    reads.set(k, Math.max(reads.get(k) || 0, lastId));
+  },
+  async unreadCounts(userId, lineIds) {
+    const out = {};
+    for (const m of messages) {
+      if (!lineIds.includes(m.lineId) || m.senderId === userId) continue;
+      if (m.id > (reads.get(`${m.lineId}:${userId}`) || 0)) out[m.lineId] = (out[m.lineId] || 0) + 1;
+    }
+    return out;
+  },
+  async countMessagesSince(senderId, since) {
+    return messages.filter((m) => m.senderId === senderId && m.createdAt > since).length;
+  },
+
+  // ---- admin ----
+  async adminLines() {
+    return lines.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 150).map(withNames);
+  },
+  async adminUsers() {
+    return users
+      .slice()
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, 300)
+      .map((u) => ({
+        ...u,
+        posted: lines.filter((l) => l.ownerId === u.id).length,
+        worked: lines.filter((l) => l.waiterId === u.id && l.status === "done").length,
+      }));
+  },
+  async adminRemoveLine(id) {
+    const i = lines.findIndex((x) => x.id === id);
+    if (i < 0) return false;
+    lines.splice(i, 1);
+    return true;
+  },
+
+  // Test-only: move a line's timestamps back (used by automated tests).
   async _shiftCheckin(id, minutes) {
     const l = lines.find((x) => x.id === id);
-    if (l && l.checkinAt) l.checkinAt = new Date(l.checkinAt.getTime() - minutes * 60000);
-    if (l && l.doneAt) l.doneAt = new Date(l.doneAt.getTime() - minutes * 60000);
-    return !!l;
+    if (!l) return false;
+    for (const k of ["checkinAt", "doneAt", "handoffAt", "startAt", "claimedAt", "codeResetAt"])
+      if (l[k]) l[k] = new Date(new Date(l[k]).getTime() - minutes * 60000);
+    return true;
   },
 };

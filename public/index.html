@@ -258,6 +258,21 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .counter{display:flex;flex-direction:column;gap:8px;background:var(--bg);border-radius:12px;padding:12px}
 .stepper{display:flex;gap:8px;align-items:center}
 .stepper input{flex:1;min-width:0;text-align:center;font-size:18px;font-weight:700;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px}
+.check{display:flex;gap:10px;align-items:center;font-size:14px;font-weight:600;min-height:44px}
+.check input{width:20px;height:20px;accent-color:var(--ink)}
+.pill.expired{background:var(--line);color:var(--muted)}
+.okline{font-size:13px;font-weight:700;color:var(--good)}
+.confirm{display:flex;flex-direction:column;gap:8px;border:1px solid var(--warn);border-radius:12px;padding:12px}
+.badge.inline{position:static;display:inline-grid;margin-left:4px}
+.chat{display:flex;flex-direction:column;gap:8px}
+.msgs{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow-y:auto;background:var(--bg);border-radius:12px;padding:10px}
+.msg{align-self:flex-start;max-width:80%;background:var(--surface);border:1px solid var(--line);border-radius:12px 12px 12px 4px;padding:7px 10px;font-size:14px;overflow-wrap:anywhere}
+.msg.me{align-self:flex-end;background:var(--ink);color:var(--bg);border-color:var(--ink);border-radius:12px 12px 4px 12px}
+.msg time{display:block;font-size:11px;opacity:.7;margin-top:2px}
+.chat-send{display:flex;gap:8px}
+.chat-send input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.field small{color:var(--muted);font-size:12px}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
 </style>
 <div class="intro" id="intro" role="dialog" aria-label="Wait For Me!">
@@ -304,7 +319,7 @@ const store={get(k){try{return localStorage.getItem(k)}catch{return null}},set(k
 
 let delOpen=false,offerOpen=null;const offerDraft={};
 let me=null, role=store.get('wfm_role')==='waiter'?'waiter':'customer', tab={customer:'mine',waiter:'find'}, filter='All', authMode='signup';
-let data={mine:[],open:[],shifts:[]}, lastJSON='';
+let data={mine:[],open:[],shifts:[]}, lastJSON='', lastData=null;
 
 async function api(path,{method='GET',body}={}){
   let r;
@@ -356,6 +371,40 @@ function rateHTML(j,name,kind){
    <div class="filters">${(TAGS[kind]||[]).map(t=>`<button type="button" class="chip" aria-pressed="${d.tags.includes(t)}" data-tag="${esc(t)}" data-id="${j.id}">${esc(t)}</button>`).join('')}</div>
    <button class="btn small" data-act="rate" data-id="${j.id}"${d.stars?'':' disabled'}>Submit rating</button>
    <div class="hint">Ratings stay private for 3 days, then count toward their profile.</div></div>`}
+const fmtStart=d=>d.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const localInput=d=>{const z=new Date(d.getTime()-d.getTimezoneOffset()*60000);return z.toISOString().slice(0,16)};
+const clockOf=ms=>new Date(ms).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+function checkinNote(j){
+  if(!j.checkinAt)return'';
+  return j.checkinVerified?`<div class="okline">✓ Check-in verified at the line</div>`:`<div class="hint">Check-in location couldn't be verified for this line's address.</div>`}
+const OUTCOME_TXT={
+  customer:{
+    time_up:w=>`Your approved time ran out, so ${w} ended the shift.`,
+    customer_noshow:w=>`You didn't swap in within 30 minutes of ${w} reaching the front, so the shift ended. You pay for the time waited.`,
+    cancelled_free:()=>`You cancelled more than 2 hours before the start, so there's no charge.`,
+    cancelled_late:()=>`You cancelled within 2 hours of the start or after your waiter left for the line, so you pay 1 hour of waiter pay with no service fee.`,
+    cancelled_inline:w=>`You cancelled after ${w} checked in, so you pay for the time they waited.`},
+  waiter:{
+    time_up:()=>`The approved time ran out and you ended the shift.`,
+    customer_noshow:o=>`${o} didn't swap in within 30 minutes, so you ended the shift and are paid for your time.`,
+    cancelled_free:o=>`${o} cancelled more than 2 hours before the start.`,
+    cancelled_late:o=>`${o} cancelled late, so you're paid 1 hour.`,
+    cancelled_inline:o=>`${o} cancelled after you checked in, so you're paid for the time you waited.`}};
+// ---- messages ----
+const chatOpen=new Set(),chatData={},chatDraft={};
+function chatHTML(j,other){
+  const n=j.unread||0,open=chatOpen.has(j.id),msgs=chatData[j.id]||[];
+  const head=`<button class="btn ghost small chatbtn" data-act="chat-toggle" data-id="${j.id}" aria-expanded="${open}">Messages${n?` <span class="badge inline">${n}</span>`:''}</button>`;
+  if(!open)return`<div class="btns">${head}</div>`;
+  return`<div class="chat"><div class="btns">${head}</div>
+    <div class="msgs" id="msgs-${j.id}" aria-live="polite">${msgsHTML(j.id,other)}</div>
+    <div class="chat-send"><label class="sr" for="chat-${j.id}">Message to ${esc(other)}</label><input id="chat-${j.id}" maxlength="500" placeholder="Message ${esc(other)}" value="${esc(chatDraft[j.id]||'')}" autocomplete="off"><button class="btn small" data-act="chat-send" data-id="${j.id}">Send</button></div></div>`}
+const msgsHTML=(id,other)=>{const msgs=chatData[id]||[];return msgs.length?msgs.map(m=>`<div class="msg ${m.mine?'me':''}"><div>${esc(m.body)}</div><time>${clockOf(Date.parse(m.createdAt))}</time></div>`).join(''):`<div class="hint">Send ${esc(other)} a message. Only the two of you can see it.</div>`};
+async function loadChat(id){try{const r=await api(`/lines/${id}/messages`);chatData[id]=r.messages}catch{}}
+// Update open conversations in place, so new messages appear even while typing.
+function paintChats(){chatOpen.forEach(id=>{const el=document.getElementById('msgs-'+id);if(!el)return;
+  const j=[...data.mine,...data.shifts].find(x=>x.id===id);const html=msgsHTML(id,j?(j.ownerId===me.id?j.waiterName:j.ownerName):'');
+  if(el.innerHTML!==html){el.innerHTML=html;el.scrollTop=el.scrollHeight}})}
 function whoCard(name,sub,look,av){
   return`<div class="who">${av&&AVATARS[+av.slice(1)]?`<div class="avatar pic">${avatarSVG(av,name)}</div>`:`<div class="avatar" aria-hidden="true">${esc(initials(name))}</div>`}<div><b>${esc(name)}</b><div class="meta">${esc(sub)}</div>
     ${look!==undefined?`<div class="look">${look?`Look for: <b>${esc(look)}</b>`:'They haven\'t said what they\'re wearing yet.'}</div>`:''}</div></div>`}
@@ -407,7 +456,7 @@ function renderTabs(){
   const mine=data.mine.filter(j=>j.status!=='done').length, open=data.open.length, shifts=data.shifts.filter(j=>j.status!=='done').length;
   const t=role==='customer'?[['mine','My lines',mine],['post','Post',0],['account','Account',0]]:[['find','Find lines',open],['shifts','My shifts',shifts],['account','Account',0]];
   $('#tabs').innerHTML=t.map(([k,l,c])=>`<button role="tab" id="tab-${k}" class="${k==='post'?'plus':''}" aria-selected="${tab[role]===k}" data-k="${k}"><span class="ic">${ICONS[k]}${c?`<span class="badge">${c}</span>`:''}</span>${l}</button>`).join('');
-  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){if(tab[role]==='post')editing=null;tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
 }
 function setRole(r){if(r===role)return;role=r;store.set('wfm_role',r);render();window.scrollTo(0,0)}
 document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
@@ -421,12 +470,14 @@ function authScreen(){
     ${up?`<div class="field"><label for="a-name">Your name</label><input id="a-name" autocomplete="name" placeholder="First name and last initial"></div>`:''}
     <div class="field"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email"></div>
     <div class="field"><label for="a-pass">Password</label><input id="a-pass" type="password" autocomplete="${up?'new-password':'current-password'}" placeholder="${up?'At least 8 characters':''}"></div>
+    ${up?`<label class="check" for="a-adult"><input id="a-adult" type="checkbox"> I'm 18 or older</label>`:''}
     <button class="btn block" type="submit">${up?'Create account':'Sign in'}</button>
     <span class="meta" id="authErr" role="alert"></span>
    </form>
    ${up?'<div class="hint">By creating an account you agree to the <a href="/terms" target="_blank" rel="noopener">Terms of service</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy policy</a>.</div>':''}
    <button class="switch" id="authSwitch">${up?'Already have an account? Sign in':'New here? Create an account'}</button></div>`}
 
+let cancelOpen=null;
 function customerMine(){
   const mine=data.mine.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
   if(!mine.length)return`<div class="empty">No lines yet. Tap <b>Post</b> to have someone hold your spot.</div>`;
@@ -435,36 +486,54 @@ function customerMine(){
     if(j.status==='inline'||j.status==='nearfront')ticket=`<div class="ticket"><div><div class="lbl">Place</div><div class="num">${j.pos??'—'}</div></div><div class="sep"></div><div class="txt">${esc(j.waiterName)} is holding your spot. ${j.status==='nearfront'?'Head over now.':'You\'ll see it here when they\'re close.'}</div></div>`;
     if(j.status==='handoff')ticket=`<div class="ticket"><div><div class="lbl">Swap code</div><div class="num">${esc(j.code)}</div></div><div class="sep"></div><div class="txt">${esc(j.waiterName)} is at the front. Find them and read out this code. They enter it to hand over your spot.</div></div>`;
     else if(active)ticket+=`<div class="hint">Your swap code is <b class="mono">${esc(j.code)}</b>. Only share it in person when you take over the spot.</div>`;
-    if(active&&!j.checkinAt)extra=`<div class="hint">The clock starts when ${esc(j.waiterName)} checks in at the line. You only pay for time they actually spend in line.</div>`;
+    if(active&&j.codeResetAt&&nowS()-Date.parse(j.codeResetAt)<2*3600e3)extra+=`<div class="warnnote">Someone entered the wrong swap code 5 times, so we made a new one. Only give your code to your waiter in person.</div>`;
+    if(active&&!j.checkinAt)extra+=`<div class="hint">The clock starts when ${esc(j.waiterName)} checks in at the line. You only pay for time they actually spend in line.</div>`;
+    if(active&&j.noShowAt&&nowS()>=j.noShowAt)extra+=`<div class="warnnote">${esc(j.waiterName)} hasn't checked in and it's past the start time. You can report a no-show and your line reopens for other waiters, at no charge.</div>`;
     if(active&&b.nearUp)extra+=`<div class="warnnote">${b.timeUp?'Your approved time is up.':'Your approved time is almost up.'} Add time, or ${esc(j.waiterName)} can end the shift when it runs out.</div>`;
     if(j.status==='open'){
-      actions=`<button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
-      if(j.offers&&j.offers.length)extra=`<div class="offers"><b>${j.offers.length===1?'1 waiter offered':j.offers.length+' waiters offered'} a different rate</b>${j.offers.map(o=>`
+      actions=j.expired?`<button class="btn small" data-act="edit" data-id="${j.id}">Change the time</button><button class="btn ghost small" data-act="cancel" data-id="${j.id}">Remove</button>`
+        :`<button class="btn ghost small" data-act="edit" data-id="${j.id}">Edit</button><button class="btn ghost small" data-act="cancel" data-id="${j.id}">Cancel request</button>`;
+      if(j.expired)extra=`<div class="warnnote">This line's start time has passed, so waiters can't see it anymore. Change the time to repost it, or remove it.</div>`;
+      else if(j.offers&&j.offers.length)extra=`<div class="offers"><b>${j.offers.length===1?'1 waiter offered':j.offers.length+' waiters offered'} a different rate</b>${j.offers.map(o=>`
         <div class="offer">${whoCard(o.waiterName,ratingTxt(o.waiterRating),undefined,o.waiterAvatar)}
           <div class="offer-row"><span><b class="mono">${fmtRate(o.rate)}/hr</b><span class="meta"> · up to ${money(billOf({...j,rate:o.rate}).approved*o.rate*(1+FEE))}</span></span>
           <span class="btns"><button class="btn small" data-act="accept-offer" data-id="${j.id}" data-offer="${o.id}">Accept</button><button class="btn ghost small" data-act="decline-offer" data-id="${j.id}" data-offer="${o.id}">Decline</button></span></div></div>`).join('')}
-        <div class="hint">Accepting books that waiter at their rate. You listed ${fmtRate(j.rate)}/hr.</div></div>`;
+        <div class="hint">Accepting books that waiter at their rate. You listed ${fmtRate(j.rate)}/hr. Offers expire after 12 hours.</div></div>`;
     }
-    if(active)actions=`<button class="btn ${b.nearUp?'':'ghost '}small" data-act="extend" data-id="${j.id}">Add 30 min (up to +${money(0.5*j.rate*(1+FEE))})</button>`;
+    if(active){
+      actions=`<button class="btn ${b.nearUp?'':'ghost '}small" data-act="extend" data-id="${j.id}">Add 30 min (up to +${money(0.5*j.rate*(1+FEE))})</button>`;
+      if(j.noShowAt&&nowS()>=j.noShowAt)actions=`<button class="btn small" data-act="noshow" data-id="${j.id}">Report no-show</button>`+actions;
+      actions+=`<button class="btn ghost small" data-act="cancelbk-open" data-id="${j.id}">Cancel booking</button>`;
+      if(cancelOpen===j.id){
+        const cost=j.cancelAs==='cancelled_free'?'It\'s free, because it\'s more than 2 hours before the start time.'
+          :j.cancelAs==='cancelled_late'?`You'll pay 1 hour of waiter pay (${money(j.rate)}), with no service fee, because it's within 2 hours of the start or your waiter is on the way.`
+          :`You'll pay for the time ${esc(j.waiterName)} has waited (1 hour minimum) plus the service fee: about ${money(b.total)} right now.`;
+        extra+=`<div class="confirm"><b>Cancel this booking?</b><div class="meta">${cost}</div><div class="btns"><button class="btn danger-btn small" data-act="cancelbk" data-id="${j.id}">Cancel booking</button><button class="btn ghost small" data-act="cancelbk-close" data-id="${j.id}">Keep it</button></div></div>`}
+    }
     if(j.status==='done'){
-      extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed (15-min steps, 1 hr min)</span><span class="mono">${fmtShort(b.billed)}</span></div><div><span>Waiter pay</span><span class="mono">${money(b.pay)}</span></div><div><span>Service fee (15%)</span><span class="mono">${money(b.fee)}</span></div><div class="total"><span>Total</span><span class="mono">${money(b.total)}</span></div></div>
-       ${j.outcome==='time_up'?`<div class="hint">Your approved time ran out, so ${esc(j.waiterName)} ended the shift.</div>`:''}${rateHTML(j,j.waiterName,'waiter')}`}
-    return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
+      const txt=OUTCOME_TXT.customer[j.outcome];
+      extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed</span><span class="mono">${fmtShort(b.billed)}</span></div><div><span>Waiter pay</span><span class="mono">${money(b.pay)}</span></div><div><span>Service fee</span><span class="mono">${money(b.fee)}</span></div><div class="total"><span>Total</span><span class="mono">${money(b.total)}</span></div></div>
+       ${txt?`<div class="hint">${txt(esc(j.waiterName))}</div>`:''}${rateHTML(j,j.waiterName,'waiter')}`}
+    const pill=j.status==='open'&&j.expired?'<span class="pill expired">Expired</span>':j.status==='done'&&/^cancelled/.test(j.outcome||'')?'<span class="pill expired">Cancelled</span>':pillFor(j.status);
+    return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pill}</div>
       ${j.status!=='open'?steps(j.status):''}
-      <div class="stepnote"><span><b>${STAGES[i].label}</b></span><span>${j.waiterId?'Your waiter':'Visible to waiters now'}</span></div>
-      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${meterHTML(j,'customer')}${extra}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}</article>`}).join('')}</div>`}
+      <div class="stepnote"><span><b>${j.status==='open'&&j.expired?'Start time passed':STAGES[i].label}</b></span><span>${j.waiterId?'Your waiter':j.expired?'Hidden from waiters':'Visible to waiters now'}</span></div>
+      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active?chatHTML(j,j.waiterName):''}</article>`}).join('')}</div>`}
 
+let editing=null;
 function customerPost(){
+  const e=editing,start=e&&e.startAt?new Date(e.startAt):null,minD=localInput(new Date());
+  const cats=['Food','Releases','Errands','Events'];
   return`<form class="post" id="postForm" novalidate>
-   <div class="meta">Tell waiters where to go and how long you expect it to take.</div>
-   <div class="field"><label for="f-place">Where is the line?</label><input id="f-place" maxlength="120" placeholder="e.g. Taco truck at Grand Park"></div>
-   <div class="field"><label for="f-what">What's it for?</label><input id="f-what" maxlength="120" placeholder="e.g. Lunch for 2, opening day"></div>
-   <div class="two"><div class="field"><label for="f-cat">Type</label><select id="f-cat"><option>Food</option><option>Releases</option><option>Errands</option><option>Events</option></select></div>
-   <div class="field"><label for="f-start">When should they arrive?</label><input id="f-start" maxlength="40" placeholder="Sat 9:00 AM"></div></div>
+   <div class="meta">${e?'Change any details. Waiters see the update right away.':'Tell waiters where to go and how long you expect it to take.'}</div>
+   <div class="field"><label for="f-place">Where is the line?</label><input id="f-place" maxlength="120" placeholder="e.g. Taco truck at Grand Park, Los Angeles" value="${esc(e?e.place:'')}"><small>Include the city so waiters nearby can find it.</small></div>
+   <div class="field"><label for="f-what">What's it for?</label><input id="f-what" maxlength="120" placeholder="e.g. Lunch for 2, opening day" value="${esc(e?e.what:'')}"></div>
+   <div class="two"><div class="field"><label for="f-cat">Type</label><select id="f-cat">${cats.map(c=>`<option${(e?e.cat:'Food')===c?' selected':''}>${c}</option>`).join('')}</select></div>
+   <div class="field"><label for="f-when">When should they arrive?</label><input id="f-when" type="datetime-local" min="${minD}" value="${start&&start>new Date()?localInput(start):''}"></div></div>
    <div class="wheels">${wheelHTML('hours','Estimated wait',HOURS,fmtHours,wheel.hours)}${wheelHTML('rate','Hourly rate',RATES,fmtRate,wheel.rate)}</div>
-   <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" maxlength="500" placeholder="When you'll arrive, how to reach you, anything to buy"></textarea></div>
+   <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" maxlength="500" placeholder="When you'll arrive, how to reach you, anything to buy">${esc(e?e.notes||'':'')}</textarea><small>Only the waiter who takes your line sees your notes and name.</small></div>
    <div class="quote" id="quote"></div>
-   <button class="btn block" type="submit">Post line</button><span class="meta" id="formErr" role="alert"></span></form>`}
+   <button class="btn block" type="submit">${e?'Save changes':'Post line'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">Cancel editing</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
 // ---------- scroll wheels ----------
 const HOURS=Array.from({length:96},(_,i)=>(i+1)/4);   // 15 min … 24 hr
 const RATES=Array.from({length:781},(_,i)=>5+i/4);    // $5.00 … $200.00
@@ -521,10 +590,10 @@ function waiterFind(){
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
      ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>
-   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · posted by ${esc(j.ownerName)} (${ratingTxt(j.ownerRating)})</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
-     ${j.notes?`<div class="meta">“${esc(j.notes)}”</div>`:''}${facts(j,'waiter')}
-     <div class="hint">Paid for time in line from check-in to swap, 1 hour minimum.</div>
-     ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for ${esc(j.ownerName)} to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
+   ${open.length?open.map(j=>`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)} · Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
+     ${facts(j,'waiter')}
+     <div class="hint">Paid for time in line from check-in to swap, 1 hour minimum. You'll see the booker's name and notes after you claim.</div>
+     ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for the booker to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
      :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
         <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="5" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>
         <div class="btns"><button class="btn small" data-act="offer" data-id="${j.id}">Send offer</button><button class="btn ghost small" data-act="offer-cancel" data-id="${j.id}">Cancel</button></div></div>`
@@ -538,19 +607,22 @@ function waiterShifts(){
   return`<div class="list"><div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upTo)} on active shifts</div></div>
    ${mine.length?mine.map(j=>{
      const i=idx(j.status),next=STAGES[i+1],b=billOf(j);let ctl='',extra='';
-     if(next&&verbs[next.k])ctl+=`<button class="btn small" data-act="advance" data-id="${j.id}">${verbs[next.k]}</button>`;
+     if(next&&verbs[next.k])ctl+=`<button class="btn small" data-act="${next.k==='inline'?'checkin':'advance'}" data-id="${j.id}">${verbs[next.k]}</button>`;
      if(j.status==='claimed'||j.status==='enroute')ctl+=`<button class="btn ghost small" data-act="release" data-id="${j.id}">Release line</button>`;
-     if(j.status==='enroute')extra=`<div class="hint">Tap <b>I'm in line</b> when you join it. That starts the clock you're paid on.</div>`;
+     if(j.status==='claimed'||j.status==='enroute')extra=`<div class="hint">Tap <b>I'm in line</b> once you're there. We check your phone's location to confirm you're at the line, and that starts the clock you're paid on.</div>`;
+     if(j.status==='handoff'&&j.graceEndsAt){
+       if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${esc(j.ownerName)} hasn't swapped in within 30 minutes. You can end the shift and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (booker didn't show)</button>`;
+       else extra+=`<div class="hint">If ${esc(j.ownerName)} doesn't swap in by ${clockOf(j.graceEndsAt)}, you can end the shift and be paid for your time. Message them below.</div>`}
      if(j.status==='inline'||j.status==='nearfront')ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span>`;
      if(j.status==='handoff')ctl+=`<div class="codebox" style="width:100%"><label class="meta" for="code-${j.id}" style="width:100%">Ask ${esc(j.ownerName)} for their 4-digit swap code, then enter it to hand over the spot.</label><input id="code-${j.id}" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off"><button class="btn small" data-act="swap" data-id="${j.id}">Complete swap</button></div>`;
      if(j.status!=='done'&&b.timeUp)extra+=`<div class="warnnote">The approved time is up. If ${esc(j.ownerName)} doesn't add time, you can end the shift and be paid for the full ${fmtShort(b.approved)}.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (time's up)</button>`;
      else if(j.status!=='done'&&b.nearUp)extra+=`<div class="warnnote">Approved time is almost up. Ask ${esc(j.ownerName)} to add time if the line is still moving.</div>`;
-     if(j.status==='done'){ctl='';extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed (15-min steps, 1 hr min)</span><span class="mono">${fmtShort(b.billed)}</span></div><div class="total"><span>You earned</span><span class="mono">${money(b.pay)}</span></div></div>${rateHTML(j,j.ownerName,'booker')}`}
+     if(j.status==='done'){ctl='';const txt=OUTCOME_TXT.waiter[j.outcome];extra=`<div class="receipt"><div><span>Time in line</span><span class="mono">${clockTxt(b.waited)}</span></div><div><span>Billed</span><span class="mono">${fmtShort(b.billed)}</span></div><div class="total"><span>You earned</span><span class="mono">${money(b.pay)}</span></div></div>${txt?`<div class="hint">${txt(esc(j.ownerName))}</div>`:''}${rateHTML(j,j.ownerName,'booker')}`}
      const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">Optional: what you're wearing, so ${esc(j.ownerName)} can spot you.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
      return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
        ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos&&j.status!=='done'?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
-       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${extra}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
+       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'?chatHTML(j,j.ownerName):''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
 
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
@@ -570,6 +642,7 @@ function account(){
   <article class="card section"><h2>How it works</h2>
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
   <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
+  ${me.isAdmin?`<article class="card section"><h2>Admin</h2><div class="links"><a href="/admin" target="_blank" rel="noopener">Open the admin page</a></div></article>`:''}
   <article class="card section"><h2>Help and legal</h2>
     <div class="links"><a href="/support" target="_blank" rel="noopener">Support</a><a href="/privacy" target="_blank" rel="noopener">Privacy policy</a><a href="/terms" target="_blank" rel="noopener">Terms of service</a></div></article>
   <button class="btn ghost block" data-act="logout">Sign out</button>
@@ -596,7 +669,7 @@ const TUTORIALS={
    art:()=>`<div class="card"><div class="row"><div><h3>Croissant bakery, Pasadena</h3><div class="meta">Weekend pastry drop</div></div><span class="pill open">$18.00/hr</span></div><div class="facts"><div><span>Starts</span><b>Sun 6:00 AM</b></div><div><span>Est. wait</span><b>2h 30m</b></div><div><span>You earn</span><b>$45</b></div></div><span class="btn small" style="text-align:center">Claim this line</span></div>`},
   {title:'Help them find you',body:'If you like, say what you\'re wearing, like a bright cap or jacket. Your customer sees it so they can spot you.',
    art:()=>`<div class="card">${whoCard(me?me.name:'You','Your waiter','Orange beanie, black jacket',(me&&me.avatar)||'a4')}</div>`},
-  {title:'Check in and share updates',body:'Tap I\'m in line when you join it, since that starts your paid time. Other updates are up to you, but customers love them.',
+  {title:'Check in and share updates',body:'Tap I\'m in line when you join it. We check your location to confirm you\'re there, and that starts your paid time. Other updates are up to you, but customers love them.',
    art:()=>`<div class="card">${steps('nearfront')}<div class="btns"><span class="btn small">I'm at the front</span><span class="pos"><span class="meta">Place in line</span><span class="mono" style="font-weight:700;font-size:18px">3</span></span></div></div>`},
   {title:'Finish with the code',body:'At the front, ask your customer for their 4-digit swap code and enter it. That completes the job and records your earnings. If the code doesn\'t match, don\'t give up the spot.',
    art:()=>`<div class="card"><div class="codebox"><span class="mono" style="letter-spacing:.3em;font-size:20px;font-weight:700;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)">4827</span><span class="btn small">Complete swap</span></div><div class="meta">Swap complete. You earned $66.</div></div>`}]}
@@ -671,24 +744,27 @@ function render(){
     v.innerHTML=authScreen();
     $('#authSwitch').onclick=()=>{authMode=authMode==='signup'?'login':'signup';render()};
     $('#authForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
-      try{const body={email:$('#a-email').value,password:$('#a-pass').value};if(authMode==='signup')body.name=$('#a-name').value;
+      try{const body={email:$('#a-email').value,password:$('#a-pass').value};if(authMode==='signup'){body.name=$('#a-name').value;body.adult=$('#a-adult').checked}
         me=(await api(authMode==='signup'?'/signup':'/login',{method:'POST',body})).user;await load(true);toast(authMode==='signup'?`Welcome, ${me.name.split(' ')[0]}.`:'Signed in.')}
       catch(err){$('#authErr').textContent=err.message;btn.disabled=false}});
     return}
   document.querySelectorAll('.roles button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.role===role));
   renderTabs();
   const t=tab[role];
-  $('#screenTitle').textContent=TITLES[t];
+  $('#screenTitle').textContent=t==='post'&&editing?'Edit line':TITLES[t];
   v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
   if(t==='post'){initWheel('hours');initWheel('rate');updateQuote();
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
-      try{await api('/lines',{method:'POST',body:{place:$('#f-place').value,what:$('#f-what').value,cat:$('#f-cat').value,startText:$('#f-start').value,hours:HOURS[wheel.hours],rate:RATES[wheel.rate],notes:$('#f-notes').value}});
-        tab.customer='mine';await load(true);window.scrollTo(0,0);toast('Line posted. Waiters can claim it now.')}
+      try{const w=$('#f-when').value;if(!w)throw new Error('Pick when the waiter should arrive.');const d=new Date(w);
+        const body={place:$('#f-place').value,what:$('#f-what').value,cat:$('#f-cat').value,startAt:d.toISOString(),startText:fmtStart(d),hours:HOURS[wheel.hours],rate:RATES[wheel.rate],notes:$('#f-notes').value};
+        await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
+        const was=editing;editing=null;tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Line posted. Waiters can claim it now.')}
       catch(err){$('#formErr').textContent=err.message;btn.disabled=false}})}
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
   v.querySelectorAll('[data-near]').forEach(b=>b.onclick=()=>{if(near.on){near.on=false;near.radius=0;render()}else locate()});
   v.querySelectorAll('[data-radius]').forEach(b=>b.onclick=()=>{near.radius=+b.dataset.radius;render()});
   const st=$('#sound-toggle');if(st)st.onchange=()=>{store.set('wfm_sound',st.checked?'on':'off');if(st.checked){chimed=false;tryChime()}toast(st.checked?'Opening sound on.':'Opening sound off.')};
+  chatOpen.forEach(id=>{const m=document.getElementById('msgs-'+id);if(m)m.scrollTop=m.scrollHeight});
   maybeTut();
 }
 
@@ -705,13 +781,24 @@ $('#view').addEventListener('click',async e=>{
   const a=b.dataset.act,id=b.dataset.id;b.disabled=true;
   try{
     if(a==='tut-customer'||a==='tut-waiter'){b.disabled=false;openTut(a==='tut-customer'?'customer':'waiter');return}
-    if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='login';render();return}
+    if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';lastData=null;authMode='login';render();return}
     if(a==='delete-open'||a==='delete-cancel'){delOpen=a==='delete-open';render();if(delOpen)$('#del-pass').focus();return}
     if(a==='delete-confirm'){await api('/me/delete',{method:'POST',body:{password:$('#del-pass').value}});
       me=null;delOpen=false;data={mine:[],open:[],shifts:[]};lastJSON='';authMode='signup';render();toast('Your account was deleted.');return}
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;wheel.hours=Math.max(0,HOURS.indexOf(j.hours));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-5)*4)));
+      tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
+    if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
+    if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}
+    if(a==='cancelbk'){const r=await api(`/lines/${id}/cancel-booking`,{method:'POST'});cancelOpen=null;toast(r.line.bill.total?`Booking cancelled. Charge: ${money(r.line.bill.total)}.`:'Booking cancelled at no charge.')}
+    if(a==='noshow'){await api(`/lines/${id}/report-noshow`,{method:'POST'});toast('No-show reported. Your line is open to other waiters again.')}
+    if(a==='chat-toggle'){const n=+id;if(chatOpen.has(n))chatOpen.delete(n);else{chatOpen.add(n);await loadChat(n)}b.disabled=false;await load(true);setTimeout(()=>{const i=document.getElementById('chat-'+n);if(i&&chatOpen.has(n))i.focus()},0);return}
+    if(a==='chat-send'){const n=+id,inp=document.getElementById('chat-'+n),body=inp.value.trim();if(!body){b.disabled=false;return}
+      const r=await api(`/lines/${n}/messages`,{method:'POST',body:{body}});chatData[n]=r.messages;chatDraft[n]='';await load(true);setTimeout(()=>{const i=document.getElementById('chat-'+n);if(i)i.focus()},0);return}
+    if(a==='checkin'){const pos=await getPos();const r=await api(`/lines/${id}/advance`,{method:'POST',body:pos||{}});
+      toast(r.line.checkinVerified?'Checked in. Location verified, and your paid time has started.':'Checked in. Your paid time has started.')}
     if(a==='offer-open'||a==='offer-cancel'){offerOpen=a==='offer-open'?+id:null;b.disabled=false;render();return}
     if(a==='offer'){const v=Math.round(parseFloat(document.getElementById('offer-'+id).value)*4)/4;
       await api(`/lines/${id}/offer`,{method:'POST',body:{rate:v}});offerOpen=null;delete offerDraft[id];toast(`Offer sent: ${fmtRate(v)}/hr.`)}
@@ -720,7 +807,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='decline-offer'){await api(`/lines/${id}/decline-offer`,{method:'POST',body:{offerId:+b.dataset.offer}});toast('Offer declined.')}
     if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.`);tab.waiter='shifts'}
     if(a==='advance'){const r=await api(`/lines/${id}/advance`,{method:'POST'});toast(`${r.line.ownerName} can see you're ${STAGES[idx(r.line.status)].short.toLowerCase()}.`)}
-    if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});toast('Line released. Other waiters can claim it now.')}
+    if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});if(lastData)lastData.shifts=lastData.shifts.filter(x=>x.id!==+id);toast('Line released. Other waiters can claim it now.')}
     if(a==='position'){const r=await api(`/lines/${id}/position`,{method:'POST',body:{pos:+document.getElementById('pos-'+id).value}});toast(`Place in line updated to ${r.line.pos}.`)}
     if(a==='swap'){const r=await api(`/lines/${id}/swap`,{method:'POST',body:{code:document.getElementById('code-'+id).value}});toast(`Swap complete. You earned ${money(r.line.bill.waiterPay)}.`)}
     if(a==='extend'){const r=await api(`/lines/${id}/extend`,{method:'POST'});toast(`Added 30 minutes. ${fmtShort(r.line.bill.approvedHours)} approved in total.`)}
@@ -730,7 +817,28 @@ $('#view').addEventListener('click',async e=>{
   }catch(err){toast(err.message);b.disabled=false}
 });
 
-$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}});
+$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}
+  if(t.id&&t.id.startsWith('chat-'))chatDraft[+t.id.slice(5)]=t.value});
+$('#view').addEventListener('keydown',e=>{const t=e.target;if(e.key==='Enter'&&t.id&&t.id.startsWith('chat-')){e.preventDefault();const btn=t.parentElement.querySelector('[data-act=chat-send]');if(btn)btn.click()}});
+// Location for check-in. Returns null if the phone can't or won't share it.
+function getPos(){return new Promise(res=>{if(!navigator.geolocation)return res(null);
+  navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,lng:p.coords.longitude,accuracy:p.coords.accuracy}),()=>res(null),{enableHighAccuracy:true,timeout:12000,maximumAge:60000})})}
+// ---- alerts while the app is open: a short tone, a buzz, and a message ----
+function alertTone(){try{if(!soundOn()||!audioCtx||audioCtx.state!=='running')return;const t=audioCtx.currentTime;
+  [[880,0],[1175,.12]].forEach(([f,at])=>{const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=f;g.gain.setValueAtTime(.0001,t+at);g.gain.exponentialRampToValueAtTime(.25,t+at+.01);g.gain.exponentialRampToValueAtTime(.0001,t+at+.25);o.connect(g);g.connect(audioCtx.destination);o.start(t+at);o.stop(t+at+.3)})}catch{}}
+const ALERTS={claimed:j=>`${j.waiterName} took your line at ${j.place}.`,enroute:j=>`${j.waiterName} is on the way.`,inline:j=>`${j.waiterName} is in line.`,nearfront:j=>`${j.waiterName} is almost at the front. Head over now.`,handoff:j=>`${j.waiterName} is at the front. Time to swap in.`};
+function notifyChanges(prev,next){
+  if(!prev)return;const msgs=[];
+  for(const j of next.mine){const p=prev.mine.find(x=>x.id===j.id);if(!p)continue;
+    if(p.status!==j.status&&ALERTS[j.status]&&j.waiterId)msgs.push(ALERTS[j.status](j));
+    if(p.status==='open'&&j.status==='open'&&(j.offers||[]).length>(p.offers||[]).length)msgs.push(`New rate offer on ${j.place}.`);
+    if((j.unread||0)>(p.unread||0)&&!chatOpen.has(j.id))msgs.push(`New message from ${j.waiterName}.`)}
+  for(const j of next.shifts){const p=prev.shifts.find(x=>x.id===j.id);
+    if(!p){msgs.push(`You're booked for ${j.place}.`);continue}
+    if(p.status!=='done'&&j.status==='done'&&/^cancelled/.test(j.outcome||''))msgs.push(`${j.ownerName} cancelled ${j.place}.`);
+    if((j.unread||0)>(p.unread||0)&&!chatOpen.has(j.id))msgs.push(`New message from ${j.ownerName}.`)}
+  for(const p of prev.shifts)if(p.status!=='done'&&!next.shifts.some(x=>x.id===p.id))msgs.push(`You were removed from ${p.place} because you didn't check in on time.`);
+  if(msgs.length){toast(msgs[msgs.length-1]);alertTone();try{navigator.vibrate&&navigator.vibrate([60,40,60])}catch{}}}
 
 // ---------- data ----------
 async function load(force){
@@ -740,8 +848,11 @@ async function load(force){
   clockSkew=m1.now-Math.round((t0+Date.now())/2);
   const mine=m1.lines,open=o1.lines,shifts=s1.lines;
   if(info.user){me=info.user;myRatings=info.ratings;TAGS=info.tags||TAGS}
+  await Promise.all([...chatOpen].map(loadChat));
+  paintChats();
+  notifyChanges(lastData,{mine,open,shifts});lastData={mine,open,shifts};
   // The clock fields change every refresh; leave them out when deciding whether to redraw.
-  const json=JSON.stringify([mine,open,shifts,myRatings],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
+  const json=JSON.stringify([mine,open,shifts,myRatings,chatData],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
   if(!force&&json===lastJSON)return;
   // Don't redraw while someone is typing in the page; the next check picks it up.
   const typing=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#view')&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);

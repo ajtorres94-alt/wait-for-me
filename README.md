@@ -53,12 +53,27 @@ When a line is posted, the server looks up map coordinates for the "Where is the
 - `SUPPORT_EMAIL`: shown as the contact address on all three pages
 - `COMPANY_NAME`: your legal business name (defaults to "Wait For Me!")
 
+## Admin page
+
+Visit `/admin` while signed in with an email listed in the `ADMIN_EMAILS` Railway variable (comma-separated). It lists people and recent lines, and lets you remove a line, suspend or restore an account, and give someone a temporary password.
+
+## Safety rules built in
+
+- Swap codes reset after 5 wrong tries, and the booker is told.
+- Check-in compares the waiter's location with the line's (about half a mile). Lines whose address could only be found at city level are checked in without verification and marked that way.
+- Bookers can report a no-show 15 minutes after the start time; the line reopens and the waiter's no-show count goes up.
+- Waiters can end a shift 30 minutes after reaching the front if the booker doesn't swap in.
+- Open lines leave Find lines 2 hours after their start time.
+- Theme park lines are refused when posting.
+- Limits: 10 open lines per booker, 20 posts a day, 30 offers an hour, 30 messages a minute.
+
 ## Not built yet
 
 - Card payments and waiter payouts (planned: Stripe Connect)
 - ID checks for waiters
 - Push notifications (the app refreshes while it's open)
-- Password reset
+- Self-service password reset (needs an email service; use the admin page for now)
+- Notifications when the app is closed (needs push setup)
 
 ## Testing
 

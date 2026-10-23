@@ -31,10 +31,12 @@ ul{padding-left:20px}
 <li><b>Line details:</b> where the line is, what it's for, when to arrive, the estimated wait, the hourly rate, and any notes. We also save map coordinates for each line's location.</li>
 <li><b>Job activity:</b> who claimed a line, status updates, place in line, check-in and finish times, swap codes, and the amounts billed.</li>
 <li><b>Ratings:</b> the stars and tags you give and receive after a job.</li>
+<li><b>Messages:</b> what bookers and waiters send each other about a job. Only the two people on that job can read them, plus our team when resolving a dispute or safety report.</li>
 </ul>
 
 <h2>Your location</h2>
-<p>When a booker posts a line, we look up the map coordinates of the address they typed. When a waiter turns on <b>Near me</b>, the app uses their phone's location only on their device to measure the distance to each line. We don't send or store a waiter's location.</p>
+<p>When a booker posts a line, we look up the map coordinates of the address they typed. When a waiter turns on <b>Near me</b>, the app uses their phone's location only on their device to measure the distance to each line, and doesn't send it to us.</p>
+<p>When a waiter taps <b>I'm in line</b>, the app sends their location to us once to confirm they're at the line, because that starts their paid time. We keep only whether the check-in was confirmed and how far it was from the line, not the location itself. We don't track waiters at any other time.</p>
 
 <h2>How we use it</h2>
 <ul>
@@ -47,8 +49,8 @@ ul{padding-left:20px}
 
 <h2>Who can see what</h2>
 <ul>
-<li>Waiters browsing open lines see the line details, the booker's name, avatar, and rating.</li>
-<li>Once a line is claimed, the booker and waiter see each other's name, avatar, and rating, and the booker sees what the waiter is wearing.</li>
+<li>Waiters browsing open lines see the line's location, time, pay, and the booker's rating. They don't see the booker's name, avatar, or notes.</li>
+<li>Once a line is claimed, the booker and waiter see each other's name, avatar, and rating, the waiter sees the booker's notes, and the booker sees what the waiter is wearing and whether check-in was confirmed.</li>
 <li>Only the booker ever sees the swap code.</li>
 <li>Ratings stay private for 3 days after a job, and an average shows only after someone has 3 ratings.</li>
 </ul>
