@@ -37,7 +37,7 @@ The app creates its own tables on first start.
 
 ## How billing works
 
-The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up, with a 1-hour minimum, and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time.
+The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up, with a 30-minute minimum, and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time.
 
 Fees (kept by the platform): 15% of the waiter's time, a $2.50 booking fee, and 3% of the item price for pickups. The booker also pays the item at the receipt price and any drop-off fee, which goes to the waiter. No fees on late cancellations or sold-out pickups. The logic lives in `billing.js`.
 
@@ -77,7 +77,7 @@ Turned on by `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` (use `sk_test_`/`p
 - **Bookers** save a card, Apple Pay, or Google Pay in Account (Stripe's Payment Element). A card is required to post a line.
 - **Waiters** set up payouts in Account through Stripe's hosted Express onboarding. Payouts must be on to claim a line or make an offer.
 - **Holds:** when a waiter is booked and the line starts within 5 days, the booker's card gets a manual-capture hold for (approved hours + 0.5) × rate × 1.15 + $2.50, plus the item limit × 1.03 and any drop-off fee for pickups. A background job places holds as lines come within 5 days, and adding time replaces the hold with a bigger one.
-- **Charging:** when the job ends, the app captures the actual bill (`billing.js`) as a destination charge: the waiter's share goes to their Express account, and the 15% fee stays with the platform as the application fee. Free cancellations and waiter no-shows release the hold. Late cancellations charge 1 hour of waiter pay with no fee.
+- **Charging:** when the job ends, the app captures the actual bill (`billing.js`) as a destination charge: the waiter's share goes to their Express account, and the 15% fee stays with the platform as the application fee. Free cancellations and waiter no-shows release the hold. Late cancellations charge 30 minutes of waiter time with no fees.
 - **Declines:** a declined hold keeps the booking, marks it unsecured, and asks the booker to update their card (updating retries right away). Failed charges are retried every 10 minutes for 6 days.
 - Waiter accounts are created with `controller.losses.payments = application`, `controller.fees.payer = application`, and an Express dashboard, so the platform is responsible for refunds and disputes.
 - Apple Pay and Google Pay need the domain registered with Stripe; the server registers waitforme.io at startup.

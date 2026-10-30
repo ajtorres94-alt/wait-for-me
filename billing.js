@@ -10,18 +10,19 @@
 //
 // Time:
 // - The clock runs from the waiter's check-in to the handover (for pickups, to the purchase).
-// - Billed in 15-minute steps, rounded up, with a 1-hour minimum.
+// - Billed in 15-minute steps, rounded up, with a 30-minute minimum.
 // - Never more than the time the booker approved (the estimate plus any added time).
 // - Approved time ran out and the waiter ended the shift: the full approved time.
 // - Booker didn't show at the front (older line-swap jobs): time waited, including the
 //   30-minute grace period, up to 30 minutes past the approved time.
-// - Booker cancelled: free if early, 1 hour of waiter pay (no fees) if late or once the
+// - Booker cancelled: free if early, the 30-minute minimum (no fees) if late or once the
 //   waiter was on the way, time waited if the waiter was already in line.
 //
 // Fees (kept by Wait For Me!): 15% of the waiter's time pay, a $2.50 booking fee, and 3% of
 // the item price to cover card processing. No fees on a late cancellation or a sold-out pickup.
 
 const FEE = 0.15;
+const MIN_HOURS = 0.5; // shortest time billed once a waiter checks in
 const BOOKING_FEE = 2.5;
 const ITEM_FEE = 0.03;
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
@@ -47,21 +48,21 @@ function billing(line, now = Date.now()) {
       billed = 0;
       break;
     case "cancelled_late":
-      billed = 1;
+      billed = MIN_HOURS;
       feeRate = 0;
       break;
     case "time_up":
       billed = checkin ? approved : 0;
       break;
     case "sold_out": // sold out through no one's fault: the waiter is paid for the time, and we waive our fees
-      billed = checkin ? Math.min(approved, Math.max(1, quarterUp(waited))) : 0;
+      billed = checkin ? Math.min(approved, Math.max(MIN_HOURS, quarterUp(waited))) : 0;
       feeRate = 0;
       break;
     case "customer_noshow":
-      billed = checkin ? Math.min(approved + 0.5, Math.max(1, quarterUp(waited))) : 0;
+      billed = checkin ? Math.min(approved + 0.5, Math.max(MIN_HOURS, quarterUp(waited))) : 0;
       break;
     default:
-      billed = checkin ? Math.min(approved, Math.max(1, quarterUp(waited))) : 0;
+      billed = checkin ? Math.min(approved, Math.max(MIN_HOURS, quarterUp(waited))) : 0;
   }
 
   const timePay = roundCents(billed * line.rate);
@@ -103,4 +104,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };

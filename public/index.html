@@ -347,7 +347,7 @@ const KEYS={pickup:['open','claimed','enroute','inline','nearfront','handoff','d
 const kindOf=j=>j&&j.kind==='pickup'?'pickup':'spot';
 const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includes(j.status)?KEYS.legacy:KEYS.spot;
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
-const FEE=0.15,BOOKING_FEE=2.5,ITEM_FEE=0.03,MAX_ITEM=150;
+const MIN_HOURS=0.5,FEE=0.15,BOOKING_FEE=2.5,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const money=n=>'$'+(Math.round(n*100)/100).toFixed(2).replace(/\.00$/,'');
 const $=s=>document.querySelector(s);
@@ -400,6 +400,7 @@ function itemBox(j,mode){
   if(j.handoff==='dropoff'&&j.dropoffAddr&&(mode==='waiter'||mode==='customer'))rows.push(`<div><span>Drop off at</span><span>${esc(j.dropoffAddr)}</span></div>`);
   if(bought&&j.itemNote)rows.push(`<div><span>Note</span><span>${esc(j.itemNote)}</span></div>`);
   return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>`:''}</div>`}
+const CATS_FOR={pickup:['Food','Errands'],spot:['Events','Errands']};
 const MEET_TXT={45:'45 min',120:'2 hours',240:'4 hours'};
 const SPOT_RULE='Save my spot isn\'t for cutting in line. Use it only where saving a spot is normal and allowed, like a parade route, a fireworks show, an outdoor movie lawn, a beach or park picnic area, or a campout before an event. You can\'t take over a place in a line ahead of people who are waiting. Wait For Me! does not condone or endorse line-cutting, and we remove requests that break this rule.';
 const SPOT_RULE_SHORT='Saving a spot only, not a place in a line. Wait For Me! does not condone or endorse line-cutting.';
@@ -412,7 +413,7 @@ function billOf(j){
   const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
-  let billed=Math.min(approved,Math.max(1,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
+  let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
   const time=r2(billed*j.rate),item=bought?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
   const pay=r2(time+drop),svc=r2(time*FEE),book=billed>0?BOOKING_FEE:0,ifee=r2(item*ITEM_FEE),fee=r2(svc+book+ifee);
   const live=!!ci&&!bought;
@@ -429,7 +430,7 @@ function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
   return`<div class="meter-top"><span>${kindOf(j)==='pickup'?'Time in line':'Time at the spot'}</span><b class="mono">${clockTxt(b.waited)}</b><span>of ${fmtShort(b.approved)} approved</span></div>
    <div class="bar${b.nearUp?' warn':''}"><i style="width:${pct}%"></i></div>
-   <div class="meter-bot"><span>${mode==='customer'?'Cost so far (1 hr minimum)':'Earned so far (1 hr minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
+   <div class="meter-bot"><span>${mode==='customer'?'Cost so far (30 min minimum)':'Earned so far (30 min minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'&&!(kindOf(j)==='pickup'&&j.purchasedAt)?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
 setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
 let myRatings=null,TAGS={waiter:[],booker:[]};
@@ -534,7 +535,7 @@ const OUTCOME_TXT={
     time_up:w=>`Your approved time ran out, so ${w} ended the shift.`,
     customer_noshow:w=>`You didn't swap in within 30 minutes of ${w} reaching the front, so the shift ended. You pay for the time waited.`,
     cancelled_free:()=>`You cancelled more than 2 hours before the start, so there's no charge.`,
-    cancelled_late:()=>`You cancelled within 2 hours of the start or after your waiter left for the line, so you pay 1 hour of waiter pay with no service fee.`,
+    cancelled_late:()=>`You cancelled within 2 hours of the start or after your waiter left for the line, so you pay 30 minutes of waiter time with no fees.`,
     cancelled_inline:w=>`You cancelled after ${w} checked in, so you pay for the time they waited.`,
     sold_out:w=>`It was sold out when ${w} got to the register, so nothing was bought. You pay only for the time they waited, with no fees.`,
     pickup_noshow:w=>`You didn't meet ${w} within the meetup window, so the job closed and you were charged in full. Message them to arrange getting your item.`},
@@ -542,7 +543,7 @@ const OUTCOME_TXT={
     time_up:()=>`The approved time ran out and you ended the shift.`,
     customer_noshow:o=>`${o} didn't swap in within 30 minutes, so you ended the shift and are paid for your time.`,
     cancelled_free:o=>`${o} cancelled more than 2 hours before the start.`,
-    cancelled_late:o=>`${o} cancelled late, so you're paid 1 hour.`,
+    cancelled_late:o=>`${o} cancelled late, so you're paid for 30 minutes.`,
     cancelled_inline:o=>`${o} cancelled after you checked in, so you're paid for the time you waited.`,
     sold_out:()=>`It was sold out, so you're paid for the time you waited.`,
     pickup_noshow:o=>`${o} didn't meet you within the meetup window, so you were paid in full, including the item. Arrange the handover with them in Messages.`}};
@@ -679,8 +680,8 @@ function customerMine(){
         <button class="btn small" data-act="raise" data-id="${j.id}">Save</button><button class="btn ghost small" data-act="raise-close" data-id="${j.id}">Cancel</button></div>`;
       if(cancelOpen===j.id&&!bought){
         const cost=j.cancelAs==='cancelled_free'?'It\'s free, because it\'s more than 2 hours before the start time.'
-          :j.cancelAs==='cancelled_late'?`You'll pay 1 hour of waiter pay (${money(j.rate)}), with no fees, because it's within 2 hours of the start or your waiter is on the way.`
-          :`You'll pay for the time ${W} has waited (1 hour minimum) plus fees: about ${money(b.total)} right now.`;
+          :j.cancelAs==='cancelled_late'?`You'll pay 30 minutes of waiter time (${money(j.rate/2)}), with no fees, because it's within 2 hours of the start or your waiter is on the way.`
+          :`You'll pay for the time ${W} has waited (30-minute minimum) plus fees: about ${money(b.total)} right now.`;
         extra+=`<div class="confirm"><b>Cancel this booking?</b><div class="meta">${cost}</div><div class="btns"><button class="btn danger-btn small" data-act="cancelbk" data-id="${j.id}">Cancel booking</button><button class="btn ghost small" data-act="cancelbk-close" data-id="${j.id}">Keep it</button></div></div>`}
     }
     if(j.status==='done'){
@@ -703,7 +704,7 @@ function setWhen(d){const now=new Date(),day=x=>new Date(x.getFullYear(),x.getMo
   wheel.hr=((d.getHours()%12)||12)-1;wheel.mn=Math.floor(d.getMinutes()/15);wheel.ap=d.getHours()>=12?1:0}
 let postDate='';
 function customerPost(){
-  const e=editing,cats=['Food','Releases','Errands','Events'],pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
+  const e=editing,pk=postKind==='pickup',cats=CATS_FOR[postKind],v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
   if(e){const st=e.startAt?new Date(e.startAt):null;if(st&&st>new Date()&&e.startText!=='ASAP')setWhen(st);else{setWhen(new Date(Date.now()+30*6e4));postDay='asap'}}
   else{const t=new Date(Date.now()+30*6e4);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);setWhen(t)}
   const price=e&&e.itemBudget?Math.round(e.itemBudget/PRICE_BUFFER):'';
@@ -732,7 +733,7 @@ function customerPost(){
      <div class="rule" role="note"><b>No line-cutting.</b> ${SPOT_RULE}</div>
      <label class="check" for="f-agree"><input id="f-agree" type="checkbox"${e&&kindOf(e)==='spot'?' checked':''}> This spot is OK to save, and no one waiting in line will be skipped.</label>
    </div>
-   <div class="field"><label for="f-cat">Type</label><select id="f-cat">${cats.map(c=>`<option${(e?e.cat:pk?'Food':'Events')===c?' selected':''}>${c}</option>`).join('')}</select></div>
+   <div class="field"><label for="f-cat">Type</label><select id="f-cat">${cats.map(c=>`<option${(e&&cats.includes(e.cat)?e.cat:cats[0])===c?' selected':''}>${c}</option>`).join('')}</select></div>
    <div class="field"><span class="wlabel" id="l-when">When should they get there?</span>
      <div class="filters" role="group" aria-labelledby="l-when">${dayBtn('asap','ASAP')}${dayBtn('today','Today')}${dayBtn('tomorrow','Tomorrow')}${dayBtn('date','Pick a date')}</div>
      <input id="f-date" type="date" min="${minDate}" value="${postDate}" aria-label="Date"${postDay==='date'?'':' hidden'} style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px">
@@ -748,7 +749,7 @@ function setPostKind(k){postKind=k;const f=$('#postForm');if(!f)return;
   $('#l-place').textContent=k==='pickup'?'Where should they buy it?':'Where is the spot?';
   $('#f-place').placeholder=k==='pickup'?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena';
   $('#h-place').textContent=k==='pickup'?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.';
-  if(!editing)$('#f-cat').value=k==='pickup'?'Food':'Events';updateQuote()}
+  const sel=$('#f-cat'),was=sel.value;sel.innerHTML=CATS_FOR[k].map(c=>`<option>${c}</option>`).join('');sel.value=CATS_FOR[k].includes(was)?was:CATS_FOR[k][0];updateQuote()}
 function setHandoff(h){postHandoff=h;const f=$('#postForm');f.querySelectorAll('[data-hand]').forEach(b=>b.setAttribute('aria-checked',b.dataset.hand===h));
   f.querySelector('.grp[data-for="dropoff"]').hidden=h!=='dropoff';updateQuote()}
 function setDay(k){postDay=k;const f=$('#postForm');f.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.day===k));
@@ -804,7 +805,7 @@ function updateQuote(){
     +(pk?row('Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
     +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (1 hour minimum)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
+    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (30-minute minimum)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -820,7 +821,7 @@ function locate(){
     {enableHighAccuracy:false,timeout:10000,maximumAge:300000});
 }
 function waiterFind(){
-  const cats=['All','Food','Releases','Errands','Events'];
+  const cats=['All','Food','Errands','Events'];
   let open=data.open.filter(j=>filter==='All'||j.cat===filter);
   if(near.on){
     if(near.radius)open=open.filter(j=>{const d=distOf(j);return d!=null&&d<=near.radius});
@@ -834,7 +835,7 @@ function waiterFind(){
    ${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup';return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
-     <div class="hint">${pickup?`Paid for your time from check-in to purchase, 1 hour minimum. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, 1 hour minimum.`} You'll see the booker's name and notes after you claim.</div>
+     <div class="hint">${pickup?`Paid for your time from check-in to purchase, 30-minute minimum. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, 30-minute minimum.`} You'll see the booker's name and notes after you claim.</div>
      ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for the booker to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
      :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
         <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="5" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>

@@ -17,7 +17,8 @@ const push = require("./push");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
-const CATS = ["Food", "Releases", "Errands", "Events"];
+// Types per kind of request. (Older requests may still say "Releases".)
+const CATS = { pickup: ["Food", "Errands"], spot: ["Events", "Errands"] };
 const COOKIE = "wfm_session";
 const SESSION_DAYS = 30;
 
@@ -324,7 +325,7 @@ function lineFields(b) {
   const startAt = parseStart(b.startAt);
   const f = {
     kind, place, notes,
-    cat: CATS.includes(b.cat) ? b.cat : pickup ? "Food" : "Events",
+    cat: b.cat === undefined ? CATS[kind][0] : CATS[kind].includes(b.cat) ? b.cat : fail(400, `Pick a type: ${CATS[kind].join(" or ")}.`),
     startAt,
     startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
