@@ -142,6 +142,37 @@ CREATE TABLE IF NOT EXISTS push_subs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS push_subs_user_idx ON push_subs(user_id);
+CREATE TABLE IF NOT EXISTS events (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  venue TEXT NOT NULL,
+  starts_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS event_presence (
+  event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, user_id)
+);
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS event_id INT REFERENCES events(id) ON DELETE SET NULL;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS rush BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_refunded INT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS reports (
+  id SERIAL PRIMARY KEY,
+  line_id INT NOT NULL REFERENCES lines(id) ON DELETE CASCADE,
+  reporter_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reason TEXT NOT NULL,
+  details TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'open',
+  resolution TEXT,
+  refund_cents INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at TIMESTAMPTZ
+);
 CREATE TABLE IF NOT EXISTS receipts (
   line_id INT PRIMARY KEY REFERENCES lines(id) ON DELETE CASCADE,
   mime TEXT NOT NULL,
@@ -219,6 +250,9 @@ function line(r) {
       purchasedAt: r.purchased_at || null,
       hasReceipt: !!r.has_receipt,
       meetWithin: r.meet_within || null,
+      eventId: r.event_id || null,
+      rush: !!r.rush,
+      payRefunded: r.pay_refunded || 0,
       meetReminded: !!r.meet_reminded,
       doneAt: r.done_at,
       outcome: r.outcome,
@@ -229,6 +263,13 @@ function line(r) {
   );
 }
 
+function event(r) {
+  return r ? { id: r.id, name: r.name, venue: r.venue, startsAt: r.starts_at, endsAt: r.ends_at, lat: r.lat, lng: r.lng } : null;
+}
+function report(r) {
+  return r ? { id: r.id, lineId: r.line_id, reporterId: r.reporter_id, reason: r.reason, details: r.details, status: r.status,
+    resolution: r.resolution || "", refundCents: r.refund_cents || 0, createdAt: r.created_at, resolvedAt: r.resolved_at } : null;
+}
 function offer(r) {
   return r ? { id: r.id, lineId: r.line_id, waiterId: r.waiter_id, rate: Number(r.rate), status: r.status, createdAt: r.created_at } : null;
 }
@@ -278,6 +319,9 @@ const COLS = {
   purchasedAt: "purchased_at",
   hasReceipt: "has_receipt",
   meetWithin: "meet_within",
+  eventId: "event_id",
+  rush: "rush",
+  payRefunded: "pay_refunded",
   meetReminded: "meet_reminded",
 };
 const USER_COLS = {
@@ -371,13 +415,87 @@ module.exports = {
   async createLine(f) {
     const r = await pool.query(
       `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at,
-         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
+         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty, event_id, rush)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22) RETURNING id`,
       [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt,
         f.kind || "spot", f.item || null, f.itemDetails || null, f.itemBackup || null, f.itemBudget ?? null,
-        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null]
+        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null, f.eventId || null, !!f.rush]
     );
     return this.getLine(r.rows[0].id);
+  },
+  // ---- events (venue nights) ----
+  async createEvent({ name, venue, startsAt, endsAt }) {
+    const r = await pool.query("INSERT INTO events (name, venue, starts_at, ends_at) VALUES ($1, $2, $3, $4) RETURNING *", [name, venue, startsAt, endsAt]);
+    return event(r.rows[0]);
+  },
+  async setEventGeo(id, geo) {
+    await pool.query("UPDATE events SET lat = $2, lng = $3 WHERE id = $1", [id, geo.lat, geo.lng]);
+  },
+  async deleteEvent(id) {
+    const r = await pool.query("DELETE FROM events WHERE id = $1", [id]);
+    return r.rowCount > 0;
+  },
+  async eventById(id) {
+    const r = await pool.query("SELECT * FROM events WHERE id = $1", [id]);
+    return event(r.rows[0]);
+  },
+  async eventsByIds(ids) {
+    if (!ids.length) return [];
+    const r = await pool.query("SELECT * FROM events WHERE id = ANY($1::int[])", [ids]);
+    return r.rows.map(event);
+  },
+  // Events that haven't ended and start within a week, with open requests and waiters there.
+  async upcomingEvents(userId, { all = false } = {}) {
+    const where = all ? "e.ends_at > now() - interval '30 days'" : "e.ends_at > now() AND e.starts_at < now() + interval '7 days'";
+    const r = await pool.query(
+      `SELECT e.*,
+         (SELECT COUNT(*) FROM lines l WHERE l.event_id = e.id AND l.status = 'open')::int AS open_count,
+         (SELECT COUNT(*) FROM event_presence p WHERE p.event_id = e.id)::int AS here_count,
+         EXISTS (SELECT 1 FROM event_presence p WHERE p.event_id = e.id AND p.user_id = $1) AS me_here
+       FROM events e WHERE ${where} ORDER BY e.starts_at ${all ? "DESC" : "ASC"} LIMIT 100`,
+      [userId || 0]
+    );
+    return r.rows.map((row) => ({ ...event(row), open: row.open_count, here: row.here_count, meHere: !!row.me_here }));
+  },
+  async setPresence(eventId, userId, here) {
+    if (here) await pool.query("INSERT INTO event_presence (event_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [eventId, userId]);
+    else await pool.query("DELETE FROM event_presence WHERE event_id = $1 AND user_id = $2", [eventId, userId]);
+  },
+  async presentUserIds(eventId) {
+    const r = await pool.query("SELECT user_id FROM event_presence WHERE event_id = $1", [eventId]);
+    return r.rows.map((x) => x.user_id);
+  },
+  // ---- problem reports ----
+  async createReport({ lineId, reporterId, reason, details }) {
+    const r = await pool.query("INSERT INTO reports (line_id, reporter_id, reason, details) VALUES ($1, $2, $3, $4) RETURNING *", [lineId, reporterId, reason, details]);
+    return report(r.rows[0]);
+  },
+  async countOpenReports(lineId, reporterId) {
+    const r = await pool.query("SELECT COUNT(*)::int AS n FROM reports WHERE line_id = $1 AND reporter_id = $2 AND status = 'open'", [lineId, reporterId]);
+    return r.rows[0].n;
+  },
+  async reportsBy(reporterId, lineIds) {
+    if (!lineIds.length) return [];
+    const r = await pool.query("SELECT * FROM reports WHERE reporter_id = $1 AND line_id = ANY($2::int[]) ORDER BY id", [reporterId, lineIds]);
+    return r.rows.map(report);
+  },
+  async getReport(id) {
+    const r = await pool.query("SELECT * FROM reports WHERE id = $1", [id]);
+    return report(r.rows[0]);
+  },
+  async adminReports() {
+    const r = await pool.query(
+      `SELECT rp.*, u.name AS reporter_name, u.email AS reporter_email FROM reports rp JOIN users u ON u.id = rp.reporter_id
+       ORDER BY (rp.status = 'open') DESC, rp.created_at DESC LIMIT 100`
+    );
+    return r.rows.map((row) => ({ ...report(row), reporterName: row.reporter_name, reporterEmail: row.reporter_email }));
+  },
+  async resolveReport(id, { resolution, refundCents }) {
+    const r = await pool.query(
+      "UPDATE reports SET status = 'resolved', resolution = $2, refund_cents = $3, resolved_at = now() WHERE id = $1 AND status = 'open' RETURNING *",
+      [id, resolution, refundCents || 0]
+    );
+    return report(r.rows[0]);
   },
   async getSetting(key) {
     const r = await pool.query("SELECT value FROM app_settings WHERE key = $1", [key]);

@@ -160,6 +160,7 @@ function lineFor(viewer, l) {
   if (!isOwner && !isWaiter) {
     delete out.payStatus;
     delete out.payCaptured;
+    delete out.payRefunded;
   }
   return out;
 }
@@ -184,6 +185,9 @@ const GRACE_MS = 30 * 60 * 1000; // waiter can end the shift 30 minutes after re
 const FREE_CANCEL_MS = 2 * 3600 * 1000; // cancelling 2+ hours before the start is free
 const CHECKIN_RADIUS_M = 800; // a check-in within about half a mile of the line counts as verified
 const SWAP_TRIES = 5;
+const REPORT_WINDOW_MS = 14 * 86400 * 1000; // problems can be reported up to 14 days after a job
+const REPORT_REASONS = ["Waiter didn't show", "Wrong item", "Item missing or damaged", "Charged the wrong amount", "Booker didn't show", "Safety concern", "Something else"];
+const BATCH_MAX = 5; // most requests a waiter can claim in one go
 // After buying, the waiter holds the item for the meetup window the booker picked; then they can
 // close the job. Food can't wait longer than 2 hours.
 const MEET_CHOICES = [45, 120, 240]; // minutes
@@ -233,6 +237,10 @@ async function decorate(viewer, list) {
   const mine = await store.ratingsByRater(viewer.id, doneIds);
   const chatIds = list.filter((l) => l.waiterId && (l.ownerId === viewer.id || l.waiterId === viewer.id)).map((l) => l.id);
   const unread = await store.unreadCounts(viewer.id, chatIds);
+  const evIds = [...new Set(list.map((l) => l.eventId).filter(Boolean))];
+  const evs = evIds.length ? await store.eventsByIds(evIds) : [];
+  const myLines = list.filter((l) => l.waiterId && (l.ownerId === viewer.id || l.waiterId === viewer.id)).map((l) => l.id);
+  const myReports = myLines.length ? await store.reportsBy(viewer.id, myLines) : [];
   return list.map((l) => {
     const out = lineFor(viewer, l);
     const isOwner = l.ownerId === viewer.id;
@@ -241,6 +249,14 @@ async function decorate(viewer, list) {
     out.ownerRating = summarize(sums[l.ownerId] && sums[l.ownerId].booker);
     if (l.waiterId) out.waiterRating = summarize(sums[l.waiterId] && sums[l.waiterId].waiter);
     if (chatIds.includes(l.id)) out.unread = unread[l.id] || 0;
+    const ev = l.eventId && evs.find((e) => e.id === l.eventId);
+    if (ev) out.event = { id: ev.id, name: ev.name, venue: ev.venue };
+    if (myLines.includes(l.id)) {
+      const mine = myReports.filter((r) => r.lineId === l.id);
+      const last = mine[mine.length - 1];
+      if (last) out.myReport = { status: last.status, reason: last.reason, resolution: last.resolution, refundCents: last.refundCents };
+      out.canReport = l.status !== "done" || (!!l.doneAt && now - new Date(l.doneAt).getTime() < REPORT_WINDOW_MS);
+    }
     if (l.status === "open") {
       const forLine = offers.filter((o) => o.lineId === l.id);
       if (isOwner) {
@@ -317,11 +333,11 @@ function parseStart(v) {
 const RESTRICTED =
   /\b(alcohol|alcoholic|liquor|vodka|tequila|whiske?y|bourbon|wine|champagne|six[- ]?pack|tobacco|cigars?|cigarettes?|vapes?|vaping|nicotine|juul|cannabis|marijuana|thc|edibles|dispensary|prescriptions?|rx|firearms?|handguns?|rifles?|shotguns?|ammo|ammunition|lottery|scratchers?|gift ?cards?|prepaid (debit |visa |credit )?cards?|money orders?)\b|(?<!root )\bbeers?\b/i;
 
-function lineFields(b) {
+function lineFields(b, event = null) {
   const kind = b.kind === "pickup" || b.kind === "spot" ? b.kind : null;
   if (!kind) fail(400, "Choose Pick it up for me or Save my spot.");
   const pickup = kind === "pickup";
-  const place = text(b.place, pickup ? "the store or place to buy it" : "where the spot is", 120);
+  const place = text(b.place || (event ? event.venue : ""), pickup ? "the store or place to buy it" : "where the spot is", 120);
   const notes = text(b.notes, "notes", 500, { required: false });
   const startAt = parseStart(b.startAt);
   const f = {
@@ -332,6 +348,8 @@ function lineFields(b) {
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
     rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
+    eventId: event ? event.id : null,
+    rush: b.asap === true, // ASAP requests carry a rush fee
   };
   if (!pickup) {
     if (b.spotAgree !== true)
@@ -439,6 +457,44 @@ function startPaymentSweeper() {
 
 // ---------- phone notifications ----------
 const ping = (userId, title, body) => push.notify(store, userId, { title, body });
+
+const publicEvent = (e) => ({ id: e.id, name: e.name, venue: e.venue, startsAt: e.startsAt, endsAt: e.endsAt,
+  live: new Date(e.startsAt).getTime() <= Date.now() + 2 * 3600e3, open: e.open || 0, here: e.here || 0, meHere: !!e.meHere });
+async function eventFor(eventId) {
+  if (eventId === undefined || eventId === null || eventId === "") return null;
+  const ev = await store.eventById(Number(eventId));
+  if (!ev || new Date(ev.endsAt).getTime() < Date.now()) fail(400, "That event has ended. Pick another, or post without one.");
+  return ev;
+}
+
+// Claims one open request for this waiter (used by Claim and by claiming several at once).
+async function claimLine(me, l) {
+  if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
+  if (isExpired(l)) fail(409, "This request's start time has passed.");
+  let updated = await store.updateLine(l.id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date() });
+  if (!updated) fail(409, "Someone else just claimed this request.");
+  await store.closeOtherOffers(l.id, 0);
+  updated = await holdIfDue(updated);
+  ping(l.ownerId, "Your request was claimed", `${firstName(me.name)} took your request at ${l.place}.`);
+  return updated;
+}
+
+// New problem reports: a phone alert to each admin and an email to support.
+async function notifyAdmins(title, body, reporter, l, rp) {
+  try {
+    for (const email of ADMIN_EMAILS) {
+      const u = await store.userByEmail(email);
+      if (u) ping(u.id, title, body);
+    }
+    const to = process.env.SUPPORT_EMAIL;
+    if (to && mailEnabled()) {
+      const lines = [`Report #${rp.id} on request #${l.id} (${l.place})`, `From: ${reporter.name} <${reporter.email}>`, `Reason: ${rp.reason}`, rp.details ? `Details: ${rp.details}` : "", "", "Review it on the admin page."];
+      await sendMail({ to, subject: title, text: lines.join("\n"), html: lines.map((x) => `<p>${escHtml(x)}</p>`).join("") });
+    }
+  } catch (e) {
+    console.error("Report alert failed:", e.message);
+  }
+}
 const firstName = (n) => String(n || "Someone").split(" ")[0];
 // Every 5 minutes: remind bookers 20 minutes before their pickup meetup window ends.
 async function meetupSweep() {
@@ -651,6 +707,40 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { user: publicUser(await store.updateUser(me.id, fields)) });
   }
 
+  // ---- events: venue nights where waiters say they're inside ----
+  if (urlPath === "/api/events" && method === "GET") {
+    return send(res, 200, { events: (await store.upcomingEvents(me.id)).map(publicEvent) });
+  }
+  const em = urlPath.match(/^\/api\/events\/(\d+)\/here$/);
+  if (em && method === "POST") {
+    const ev = await store.eventById(Number(em[1]));
+    if (!ev || new Date(ev.endsAt).getTime() < Date.now()) fail(404, "That event has ended.");
+    const b = await readBody(req);
+    await store.setPresence(ev.id, me.id, b.here !== false);
+    const now = (await store.upcomingEvents(me.id)).find((e) => e.id === ev.id);
+    return send(res, 200, { event: now ? publicEvent(now) : null });
+  }
+
+  // ---- claim several open requests at once (one trip to the same stand) ----
+  if (urlPath === "/api/lines/claim-batch" && method === "POST") {
+    const b = await readBody(req);
+    const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(Number).filter(Number.isInteger))];
+    if (!ids.length) fail(400, "Pick the requests to claim.");
+    if (ids.length > BATCH_MAX) fail(400, `You can claim up to ${BATCH_MAX} at a time.`);
+    await requirePayouts(me);
+    const results = [];
+    for (const id of ids) {
+      try {
+        const l = await store.getLine(id);
+        if (!l) fail(404, "That request no longer exists.");
+        results.push({ id, ok: true, line: await one(me, await claimLine(me, l)) });
+      } catch (e) {
+        results.push({ id, ok: false, error: e.message });
+      }
+    }
+    return send(res, 200, { results });
+  }
+
   if (urlPath === "/api/lines" && method === "GET") {
     const scope = query.get("scope");
     const filter =
@@ -664,9 +754,16 @@ async function api(req, res, urlPath, query) {
     limit(`post:${me.id}`, 20, 86400 * 1000, "You've posted a lot of lines today. Try again tomorrow.");
     if ((await store.countLines(me.id, { openOnly: true })) >= 10)
       fail(429, "You have 10 open lines already. Cancel or wait for one to be claimed before posting more.");
-    const f = lineFields(b);
+    const event = await eventFor(b.eventId);
+    const f = lineFields(b, event);
     await requireCard(me);
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
+    if (event) {
+      // Tell waiters who said they're at this event.
+      const who = (await store.presentUserIds(event.id)).filter((id) => id !== me.id);
+      const what = f.kind === "pickup" ? `${f.qty > 1 ? `${f.qty} × ` : ""}${f.item}` : f.what;
+      for (const id of who) ping(id, `New request at ${event.name}`, `${what} · $${f.rate.toFixed(2)}/hr`);
+    }
     // Look up map coordinates in the background so posting stays instant.
     geocode(line.place).then((g) => g && store.setLineGeo(line.id, g)).catch(() => {});
     return send(res, 201, { line: await one(me, line) });
@@ -705,7 +802,7 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
@@ -725,7 +822,7 @@ async function api(req, res, urlPath, query) {
     if (action === "edit") {
       if (l.ownerId !== me.id) fail(403, "Only the person who posted this line can edit it.");
       if (l.status !== "open") fail(409, "A waiter already claimed this line, so it can't be edited.");
-      const f = lineFields(b);
+      const f = lineFields(b, await eventFor(b.eventId));
       const fields = { ...f, approvedHours: f.hours };
       if (f.place !== l.place) Object.assign(fields, { lat: null, lng: null, geoApprox: null });
       updated = await store.updateLine(id, "open", fields);
@@ -735,15 +832,8 @@ async function api(req, res, urlPath, query) {
     }
 
     if (action === "claim") {
-      if (l.ownerId === me.id) fail(400, "You can't claim your own line.");
-      if (isExpired(l)) fail(409, "This line's start time has passed.");
       await requirePayouts(me);
-      updated = await store.updateLine(id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date() });
-      if (!updated) fail(409, "Someone else just claimed this line.");
-      await store.closeOtherOffers(id, 0);
-      updated = await holdIfDue(updated);
-      ping(l.ownerId, "Your request was claimed", `${firstName(me.name)} took your request at ${l.place}.`);
-      return send(res, 200, { line: await one(me, updated) });
+      return send(res, 200, { line: await one(me, await claimLine(me, l)) });
     }
 
     // ---- waiters can offer a different rate; the booker accepts or declines ----
@@ -820,6 +910,19 @@ async function api(req, res, urlPath, query) {
       updated = await releaseIfHeld(updated);
       ping(waiterId, "Removed from a job", `You didn't check in at ${l.place} on time, so the booker reopened it.`);
       return send(res, 200, { line: await one(me, updated) });
+    }
+
+    if (action === "report") {
+      if (!l.waiterId || (l.ownerId !== me.id && l.waiterId !== me.id)) fail(403, "Only the booker and waiter on this job can report a problem.");
+      if (l.status === "done" && (!l.doneAt || Date.now() - new Date(l.doneAt).getTime() > REPORT_WINDOW_MS))
+        fail(409, "Problems can be reported up to 14 days after a job. Email support for anything older.");
+      const reason = REPORT_REASONS.includes(b.reason) ? b.reason : fail(400, "Pick what went wrong.");
+      const details = text(b.details, "what happened", 1000, { required: reason === "Something else" || reason === "Safety concern" });
+      if ((await store.countOpenReports(id, me.id)) >= 3) fail(429, "You already have reports open on this job. We'll get back to you soon.");
+      limit(`report:${me.id}`, 10, 86400 * 1000, "You've sent a lot of reports today. Email support if it's urgent.");
+      const rp = await store.createReport({ lineId: id, reporterId: me.id, reason, details });
+      notifyAdmins(`Problem reported on #${id}`, `${firstName(me.name)}: ${reason}${details ? " · " + details.slice(0, 120) : ""}`, me, l, rp);
+      return send(res, 200, { line: await one(me, l) });
     }
 
     if (action === "raise-limit") {
@@ -975,6 +1078,56 @@ async function api(req, res, urlPath, query) {
           posted: u.posted, worked: u.worked, createdAt: u.createdAt,
         })),
       });
+    }
+    if (urlPath === "/api/admin/events" && method === "GET") {
+      return send(res, 200, { events: (await store.upcomingEvents(me.id, { all: true })).map(publicEvent) });
+    }
+    if (urlPath === "/api/admin/events" && method === "POST") {
+      const b = await readBody(req);
+      const name = text(b.name, "the event name", 100);
+      const venue = text(b.venue, "the venue and city", 120);
+      const startsAt = Date.parse(b.startsAt), endsAt = Date.parse(b.endsAt);
+      if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) fail(400, "Add when the event starts and ends.");
+      if (endsAt <= startsAt) fail(400, "The end has to be after the start.");
+      if (endsAt < Date.now()) fail(400, "That event has already ended.");
+      if (endsAt - startsAt > 4 * 86400e3) fail(400, "Keep an event under 4 days. Add each day of a fair separately.");
+      const ev = await store.createEvent({ name, venue, startsAt: new Date(startsAt), endsAt: new Date(endsAt) });
+      geocode(venue).then((g) => g && store.setEventGeo(ev.id, g)).catch(() => {});
+      return send(res, 201, { event: publicEvent(ev) });
+    }
+    const aem = urlPath.match(/^\/api\/admin\/events\/(\d+)\/delete$/);
+    if (aem && method === "POST") {
+      if (!(await store.deleteEvent(Number(aem[1])))) fail(404, "That event doesn't exist.");
+      return send(res, 200, { ok: true });
+    }
+    if (urlPath === "/api/admin/reports" && method === "GET") {
+      const reps = await store.adminReports();
+      const out = [];
+      for (const r of reps) {
+        const l = await store.getLine(r.lineId);
+        out.push({ ...r, line: l && { id: l.id, kind: l.kind, place: l.place, what: l.what, status: l.status, outcome: l.outcome,
+          ownerName: l.ownerName, waiterName: l.waiterName, ownerId: l.ownerId, waiterId: l.waiterId, bill: billing(l),
+          payStatus: l.payStatus, payCaptured: l.payCaptured, payRefunded: l.payRefunded, hasReceipt: l.hasReceipt } });
+      }
+      return send(res, 200, { reports: out });
+    }
+    const arm = urlPath.match(/^\/api\/admin\/reports\/(\d+)\/resolve$/);
+    if (arm && method === "POST") {
+      const rp = await store.getReport(Number(arm[1]));
+      if (!rp || rp.status !== "open") fail(404, "That report is already resolved.");
+      const b = await readBody(req);
+      const note = text(b.note, "a note for the person who reported it", 500);
+      const cents = Math.round(Number(b.refund || 0) * 100);
+      if (!Number.isFinite(cents) || cents < 0) fail(400, "Enter a refund amount, or 0.");
+      if (cents > 0) {
+        if (!pay.enabled()) fail(400, "Payments aren't switched on, so refunds can't be made here.");
+        const l = await store.getLine(rp.lineId);
+        await pay.refund(store, l, cents, { fromWaiter: b.fromWaiter === true, key: `refund-report-${rp.id}` });
+      }
+      const done = await store.resolveReport(rp.id, { resolution: note, refundCents: cents });
+      if (!done) fail(409, "That report was just resolved.");
+      ping(rp.reporterId, "Your report was reviewed", cents > 0 ? `We refunded $${(cents / 100).toFixed(2)}. ${note}` : note);
+      return send(res, 200, { report: done });
     }
     if (urlPath === "/api/admin/stripe-check" && method === "POST") {
       if (!pay.enabled()) fail(400, "Stripe isn't set up. Add STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY in Railway.");

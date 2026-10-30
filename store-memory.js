@@ -6,6 +6,11 @@ const sessions = new Map(); // tokenHash -> { userId, createdAt }
 const lines = [];
 const receipts = new Map(); // line id -> { mime, data }
 const settings = new Map();
+const events = []; // { id, name, venue, startsAt, endsAt, lat, lng, createdAt }
+const presence = new Map(); // "eventId:userId" -> Date
+const reports = [];
+let nextEvent = 1;
+let nextReport = 1;
 const pushSubs = new Map(); // endpoint -> { endpoint, userId, p256dh, auth, at }
 const ratings = [];
 const offers = [];
@@ -103,10 +108,82 @@ module.exports = {
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
       payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
       kind: "spot", item: "", itemDetails: "", qty: 1, itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
-      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, ...f,
+      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, ...f,
     };
     lines.push(l);
     return withNames(l);
+  },
+  // ---- events ----
+  async createEvent({ name, venue, startsAt, endsAt }) {
+    const e = { id: nextEvent++, name, venue, startsAt: new Date(startsAt), endsAt: new Date(endsAt), lat: null, lng: null, createdAt: new Date() };
+    events.push(e);
+    return { ...e };
+  },
+  async setEventGeo(id, geo) {
+    const e = events.find((x) => x.id === id);
+    if (e) Object.assign(e, { lat: geo.lat, lng: geo.lng });
+  },
+  async deleteEvent(id) {
+    const i = events.findIndex((x) => x.id === id);
+    if (i < 0) return false;
+    events.splice(i, 1);
+    for (const k of [...presence.keys()]) if (k.startsWith(id + ":")) presence.delete(k);
+    for (const l of lines) if (l.eventId === id) l.eventId = null;
+    return true;
+  },
+  async eventById(id) {
+    const e = events.find((x) => x.id === id);
+    return e ? { ...e } : null;
+  },
+  async eventsByIds(ids) {
+    return events.filter((e) => ids.includes(e.id)).map((e) => ({ ...e }));
+  },
+  async upcomingEvents(userId, { all = false } = {}) {
+    const now = Date.now();
+    const list = events.filter((e) => (all ? +e.endsAt > now - 30 * 86400e3 : +e.endsAt > now && +e.startsAt < now + 7 * 86400e3));
+    list.sort((a, b) => (all ? b.startsAt - a.startsAt : a.startsAt - b.startsAt));
+    return list.map((e) => {
+      const here = [...presence.keys()].filter((k) => k.startsWith(e.id + ":"));
+      return { ...e, open: lines.filter((l) => l.eventId === e.id && l.status === "open").length, here: here.length, meHere: presence.has(`${e.id}:${userId}`) };
+    });
+  },
+  async setPresence(eventId, userId, here) {
+    if (here) presence.set(`${eventId}:${userId}`, new Date());
+    else presence.delete(`${eventId}:${userId}`);
+  },
+  async presentUserIds(eventId) {
+    return [...presence.keys()].filter((k) => k.startsWith(eventId + ":")).map((k) => Number(k.split(":")[1]));
+  },
+  // ---- problem reports ----
+  async createReport({ lineId, reporterId, reason, details }) {
+    const r = { id: nextReport++, lineId, reporterId, reason, details, status: "open", resolution: "", refundCents: 0, createdAt: new Date(), resolvedAt: null };
+    reports.push(r);
+    return { ...r };
+  },
+  async countOpenReports(lineId, reporterId) {
+    return reports.filter((r) => r.lineId === lineId && r.reporterId === reporterId && r.status === "open").length;
+  },
+  async reportsBy(reporterId, lineIds) {
+    return reports.filter((r) => r.reporterId === reporterId && lineIds.includes(r.lineId)).map((r) => ({ ...r }));
+  },
+  async getReport(id) {
+    const r = reports.find((x) => x.id === id);
+    return r ? { ...r } : null;
+  },
+  async adminReports() {
+    return reports
+      .slice()
+      .sort((a, b) => (b.status === "open") - (a.status === "open") || b.createdAt - a.createdAt)
+      .map((r) => {
+        const u = users.find((x) => x.id === r.reporterId) || {};
+        return { ...r, reporterName: u.name, reporterEmail: u.email };
+      });
+  },
+  async resolveReport(id, { resolution, refundCents }) {
+    const r = reports.find((x) => x.id === id && x.status === "open");
+    if (!r) return null;
+    Object.assign(r, { status: "resolved", resolution, refundCents: refundCents || 0, resolvedAt: new Date() });
+    return { ...r };
   },
   async getSetting(key) {
     return settings.get(key) ?? null;

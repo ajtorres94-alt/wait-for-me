@@ -277,6 +277,11 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .cardbox{display:flex;flex-direction:column;gap:10px;margin-top:10px}
 .card-el{min-height:120px;padding:4px 0}
 .grp:not(.two){display:grid;gap:14px}
+.kindtag.ev{background:var(--ticket);color:var(--ticket-ink)}
+.evcard.on{border-color:var(--ink)}
+.selbar{position:sticky;top:64px;z-index:4;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:var(--surface);border:1px solid var(--ink);border-radius:12px;padding:10px 12px}
+.check.pick{min-height:44px}
+.confirm.report select,.confirm.report textarea{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
 .nudge{display:flex;flex-direction:column;gap:10px;background:var(--info-bg);border:1px solid color-mix(in srgb,var(--info) 35%,transparent);border-radius:14px;padding:14px}
 .seg3{grid-template-columns:repeat(3,1fr)}
 .wheels.three{grid-template-columns:repeat(3,1fr);gap:8px}
@@ -348,7 +353,7 @@ const KEYS={pickup:['open','claimed','enroute','inline','nearfront','handoff','d
 const kindOf=j=>j&&j.kind==='pickup'?'pickup':'spot';
 const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includes(j.status)?KEYS.legacy:KEYS.spot;
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
-const MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
+const MIN_PAY=8,RUSH_FEE=1.99,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const bookingFeeFor=j=>kindOf(j)==='pickup'?PICKUP_BOOKING_FEE:BOOKING_FEE;
 const money=n=>'$'+(Math.round(n*100)/100).toFixed(2).replace(/\.00$/,'');
@@ -381,10 +386,10 @@ function pillFor(j){
   return`<span class="pill active">${stShort(j)}</span>`}
 // Accepts a line, or {kind, status} for the walkthrough pictures.
 function steps(j){const keys=keysFor(j),i=keys.indexOf(j.status);return`<ol class="steps" aria-label="Progress: ${stLabel(j)}">${keys.slice(1).map((k,n)=>`<li class="${n+1<=i?'on':''}" title="${STAGE_TXT[kindOf(j)][k][1]}"></li>`).join('')}</ol>`}
-const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pick it up':'Save my spot'}</span>`;
+const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pick it up':'Save my spot'}</span>${j.event?` <span class="kindtag ev">${esc(j.event.name)}</span>`:''}`;
 // The most a job could cost the booker (time at the approved hours, fees, and for pickups the item limit and drop-off fee).
 function upTo(j,hours){const h=hours??(j.bill?j.bill.approvedHours:j.hours),time=h*j.rate;
-  let t=time*(1+FEE)+bookingFeeFor(j);if(kindOf(j)==='pickup'){t+=(+j.itemBudget||0)*(1+ITEM_FEE);if(j.handoff==='dropoff')t+=+j.dropoffFee||0}return t}
+  let t=Math.max(MIN_PAY,time)*(1+FEE)+bookingFeeFor(j)+(j.rush?RUSH_FEE:0);if(kindOf(j)==='pickup'){t+=(+j.itemBudget||0)*(1+ITEM_FEE);if(j.handoff==='dropoff')t+=+j.dropoffFee||0}return t}
 const waiterUpTo=j=>(j.bill?j.bill.approvedHours:j.hours)*j.rate+(kindOf(j)==='pickup'&&j.handoff==='dropoff'?+j.dropoffFee||0:0);
 function facts(j,mode){
   const b=billOf(j),done=j.status==='done';
@@ -410,28 +415,28 @@ let clockSkew=0;
 const nowS=()=>Date.now()+clockSkew;
 function billOf(j){
   if(j.status==='done'&&j.bill){const s=j.bill;return{approved:s.approvedHours,waited:s.waitedHours,billed:s.billedHours,time:s.timePay??s.waiterPay,drop:s.dropoff||0,item:s.item||0,
-    pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
+    pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
   const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
-  const time=r2(billed*j.rate),item=bought?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
-  const pay=r2(time+drop),svc=r2(time*FEE),book=billed>0?bookingFeeFor(j):0,ifee=r2(item*ITEM_FEE),fee=r2(svc+book+ifee);
+  const raw=r2(billed*j.rate),minApplied=billed>0&&raw<MIN_PAY,time=minApplied?MIN_PAY:raw,item=bought?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
+  const pay=r2(time+drop),svc=r2(time*FEE),book=billed>0?bookingFeeFor(j):0,ifee=r2(item*ITEM_FEE),rush=j.rush&&billed>0?RUSH_FEE:0,fee=r2(svc+book+ifee+rush);
   const live=!!ci&&!bought;
-  return{approved,waited:w,billed,time,drop,item,pay,svc,book,ifee,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
+  return{approved,waited:w,billed,time,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
 function billRows(b,who){
-  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[who==='customer'?'Waiter time':'Your time',money(b.time)]];
+  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.minApplied?` (${money(MIN_PAY)} minimum)`:''),money(b.time)]];
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
-  if(who==='customer'){rows.push(['Service fee (15% of time)',money(b.svc)]);if(b.book)rows.push(['Booking fee',money(b.book)]);if(b.ifee)rows.push(['Card processing (3% of item)',money(b.ifee)])}
+  if(who==='customer'){rows.push(['Service fee (15% of time)',money(b.svc)]);if(b.book)rows.push(['Booking fee',money(b.book)]);if(b.ifee)rows.push(['Card processing (3% of item)',money(b.ifee)]);if(b.rush)rows.push(['Rush fee (ASAP)',money(b.rush)])}
   return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
 const clockTxt=h=>{const m=Math.floor(h*60);return`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`};
 function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
   return`<div class="meter-top"><span>${kindOf(j)==='pickup'?'Time in line':'Time at the spot'}</span><b class="mono">${clockTxt(b.waited)}</b><span>of ${fmtShort(b.approved)} approved</span></div>
    <div class="bar${b.nearUp?' warn':''}"><i style="width:${pct}%"></i></div>
-   <div class="meter-bot"><span>${mode==='customer'?'Cost so far (15 min minimum)':'Earned so far (15 min minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
+   <div class="meter-bot"><span>${mode==='customer'?'Cost so far ($8 minimum)':'Earned so far ($8 minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'&&!(kindOf(j)==='pickup'&&j.purchasedAt)?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
 setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
 let myRatings=null,TAGS={waiter:[],booker:[]};
@@ -496,7 +501,7 @@ function paymentCard(){
       <div class="btns"><button class="btn small" id="card-save" data-act="card-save" disabled>Save card</button><button class="btn ghost small" data-act="card-close">Cancel</button></div></div>`
     :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
   <article class="card section"><h2>Getting paid</h2>
-    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings to your bank. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
+    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. Need it tonight? Cash out instantly from See payouts and earnings (Stripe charges a small fee). You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
     <div class="btns">${po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
       :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
     ${PAY.testMode&&po!=='ready'?'<div class="hint">Test mode: on Stripe\'s page, use test phone 000 000 0000, code 000000, SSN 000-00-0000 and their test bank account. No real money moves.</div>':''}</article>`}
@@ -509,7 +514,7 @@ function payNote(j,who){
     if(st==='held')return`<div class="hint">A hold of up to ${money(j.payHeld/100)} is on your card. You're only charged for the actual time${kindOf(j)==='pickup'?' and the receipt price':''}.</div>`;
     if(st==='failed')return`<div class="warnnote">We couldn't place a hold on your card${j.payError?`: ${esc(j.payError)}`:''}. Update your card so your waiter knows they'll be paid.</div><div class="btns"><button class="btn small" data-act="card-acct">Update card</button></div>`;
     return`<div class="hint">We'll place a hold on your card a few days before the start time.</div>`}
-  if(j.status==='done'){if(st==='captured')return`<div class="hint">Paid. Stripe sends it to your bank on your payout schedule.</div>`;
+  if(j.status==='done'){if(st==='captured')return`<div class="hint">Paid. Cash out instantly from Account → See payouts and earnings, or it reaches your bank on your regular payout schedule.</div>`;
     if(st==='charge_failed')return`<div class="warnnote">We're still collecting this payment from the booker. You'll be paid as soon as it goes through.</div>`;return''}
   if(st==='held')return`<div class="hint">✓ Payment secured.</div>`;
   if(st==='failed')return`<div class="warnnote">Payment isn't secured yet. We've asked ${esc(j.ownerName||'the booker')} to update their card. You can release this line with no penalty before you check in.</div>`;
@@ -548,6 +553,22 @@ const OUTCOME_TXT={
     cancelled_inline:o=>`${o} cancelled after you checked in, so you're paid for the time you waited.`,
     sold_out:()=>`It was sold out, so you're paid for the time you waited.`,
     pickup_noshow:o=>`${o} didn't meet you within the meetup window, so you were paid in full, including the item. Arrange the handover with them in Messages.`}};
+// ---- problem reports ----
+const reportOpen=new Set(),reportDraft={};
+const REASONS={customer:["Waiter didn't show","Wrong item","Item missing or damaged","Charged the wrong amount","Safety concern","Something else"],
+  waiter:["Booker didn't show","Charged the wrong amount","Safety concern","Something else"]};
+function reportHTML(j,who){
+  if(!j.waiterId)return'';let out='';const r=j.myReport;
+  if(r)out+=`<div class="hint">${r.status==='open'?`You reported a problem (${esc(r.reason)}). We'll get back to you within 2 business days.`
+    :`Your report was reviewed${r.refundCents?`, and ${money(r.refundCents/100)} was refunded`:''}. ${esc(r.resolution)}`}</div>`;
+  if(!j.canReport)return out;
+  if(!reportOpen.has(j.id))return out+`<button class="linkbtn" data-act="report-open" data-id="${j.id}">Report a problem</button>`;
+  const d=reportDraft[j.id]||{};
+  return out+`<div class="confirm report"><b>Report a problem</b>
+    <label class="meta" for="rr-${j.id}">What went wrong?</label><select id="rr-${j.id}">${REASONS[who].map(x=>`<option${d.reason===x?' selected':''}>${esc(x)}</option>`).join('')}</select>
+    <label class="meta" for="rd-${j.id}">Details</label><textarea id="rd-${j.id}" rows="3" maxlength="1000" placeholder="What happened? Anything that helps us sort it out.">${esc(d.details||'')}</textarea>
+    <div class="btns"><button class="btn small" data-act="report-send" data-id="${j.id}">Send report</button><button class="btn ghost small" data-act="report-close" data-id="${j.id}">Cancel</button></div>
+    <div class="hint">In an emergency, call 911 first.</div></div>`}
 // ---- messages ----
 const chatOpen=new Set(),chatData={},chatDraft={};
 function chatHTML(j,other){
@@ -693,9 +714,9 @@ function customerMine(){
       ${j.status!=='open'?steps(j):''}
       <div class="stepnote"><span><b>${j.status==='open'&&j.expired?'Start time passed':stLabel(j)}</b></span><span>${j.waiterId?'Your waiter':j.expired?'Hidden from waiters':'Visible to waiters now'}</span></div>
       ${itemBox(j,'customer')}
-      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active||j.chatOpen?chatHTML(j,j.waiterName):''}</article>`}).join('')}</div>`}
+      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active||j.chatOpen?chatHTML(j,j.waiterName):''}${reportHTML(j,'customer')}</article>`}).join('')}</div>`}
 
-let editing=null,postKind='pickup',postHandoff='meet',postDay='today';
+let editing=null,postKind='pickup',postHandoff='meet',postDay='today',postEvent=null,EVENTS=[];
 const APPROVED_HOURS=2; // time approved up front; bookers are asked to add more if it runs out
 const PRICE_BUFFER=1.25; // the item limit is the booker's rough price plus room for tax and price changes
 const limitFor=(p,q=1)=>Math.min(MAX_ITEM,Math.ceil(p*q*PRICE_BUFFER));
@@ -716,6 +737,9 @@ function customerPost(){
    <div class="kinds" role="radiogroup" aria-label="What do you need?">
      ${kindBtn('pickup','Pick it up for me','A waiter stands in line, buys it, and hands it to you.')}
      ${kindBtn('spot','Save my spot','A waiter saves a spot where that\'s normal, like a parade curb.')}</div>
+   ${EVENTS.length?`<div class="field"><span class="wlabel" id="l-event">At an event?</span><div class="filters" role="group" aria-labelledby="l-event">
+     <button type="button" class="chip" aria-pressed="${!postEvent}" data-event="">No</button>${EVENTS.map(ev=>`<button type="button" class="chip" aria-pressed="${postEvent===ev.id}" data-event="${ev.id}">${esc(ev.name)} · ${evWhen(ev)}</button>`).join('')}</div>
+     <small id="h-event">${eventHint()}</small></div>`:''}
    <div class="field"><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
    <div class="grp" data-for="pickup"${pk?'':' hidden'}>
      <div class="field"><label for="f-item">What should they buy?</label><input id="f-item" maxlength="120" placeholder="e.g. Tour hoodie" value="${v('item')}"><small>Up to ${MAX_QTY} of the same item. Some drops limit 1 per person.</small></div>
@@ -743,6 +767,11 @@ function customerPost(){
    <div class="wheels one">${wheelHTML('rate','Hourly rate',RATES,fmtRate,wheel.rate)}</div>
    <div class="quote" id="quote"></div>
    <button class="btn block" type="submit">${e?'Save changes':'Post request'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">Cancel editing</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
+function evWhen(ev){const s=new Date(ev.startsAt);if(ev.live)return'Now';const t=s.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),d=s.toDateString()===new Date().toDateString()?'Today':s.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});return`${d} ${t}`}
+function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
+  return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
+function setEvent(id){postEvent=id||null;const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
+  const ev=EVENTS.find(e=>e.id===postEvent);if(ev&&!$('#f-place').value.trim())$('#f-place').value=ev.venue;$('#h-event').innerHTML=eventHint()}
 // Switch the post form between the two kinds without losing what's been typed.
 function setPostKind(k){postKind=k;const f=$('#postForm');if(!f)return;
   f.querySelectorAll('[data-kind]').forEach(b=>b.setAttribute('aria-checked',b.dataset.kind===k));
@@ -756,7 +785,7 @@ function setHandoff(h){postHandoff=h;const f=$('#postForm');f.querySelectorAll('
 function setDay(k){postDay=k;const f=$('#postForm');f.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.day===k));
   $('#f-date').hidden=k!=='date';$('#when-wheels').hidden=k==='asap';
   $('#h-when').textContent=k==='asap'?'Waiters nearby see it right away and head over once they claim it.':'';
-  if(k==='date'&&!$('#f-date').value)$('#f-date').showPicker?.()}
+  if(k==='date'&&!$('#f-date').value)$('#f-date').showPicker?.();updateQuote()}
 // The start time picked on the form. Throws a message the form shows if it's not usable.
 function chosenStart(){
   const now=new Date();if(postDay==='asap')return{d:now,text:'ASAP'};
@@ -799,16 +828,16 @@ function updateQuote(){
   const h=APPROVED_HOURS,r=RATES[wheel.rate],time=h*r,svc=time*FEE,pk=postKind==='pickup';
   const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,budget=price?limitFor(price,qty):0;
   const drop=pk&&postHandoff==='dropoff'?Math.max(0,parseFloat($('#f-dropfee').value)||0):0;
-  const ifee=budget*ITEM_FEE,total=time+svc+(pk?PICKUP_BOOKING_FEE:BOOKING_FEE)+budget+drop+ifee;
+  const ifee=budget*ITEM_FEE,rush=postDay==='asap'?RUSH_FEE:0,total=time+svc+(pk?PICKUP_BOOKING_FEE:BOOKING_FEE)+budget+drop+ifee+rush;
   if(pk){$('#l-price').textContent=qty>1?'About how much each?':'About how much is it?';
     $('#h-price').textContent=price*qty>MAX_ITEM?`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
     $('#h-meet').textContent='Meet within 4 hours of the purchase, so after the show works. For food, meet within 30 minutes so it stays fresh.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
   q.innerHTML=row(`Waiter time (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
     +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
-    +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(pk?PICKUP_BOOKING_FEE:BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')
+    +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(pk?PICKUP_BOOKING_FEE:BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')+(rush?row('Rush fee (ASAP)',money(rush)):'')
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (15-minute minimum)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
+    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (waiters earn at least $8)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -823,26 +852,39 @@ function locate(){
     e=>{near.busy=false;near.on=false;render();toast(e.code===1?'Location is blocked. Allow location for this app in your phone\'s settings, then try again.':'Couldn\'t get your location. Try again in a moment.')},
     {enableHighAccuracy:false,timeout:10000,maximumAge:300000});
 }
+let eventFilter=null,selecting=false;const picked=new Set();
+function eventCards(){
+  if(!EVENTS.length)return'';
+  return`<div class="section"><h2>Events</h2>${EVENTS.map(e=>`<article class="card evcard${eventFilter===e.id?' on':''}"><div class="row"><div><span class="kindtag ev">${e.live?'Happening now':esc(evWhen(e))}</span><h3>${esc(e.name)}</h3><div class="meta">${esc(e.venue)}</div></div></div>
+   <div class="meta">${e.open} open request${e.open===1?'':'s'} · ${e.here} waiter${e.here===1?'':'s'} here${e.meHere?' (including you)':''}</div>
+   <div class="btns"><button class="btn ${e.meHere?'ghost ':''}small" data-act="here" data-id="${e.id}" data-here="${e.meHere?'0':'1'}">${e.meHere?'I left':'I\'m here'}</button>${e.open||eventFilter===e.id?`<button class="btn ghost small" data-act="ev-filter" data-id="${e.id}">${eventFilter===e.id?'Show all jobs':'Show its requests'}</button>`:''}</div>
+   ${e.meHere?'<div class="hint">You\'ll get an alert for each new request posted for this event.</div>':''}</article>`).join('')}</div>`}
 function waiterFind(){
   const cats=['All','Pickups','Spots'];
   let open=data.open.filter(j=>filter==='All'||(filter==='Pickups')===(kindOf(j)==='pickup'));
+  if(eventFilter)open=open.filter(j=>j.eventId===eventFilter);
+  for(const id of [...picked])if(!open.some(j=>j.id===id))picked.delete(id);
   if(near.on){
     if(near.radius)open=open.filter(j=>{const d=distOf(j);return d!=null&&d<=near.radius});
     open=open.slice().sort((a,b)=>{const x=distOf(a),y=distOf(b);return(x==null)-(y==null)||(x??0)-(y??0)});
   }
   const radii=[[0,'Any distance'],[5,'5 mi'],[10,'10 mi'],[25,'25 mi']];
-  return`<div class="list"><div class="filters" role="group" aria-label="Filter by kind">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
+  const evName=eventFilter&&(EVENTS.find(e=>e.id===eventFilter)||{}).name;
+  const selBar=open.length>1?(selecting?`<div class="selbar"><span><b>${picked.size}</b> selected${picked.size>=5?' (most at once)':''}</span><span class="btns"><button class="btn small" data-act="claim-batch"${picked.size?'':' disabled'}>Claim ${picked.size||''}</button><button class="btn ghost small" data-act="select-off">Cancel</button></span></div>`
+    :`<div class="btns"><button class="btn ghost small" data-act="select-on">Claim several at once</button></div>`):'';
+  return`<div class="list">${eventCards()}${evName?`<div class="note">Showing requests for <b>${esc(evName)}</b>.</div>`:''}<div class="filters" role="group" aria-label="Filter by kind">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
-     ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>
+     ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>${selBar}
    ${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup';return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
-     <div class="hint">${pickup?`Paid for your time from check-in to purchase, 15-minute minimum. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, 15-minute minimum.`} You'll see the booker's name and notes after you claim.</div>
+     <div class="hint">${pickup?`Paid for your time from check-in to purchase, at least $8 a job. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
      ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for the booker to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
      :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
         <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="10" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>
         <div class="btns"><button class="btn small" data-act="offer" data-id="${j.id}">Send offer</button><button class="btn ghost small" data-act="offer-cancel" data-id="${j.id}">Cancel</button></div></div>`
+     :selecting?`<label class="check pick"><input type="checkbox" data-pick="${j.id}"${picked.has(j.id)?' checked':''}${!picked.has(j.id)&&picked.size>=5?' disabled':''}> Add to this trip</label>`
      :`<div class="btns"><button class="btn small" data-act="claim" data-id="${j.id}">Claim at ${fmtRate(j.rate)}/hr</button><button class="btn ghost small" data-act="offer-open" data-id="${j.id}">Offer a different rate</button></div>`}</article>`}).join(''):`<div class="empty">No open jobs${near.on&&near.radius?` within ${near.radius} miles`:''}${filter==='All'?'':' of this kind'} right now. New ones show up here automatically.</div>`}</div>`}
 
 const buyDraft={},soldOpen=new Set(),soldPhoto={};
@@ -851,7 +893,9 @@ function waiterShifts(){
   const earned=mine.filter(j=>j.status==='done').reduce((s,j)=>s+billOf(j).pay,0);
   const upToSum=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+waiterUpTo(j),0);
   const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the register',handoff:'I\'m at the front'};
-  return`<div class="list">${alertsNudge(mine,'waiter')}<div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upToSum)} on active shifts</div></div>
+  const groups={};mine.filter(j=>['claimed','enroute'].includes(j.status)).forEach(j=>{const k=j.eventId?'e'+j.eventId:'p'+j.place.trim().toLowerCase();(groups[k]=groups[k]||[]).push(j)});
+  const allBtns=Object.values(groups).filter(g=>g.length>1).map(g=>`<div class="note"><b>${g.length} jobs at ${esc(g[0].event?g[0].event.name:g[0].place)}</b><div class="btns" style="margin-top:8px"><button class="btn small" data-act="checkin-all" data-ids="${g.map(j=>j.id).join(',')}">I'm there for all ${g.length}</button></div></div>`).join('');
+  return`<div class="list">${alertsNudge(mine,'waiter')}${allBtns}<div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upToSum)} on active shifts</div></div>
    ${mine.length?mine.map(j=>{
      const pickup=kindOf(j)==='pickup',bought=pickup&&!!j.purchasedAt,keys=keysFor(j),next=keys[keys.indexOf(j.status)+1],b=billOf(j),O=esc(j.ownerName);let ctl='',extra='';
      const secured=!PAY.enabled||j.payStatus==='held';
@@ -888,7 +932,7 @@ function waiterShifts(){
        ${steps(j)}<div class="stepnote"><span><b>${stShort(j)}</b></span>${j.pos&&j.status!=='done'&&pickup?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
        ${itemBox(j,'waiter')}
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
-       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'||j.chatOpen?chatHTML(j,j.ownerName):''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a job from <b>Find jobs</b>.</div>`}</div>`}
+       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'||j.chatOpen?chatHTML(j,j.ownerName):''}${reportHTML(j,'waiter')}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a job from <b>Find jobs</b>.</div>`}</div>`}
 
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
@@ -1029,18 +1073,19 @@ function render(){
   v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
   if(t==='post'){['rate','hr','mn','ap','qty'].forEach(initWheel);updateQuote();
     $('#postForm').querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>setDay(b.dataset.day));
+    $('#postForm').querySelectorAll('[data-event]').forEach(b=>b.onclick=()=>setEvent(+b.dataset.event||null));
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));
     $('#postForm').querySelectorAll('[data-hand]').forEach(b=>b.onclick=()=>setHandoff(b.dataset.hand));
     ['#f-price','#f-dropfee'].forEach(id=>$(id).addEventListener('input',updateQuote));
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
       try{const {d,text}=chosenStart();
-        const body={kind:postKind,place:$('#f-place').value,startAt:d.toISOString(),startText:text,hours:editing?editing.hours:APPROVED_HOURS,rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
+        const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:postDay==='asap',startAt:d.toISOString(),startText:text,hours:editing?editing.hours:APPROVED_HOURS,rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
         if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add about how much it costs.');const q=QTYS[wheel.qty];if(p*q>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
           Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:limitFor(p,q),
           handoff:postHandoff,dropoffFee:parseFloat($('#f-dropfee').value),dropoffAddr:$('#f-dropaddr').value})}
         else{if(!$('#f-agree').checked)throw new Error('Confirm the spot is OK to save. Wait For Me! doesn\'t allow line-cutting.');Object.assign(body,{what:$('#f-what').value,spotAgree:true})}
         await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
-        const was=editing;editing=null;tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.')}
+        const was=editing;editing=null;postEvent=null;tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.')}
       catch(err){if(payNeedsSetup(err))return;$('#formErr').textContent=err.message;btn.disabled=false}})}
   if(t==='account'&&cardOpen)mountCard();
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
@@ -1080,7 +1125,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-10)*4)));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postEvent=j.eventId||null;wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-10)*4)));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}
@@ -1099,6 +1144,17 @@ $('#view').addEventListener('click',async e=>{
     if(a==='decline-offer'){await api(`/lines/${id}/decline-offer`,{method:'POST',body:{offerId:+b.dataset.offer}});toast('Offer declined.')}
     if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.`);tab.waiter='shifts'}
     if(a==='advance'){const r=await api(`/lines/${id}/advance`,{method:'POST'});toast(`${r.line.ownerName} can see you're ${stShort(r.line).toLowerCase()}.`)}
+    if(a==='here'){const r=await api(`/events/${id}/here`,{method:'POST',body:{here:b.dataset.here==='1'}});toast(b.dataset.here==='1'?`You're checked in at ${r.event.name}. New requests there will alert you.`:'Marked as left.')}
+    if(a==='ev-filter'){eventFilter=eventFilter===+id?null:+id;b.disabled=false;render();window.scrollTo(0,0);return}
+    if(a==='select-on'||a==='select-off'){selecting=a==='select-on';picked.clear();b.disabled=false;render();return}
+    if(a==='claim-batch'){const r=await api('/lines/claim-batch',{method:'POST',body:{ids:[...picked]}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
+      selecting=false;picked.clear();toast(bad.length?`Claimed ${ok.length} of ${r.results.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My shifts.`);if(ok.length)tab.waiter='shifts'}
+    if(a==='checkin-all'){const ids=b.dataset.ids.split(',').map(Number),pos=await getPos();let done=0,err='';
+      for(const n of ids){try{const j=data.shifts.find(x=>x.id===n);if(j&&j.status==='claimed')await api(`/lines/${n}/advance`,{method:'POST'});await api(`/lines/${n}/advance`,{method:'POST',body:pos||{}});done++}catch(e){err=e.message}}
+      toast(err?`Checked in to ${done} of ${ids.length}. ${err}`:`Checked in to all ${done}. Your paid time has started on each.`)}
+    if(a==='report-open'||a==='report-close'){a==='report-open'?reportOpen.add(+id):reportOpen.delete(+id);b.disabled=false;render();return}
+    if(a==='report-send'){const reason=document.getElementById('rr-'+id).value,details=document.getElementById('rd-'+id).value;
+      await api(`/lines/${id}/report`,{method:'POST',body:{reason,details}});reportOpen.delete(+id);delete reportDraft[id];toast('Report sent. We\'ll get back to you within 2 business days.')}
     if(a==='alerts-on'){await enableAlerts();toast('Alerts are on for this phone.');render();return}
     if(a==='alerts-off'){await disableAlerts();toast('Alerts are off for this phone.');render();return}
     if(a==='nudge-x'){store.set('wfm_nudge_alerts','1');render();return}
@@ -1127,11 +1183,13 @@ async function shrinkPhoto(file){const url=URL.createObjectURL(file);
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);let q=.75,d=c.toDataURL('image/jpeg',q);while(d.length>1.4e6&&q>.3){q-=.15;d=c.toDataURL('image/jpeg',q)}return d}
   finally{URL.revokeObjectURL(url)}}
 $('#view').addEventListener('change',async e=>{const t=e.target;
+  if(t.dataset&&t.dataset.pick){const n=+t.dataset.pick;t.checked?picked.add(n):picked.delete(n);render();return}
+  if(t.id&&t.id.startsWith('rr-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).reason=t.value;return}
   if(t.dataset&&t.dataset.soldphoto&&t.files&&t.files[0]){try{soldPhoto[+t.dataset.soldphoto]=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}return}
   if(!t.dataset||!t.dataset.photo||!t.files||!t.files[0])return;const id=+t.dataset.photo;
   try{const d=buyDraft[id]=buyDraft[id]||{};const tot=document.getElementById('buy-'+id),note=document.getElementById('bnote-'+id);if(tot)d.total=tot.value;if(note)d.note=note.value;
     d.photo=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}});
-$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('buy-')){(buyDraft[+t.id.slice(4)]=buyDraft[+t.id.slice(4)]||{}).total=t.value}
+$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('rd-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).details=t.value}if(t.id&&t.id.startsWith('buy-')){(buyDraft[+t.id.slice(4)]=buyDraft[+t.id.slice(4)]||{}).total=t.value}
   if(t.id&&t.id.startsWith('bnote-')){(buyDraft[+t.id.slice(6)]=buyDraft[+t.id.slice(6)]||{}).note=t.value}if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}
   if(t.id&&t.id.startsWith('chat-'))chatDraft[+t.id.slice(5)]=t.value});
 $('#view').addEventListener('keydown',e=>{const t=e.target;if(e.key==='Enter'&&t.id&&t.id.startsWith('chat-')){e.preventDefault();const btn=t.parentElement.querySelector('[data-act=chat-send]');if(btn)btn.click()}});
@@ -1162,7 +1220,8 @@ function notifyChanges(prev,next){
 async function load(force){
   if(!me)return;
   const t0=Date.now();
-  const [m1,o1,s1,info]=await Promise.all([...['mine','open','shifts'].map(s=>api('/lines?scope='+s)),api('/me')]);
+  const [m1,o1,s1,info,ev]=await Promise.all([...['mine','open','shifts'].map(s=>api('/lines?scope='+s)),api('/me'),api('/events').catch(()=>({events:EVENTS}))]);
+  EVENTS=ev.events||[];if(eventFilter&&!EVENTS.some(e=>e.id===eventFilter))eventFilter=null;
   clockSkew=m1.now-Math.round((t0+Date.now())/2);
   const mine=m1.lines,open=o1.lines,shifts=s1.lines;
   if(info.user){me=info.user;myRatings=info.ratings;TAGS=info.tags||TAGS;if(info.payments)PAY=info.payments}
@@ -1170,7 +1229,7 @@ async function load(force){
   paintChats();
   notifyChanges(lastData,{mine,open,shifts});lastData={mine,open,shifts};
   // The clock fields change every refresh; leave them out when deciding whether to redraw.
-  const json=JSON.stringify([mine,open,shifts,myRatings,chatData],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
+  const json=JSON.stringify([mine,open,shifts,myRatings,chatData,EVENTS],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
   if(!force&&json===lastJSON)return;
   if(!force&&cardOpen&&tab[role]==='account')return; // keep the card form in place while it's open
   // Don't redraw while someone is typing in the page; the next check picks it up.

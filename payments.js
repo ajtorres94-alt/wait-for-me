@@ -306,6 +306,21 @@ async function settle(store, line) {
   }
 }
 
+// Refunds part or all of a finished job's charge. With fromWaiter, the waiter's share and our
+// fee are taken back in proportion (the waiter caused the problem); without it, the platform pays.
+async function refund(store, line, amount, { fromWaiter = false, key } = {}) {
+  if (!line.payIntent || line.payStatus !== "captured") throw new PaymentError("This job wasn't charged, so there's nothing to refund.", "not_charged", 400);
+  const left = (line.payCaptured || 0) - (line.payRefunded || 0);
+  if (!Number.isInteger(amount) || amount < 1 || amount > left) throw new PaymentError(`You can refund up to $${(left / 100).toFixed(2)} on this job.`, "bad_amount", 400);
+  await stripe(
+    "POST",
+    "/v1/refunds",
+    { payment_intent: line.payIntent, amount, reverse_transfer: fromWaiter ? "true" : undefined, refund_application_fee: fromWaiter ? "true" : undefined, metadata: { wfm_line: line.id } },
+    { idempotencyKey: key || `refund-${line.id}-${amount}-${crypto.randomUUID()}` }
+  );
+  return store.updateLineAny(line.id, { payRefunded: (line.payRefunded || 0) + amount });
+}
+
 // Registers the site with Apple Pay / Google Pay (safe to repeat).
 async function registerDomains(hosts) {
   for (const domain_name of hosts) {
@@ -323,6 +338,7 @@ async function checkKey() {
     ["Payment Methods", "/v1/payment_methods", { limit: 1, type: "card", customer: "cus_check" }],
     ["Connected accounts (waiter payouts)", "/v1/accounts", { limit: 1 }],
     ["Payment method domains (Apple Pay / Google Pay)", "/v1/payment_method_domains", { limit: 1 }],
+    ["Refunds", "/v1/refunds", { limit: 1 }],
   ];
   const out = [];
   for (const [name, path, params] of checks) {
@@ -342,5 +358,5 @@ module.exports = {
   checkKey,
   enabled, publishableKey, testMode, PaymentError, HOLD_DAYS,
   startCardSetup, finishCardSetup, payoutLink, refreshPayouts,
-  placeHold, releaseHold, settle, holdDue, maxCharge, registerDomains,
+  placeHold, releaseHold, settle, holdDue, maxCharge, registerDomains, refund,
 };

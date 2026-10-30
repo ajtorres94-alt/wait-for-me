@@ -38,6 +38,20 @@ input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8
 <main>
   <div class="top"><span class="stub">No.1</span><h1>Wait For Me! admin</h1><a href="/dashboard" class="muted">Creator dashboard</a><button id="testMail" type="button">Send test email</button><button id="stripeCheck" type="button">Check Stripe</button><a href="/" class="muted">Back to the app</a></div>
   <div id="msg" role="status"></div>
+  <section class="card"><h2>Problem reports</h2>
+    <div id="reports" class="muted">Loading…</div>
+  </section>
+  <section class="card"><h2>Events</h2>
+    <p class="muted">Add the shows and fairs you're focusing on. Bookers can tag requests with them, and waiters who tap "I'm here" get an alert for each new request.</p>
+    <form id="evForm" class="row">
+      <label class="sr" for="evName">Event name</label><input id="evName" placeholder="Event name, e.g. Bad Bunny" maxlength="100">
+      <label class="sr" for="evVenue">Venue and city</label><input id="evVenue" placeholder="Venue and city, e.g. Kia Forum, Inglewood" maxlength="120">
+      <label class="muted" for="evStart">Starts</label><input id="evStart" type="datetime-local">
+      <label class="muted" for="evEnd">Ends</label><input id="evEnd" type="datetime-local">
+      <button type="submit">Add event</button>
+    </form>
+    <div class="scroll"><table><thead><tr><th>Event</th><th>When</th><th>Open requests</th><th>Waiters here</th><th></th></tr></thead><tbody id="events"></tbody></table></div>
+  </section>
   <section class="card" id="usersCard"><h2>People</h2>
     <div class="row"><label class="sr" for="uq">Search people</label><input id="uq" placeholder="Search name or email"></div>
     <div class="scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Posted</th><th>Worked</th><th>No-shows</th><th>Status</th><th></th></tr></thead><tbody id="users"></tbody></table></div>
@@ -51,7 +65,29 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=n=>'$'+(Math.round(n*100)/100).toFixed(2);
 const day=d=>d?new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-let data={users:[],lines:[]},confirmKey=null;
+let data={users:[],lines:[]},confirmKey=null,EV=[],REP=[];
+const when=d=>new Date(d).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+async function post(path,body){const r=await fetch('/api/admin/'+path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+  const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Something went wrong.');return j}
+function renderEvents(){$('#events').innerHTML=EV.length?EV.map(e=>`<tr><td class="wrap"><b>${esc(e.name)}</b><div class="muted">${esc(e.venue)}</div></td><td>${when(e.startsAt)}<div class="muted">to ${when(e.endsAt)}</div></td><td>${e.open}</td><td>${e.here}</td>
+  <td><button class="bad" data-ev="${e.id}">${confirmKey==='ev'+e.id?'Confirm delete':'Delete'}</button></td></tr>`).join(''):'<tr><td colspan="5" class="muted">No events yet.</td></tr>'}
+function renderReports(){
+  if(!REP.length){$('#reports').textContent='No reports yet.';return}
+  $('#reports').classList.remove('muted');
+  $('#reports').innerHTML=`<div class="scroll"><table><thead><tr><th>Report</th><th>Job</th><th>Charged</th><th>Resolve</th></tr></thead><tbody>${REP.map(r=>{const l=r.line||{};const left=((l.payCaptured||0)-(l.payRefunded||0))/100;
+    return`<tr><td class="wrap"><b>${esc(r.reason)}</b>${r.status==='open'?' <span class="tag warn">Open</span>':' <span class="tag">Resolved</span>'}<div>${esc(r.details)}</div><div class="muted">${esc(r.reporterName)} (${esc(r.reporterEmail)}) · ${when(r.createdAt)}</div></td>
+    <td class="wrap">#${l.id} ${esc(l.place||'')}<div class="muted">${esc(l.ownerName||'')} → ${esc(l.waiterName||'—')} · ${esc(l.status||'')}${l.outcome?' ('+esc(l.outcome)+')':''}</div>${l.hasReceipt?`<a href="/api/lines/${l.id}/receipt" target="_blank" rel="noopener">photo</a>`:''}</td>
+    <td>${l.payCaptured?money(l.payCaptured/100):'—'}${l.payRefunded?`<div class="muted">refunded ${money(l.payRefunded/100)}</div>`:''}</td>
+    <td class="wrap">${r.status==='open'?`<div class="row"><label class="sr" for="rn-${r.id}">Note to the reporter</label><input id="rn-${r.id}" placeholder="Note to ${esc(r.reporterName)}" maxlength="500" style="flex:1;min-width:180px">
+      <label class="sr" for="ra-${r.id}">Refund amount</label><input id="ra-${r.id}" type="number" min="0" step="0.01" max="${left}" placeholder="Refund $ (0 = none)" style="width:150px">
+      <label class="muted"><input type="checkbox" id="rw-${r.id}"> Take it back from the waiter's payout</label>
+      <button data-rp="${r.id}">Resolve</button></div><div class="muted">Up to ${money(left)} can be refunded.</div>`
+      :`${esc(r.resolution)}${r.refundCents?`<div class="muted">Refunded ${money(r.refundCents/100)}</div>`:''}`}</td></tr>`}).join('')}</tbody></table></div>`}
+async function loadExtra(){try{EV=(await call('events')).events;renderEvents();REP=(await call('reports')).reports;renderReports()}catch(e){}}
+$('#evForm').addEventListener('submit',async e=>{e.preventDefault();const st=$('#evStart').value,en=$('#evEnd').value;
+  try{if(!st||!en)throw new Error('Add when the event starts and ends.');
+    await post('events',{name:$('#evName').value,venue:$('#evVenue').value,startsAt:new Date(st).toISOString(),endsAt:new Date(en).toISOString()});
+    e.target.reset();say('Event added. Bookers can tag requests with it now.');loadExtra()}catch(err){say(err.message)}});
 function say(t){$('#msg').textContent=t}
 async function call(path,method='GET'){
   const r=await fetch('/api/admin/'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json'}});
@@ -73,6 +109,11 @@ async function load(){try{data=await call('overview');render();say('')}catch(e){
 document.addEventListener('click',async e=>{
   const b=e.target.closest('button');if(!b)return;
   try{
+    if(b.dataset.ev){const k='ev'+b.dataset.ev;if(confirmKey!==k){confirmKey=k;renderEvents();return}
+      await post(`events/${b.dataset.ev}/delete`);confirmKey=null;say('Event deleted.');await loadExtra();return}
+    if(b.dataset.rp){const id=b.dataset.rp,amt=parseFloat($('#ra-'+id).value)||0;b.disabled=true;
+      try{await post(`reports/${id}/resolve`,{note:$('#rn-'+id).value,refund:amt,fromWaiter:$('#rw-'+id).checked});say(amt?`Refunded ${money(amt)} and resolved. The reporter got an alert.`:'Resolved. The reporter got an alert.');await loadExtra()}
+      catch(err){say(err.message);b.disabled=false}return}
     if(b.dataset.l){const k='line'+b.dataset.l;if(confirmKey!==k){confirmKey=k;render();return}
       await call(`lines/${b.dataset.l}/remove`,'POST');confirmKey=null;say(`Line #${b.dataset.l} removed.`)}
     if(b.dataset.u){const a=b.dataset.a,k=a+b.dataset.u;
@@ -90,7 +131,7 @@ $('#stripeCheck').addEventListener('click',async e=>{e.stopPropagation();const b
       :`Stripe ${r.mode} mode (${r.keyType} key): everything the app needs works.${mm}`)}catch(err){say(err.message)}b.disabled=false});
 $('#testMail').addEventListener('click',async e=>{e.stopPropagation();const b=e.currentTarget;b.disabled=true;say('Sending…');
   try{const r=await call('test-email','POST');say(`Test email sent to ${r.to}. Check that inbox (and spam).`)}catch(err){say(err.message)}b.disabled=false});
-load();
+load();loadExtra();
 </script>
 </body>
 </html>
