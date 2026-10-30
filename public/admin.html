@@ -36,7 +36,7 @@ input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8
 </head>
 <body>
 <main>
-  <div class="top"><span class="stub">No.1</span><h1>Wait For Me! admin</h1><a href="/dashboard" class="muted">Creator dashboard</a><button id="testMail" type="button">Send test email</button><a href="/" class="muted">Back to the app</a></div>
+  <div class="top"><span class="stub">No.1</span><h1>Wait For Me! admin</h1><a href="/dashboard" class="muted">Creator dashboard</a><button id="testMail" type="button">Send test email</button><button id="stripeCheck" type="button">Check Stripe</button><a href="/" class="muted">Back to the app</a></div>
   <div id="msg" role="status"></div>
   <section class="card" id="usersCard"><h2>People</h2>
     <div class="row"><label class="sr" for="uq">Search people</label><input id="uq" placeholder="Search name or email"></div>
@@ -83,6 +83,11 @@ document.addEventListener('click',async e=>{
   }catch(err){say(err.message)}});
 async function load2(){const m=$('#msg').textContent;await load();if(m)say(m)}
 $('#uq').addEventListener('input',render);
+$('#stripeCheck').addEventListener('click',async e=>{e.stopPropagation();const b=e.currentTarget;b.disabled=true;say('Checking Stripe…');
+  try{const r=await call('stripe-check','POST');const bad=r.checks.filter(c=>!c.ok);
+    const mm=r.mode!==r.publishableMode?` The two keys don't match: secret is ${r.mode}, publishable is ${r.publishableMode}.`:'';
+    say(bad.length?`Stripe ${r.mode} mode (${r.keyType} key). Missing: ${bad.map(c=>c.name+(c.error?' ('+c.error+')':'')).join('; ')}.${mm}`
+      :`Stripe ${r.mode} mode (${r.keyType} key): everything the app needs works.${mm}`)}catch(err){say(err.message)}b.disabled=false});
 $('#testMail').addEventListener('click',async e=>{e.stopPropagation();const b=e.currentTarget;b.disabled=true;say('Sending…');
   try{const r=await call('test-email','POST');say(`Test email sent to ${r.to}. Check that inbox (and spam).`)}catch(err){say(err.message)}b.disabled=false});
 load();

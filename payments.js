@@ -19,7 +19,7 @@ const API = () => (process.env.STRIPE_API_URL || "https://api.stripe.com").repla
 const KEY = () => (process.env.STRIPE_SECRET_KEY || "").trim();
 const enabled = () => !!KEY();
 const publishableKey = () => (process.env.STRIPE_PUBLISHABLE_KEY || "").trim();
-const testMode = () => KEY().startsWith("sk_test_");
+const testMode = () => /^(sk|rk)_test_/.test(KEY());
 
 const HOLD_DAYS = 5; // card holds last about 7 days, so they're placed at most 5 days ahead
 const cents = (d) => Math.round(Number(d) * 100);
@@ -305,7 +305,33 @@ async function registerDomains(hosts) {
   }
 }
 
+// Tries a harmless read for each kind of Stripe object the app uses, so a restricted key
+// missing a permission shows up before a real booking fails.
+async function checkKey() {
+  const checks = [
+    ["Customers", "/v1/customers", { limit: 1 }],
+    ["Setup Intents (saving cards)", "/v1/setup_intents", { limit: 1 }],
+    ["Payment Intents (holds and charges)", "/v1/payment_intents", { limit: 1 }],
+    ["Payment Methods", "/v1/payment_methods", { limit: 1, type: "card", customer: "cus_check" }],
+    ["Connected accounts (waiter payouts)", "/v1/accounts", { limit: 1 }],
+    ["Payment method domains (Apple Pay / Google Pay)", "/v1/payment_method_domains", { limit: 1 }],
+  ];
+  const out = [];
+  for (const [name, path, params] of checks) {
+    try {
+      await stripe("GET", path, params);
+      out.push({ name, ok: true });
+    } catch (e) {
+      const missing = e.stripe && /permission|restricted/i.test(e.message || "");
+      const notFound = e.stripe && e.stripe.code === "resource_missing";
+      out.push({ name, ok: notFound, error: notFound ? null : missing ? "This key doesn't have permission." : e.message });
+    }
+  }
+  return { mode: testMode() ? "test" : "live", keyType: KEY().slice(0, 3) === "rk_" ? "restricted" : "standard", checks: out };
+}
+
 module.exports = {
+  checkKey,
   enabled, publishableKey, testMode, PaymentError, HOLD_DAYS,
   startCardSetup, finishCardSetup, payoutLink, refreshPayouts,
   placeHold, releaseHold, settle, holdDue, maxCharge, registerDomains,

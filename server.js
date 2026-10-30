@@ -791,6 +791,11 @@ async function api(req, res, urlPath, query) {
         })),
       });
     }
+    if (urlPath === "/api/admin/stripe-check" && method === "POST") {
+      if (!pay.enabled()) fail(400, "Stripe isn't set up. Add STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY in Railway.");
+      const r = await pay.checkKey();
+      return send(res, 200, { ...r, publishableMode: pay.publishableKey().startsWith("pk_live_") ? "live" : "test" });
+    }
     if (urlPath === "/api/admin/test-email" && method === "POST") {
       if (!mailEnabled()) fail(400, "Email isn't set up yet. Add RESEND_API_KEY in Railway, then redeploy.");
       try {
