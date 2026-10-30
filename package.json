@@ -1,7 +1,7 @@
 {
   "name": "wait-for-me",
   "version": "0.2.0",
-  "description": "Wait For Me! — book someone to hold your spot in line, or get paid to wait.",
+  "description": "Wait For Me! — book someone to wait in line and pick it up for you, or get paid to wait.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

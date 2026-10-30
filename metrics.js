@@ -4,7 +4,7 @@
 const { billing } = require("./billing");
 
 const DAY = 24 * 3600 * 1000;
-const PAID_OUTCOMES = new Set(["swapped", "customer_noshow", "time_up"]);
+const PAID_OUTCOMES = new Set(["swapped", "customer_noshow", "time_up", "delivered", "pickup_noshow", "sold_out"]);
 const CANCELLED = new Set(["cancelled_free", "cancelled_late", "cancelled_inline"]);
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 

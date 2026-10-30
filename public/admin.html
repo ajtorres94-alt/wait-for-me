@@ -65,7 +65,7 @@ function render(){
     <td class="row">${u.suspended?`<button data-u="${u.id}" data-a="unsuspend">Restore</button>`:`<button class="bad" data-u="${u.id}" data-a="suspend">${confirmKey==='suspend'+u.id?'Confirm suspend':'Suspend'}</button>`}
       <button data-u="${u.id}" data-a="reset-password">${confirmKey==='reset-password'+u.id?'Confirm reset':'Reset password'}</button></td></tr>`).join('');
   $('#lines').innerHTML=data.lines.map(l=>`<tr>
-    <td>${l.id}</td><td class="wrap"><b>${esc(l.place)}</b><div class="muted">${esc(l.what)}</div></td><td>${esc(l.startText||'')}</td>
+    <td>${l.id}</td><td class="wrap"><b>${esc(l.place)}</b><div class="muted">${l.kind==='pickup'?'Pickup: ':'Spot: '}${esc(l.what)}${l.itemTotal!=null?` · bought $${Number(l.itemTotal).toFixed(2)}`:''}${l.hasReceipt?` · <a href="/api/lines/${l.id}/receipt" target="_blank" rel="noopener">receipt</a>`:''}</div></td><td>${esc(l.startText||'')}</td>
     <td>${esc(l.ownerName)}</td><td>${esc(l.waiterName||'—')}${l.checkinVerified===false?' <span class="tag warn">unverified check-in</span>':''}</td>
     <td>${esc(l.status)}${l.outcome?`<div class="muted">${esc(l.outcome.replace('_',' '))}</div>`:''}</td><td>${l.status==='done'?money(l.bill.total):''}</td>
     <td><button class="bad" data-l="${l.id}">${confirmKey==='line'+l.id?'Confirm remove':'Remove'}</button></td></tr>`).join('')}

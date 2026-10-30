@@ -1,6 +1,11 @@
 # Wait For Me!
 
-Book someone to hold your spot in line, or get paid to wait.
+Book someone to wait in line and pick it up for you, or get paid to wait.
+
+Two kinds of request:
+
+- **Pick it up for me:** the waiter waits in line, buys one item (limit set by the booker, up to $150 with tax), records the receipt total with a photo, and hands it over at a meetup or a drop-off.
+- **Save my spot:** the waiter saves a spot where that's normal (parade route, fireworks, outdoor movie lawn, campout) and hands it over with the booker's code. Posting requires confirming it isn't line-cutting; Wait For Me! does not condone or endorse line-cutting.
 
 Real accounts and shared data: a line posted on one phone shows up for waiters on every other phone, and updates (claimed, on the way, place in line, swap) appear within about 5 seconds.
 
@@ -32,15 +37,19 @@ The app creates its own tables on first start.
 
 ## How billing works
 
-The clock starts when the waiter taps **I'm in line** and stops when the swap code is entered. Time is billed in 15-minute steps, rounded up, with a 1-hour minimum, and never more than the time the booker approved. The estimate is the starting approval; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time. The logic lives in `billing.js`.
+The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up, with a 1-hour minimum, and never more than the time the booker approved. The estimate is the starting approval; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time.
+
+Fees (kept by the platform): 15% of the waiter's time, a $2.50 booking fee, and 3% of the item price for pickups. The booker also pays the item at the receipt price and any drop-off fee, which goes to the waiter. No fees on late cancellations or sold-out pickups. The logic lives in `billing.js`.
+
+Pickup rules: the waiter can only record a purchase when the booker's card hold is in place; purchases over the item limit are refused; a bought pickup can't be cancelled; if the booker doesn't meet within 2 hours of the purchase, the waiter can close the job (charged in full) and messages stay open 7 days. Alcohol, tobacco/vapes, cannabis, prescriptions, weapons, lottery tickets, gift/prepaid cards and money orders are refused when posting. Receipt photos are stored in the `receipts` table and served at `/api/lines/:id/receipt` to the booker, waiter and admins only.
 
 ## Ratings
 
 After a job, the booker rates the waiter and the waiter rates the booker (1–5 stars plus optional tags). Ratings stay private for 3 days after the job, and an average only shows once someone has 3 or more. Ratings can be left for 7 days.
 
-## How the swap code works
+## How the handover code works
 
-Only the customer can see their 4-digit code. At the front of the line, the customer reads it to the waiter in person, and the waiter types it in to finish the job. Wrong codes are rejected.
+Only the customer can see their 4-digit code. When they meet, the customer reads it to the waiter in person, and the waiter types it in to finish the job. Wrong codes are rejected.
 
 ## Near me (waiters)
 
@@ -63,7 +72,7 @@ Turned on by `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` (use `sk_test_`/`p
 
 - **Bookers** save a card, Apple Pay, or Google Pay in Account (Stripe's Payment Element). A card is required to post a line.
 - **Waiters** set up payouts in Account through Stripe's hosted Express onboarding. Payouts must be on to claim a line or make an offer.
-- **Holds:** when a waiter is booked and the line starts within 5 days, the booker's card gets a manual-capture hold for (approved hours + 0.5) × rate × 1.15. A background job places holds as lines come within 5 days, and adding time replaces the hold with a bigger one.
+- **Holds:** when a waiter is booked and the line starts within 5 days, the booker's card gets a manual-capture hold for (approved hours + 0.5) × rate × 1.15 + $2.50, plus the item limit × 1.03 and any drop-off fee for pickups. A background job places holds as lines come within 5 days, and adding time replaces the hold with a bigger one.
 - **Charging:** when the job ends, the app captures the actual bill (`billing.js`) as a destination charge: the waiter's share goes to their Express account, and the 15% fee stays with the platform as the application fee. Free cancellations and waiter no-shows release the hold. Late cancellations charge 1 hour of waiter pay with no fee.
 - **Declines:** a declined hold keeps the booking, marks it unsecured, and asks the booker to update their card (updating retries right away). Failed charges are retried every 10 minutes for 6 days.
 - Waiter accounts are created with `controller.losses.payments = application`, `controller.fees.payer = application`, and an Express dashboard, so the platform is responsible for refunds and disputes.
@@ -92,7 +101,6 @@ On a host that allows SMTP, `SMTP_USER` and `SMTP_PASS` (a Gmail app password) w
 - Swap codes reset after 5 wrong tries, and the booker is told.
 - Check-in compares the waiter's location with the line's (about half a mile). Lines whose address could only be found at city level are checked in without verification and marked that way.
 - Bookers can report a no-show 15 minutes after the start time; the line reopens and the waiter's no-show count goes up.
-- Waiters can end a shift 30 minutes after reaching the front if the booker doesn't swap in.
 - Open lines leave Find lines 2 hours after their start time.
 - Theme park lines are refused when posting.
 - Limits: 10 open lines per booker, 20 posts a day, 30 offers an hour, 30 messages a minute.

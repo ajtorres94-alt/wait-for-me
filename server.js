@@ -8,7 +8,7 @@ const crypto = require("crypto");
 const PORT = process.env.PORT || 3000;
 const ROOT = path.join(__dirname, "public");
 const store = process.env.DATABASE_URL ? require("./store-postgres") : require("./store-memory");
-const { billing } = require("./billing");
+const { billing, kindOf, MAX_ITEM } = require("./billing");
 const { geocode } = require("./geocode");
 const { computeMetrics } = require("./metrics");
 const { sendMail, mailEnabled } = require("./mailer");
@@ -48,13 +48,13 @@ function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
-function readBody(req) {
+function readBody(req, max = 20000) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on("data", (c) => {
       size += c.length;
-      if (size > 20000) {
+      if (size > max) {
         reject(new HttpError(413, "That request is too large."));
         req.destroy();
       } else chunks.push(c);
@@ -145,6 +145,8 @@ function lineFor(viewer, l) {
     delete out.ownerAvatar;
     delete out.notes;
     delete out.checkinDist;
+    delete out.dropoffAddr;
+    delete out.itemNote;
   }
   delete out.swapFails;
   if (!isOwner) delete out.codeResetAt;
@@ -166,7 +168,7 @@ const RATE_WINDOW_MS = 7 * 86400 * 1000; // you can leave a rating for 7 days af
 const MIN_RATINGS_SHOWN = 3; // an average only shows once someone has 3+ public ratings
 const TAGS = {
   waiter: ["On time", "Easy to find", "Good updates", "Friendly"],
-  booker: ["On time to swap", "Easy to find", "Clear notes", "Friendly"],
+  booker: ["On time", "Easy to find", "Clear notes", "Friendly"],
 };
 function summarize(s) {
   if (!s || s.count < MIN_RATINGS_SHOWN) return { avg: null, count: s ? s.count : 0 };
@@ -180,6 +182,8 @@ const GRACE_MS = 30 * 60 * 1000; // waiter can end the shift 30 minutes after re
 const FREE_CANCEL_MS = 2 * 3600 * 1000; // cancelling 2+ hours before the start is free
 const CHECKIN_RADIUS_M = 800; // a check-in within about half a mile of the line counts as verified
 const SWAP_TRIES = 5;
+const PICKUP_GRACE_MS = 2 * 3600 * 1000; // a waiter holding a bought item can close the job 2 hours after buying it
+const MSG_AFTER_MS = 7 * 86400 * 1000; // messages stay open this long after an uncollected pickup
 
 const startMs = (l) => (l.startAt ? new Date(l.startAt).getTime() : null);
 const isExpired = (l, now = Date.now()) => l.status === "open" && startMs(l) != null && startMs(l) + EXPIRE_MS < now;
@@ -242,9 +246,12 @@ async function decorate(viewer, list) {
       out.cancelAs = cancelOutcome(l, now);
       out.noShowAt = noShowAllowedAt(l);
     }
-    if (l.waiterId === viewer.id && l.status === "handoff" && l.handoffAt) {
+    if (kindOf(l) === "pickup" && l.status === "handoff" && l.purchasedAt && (isOwner || l.waiterId === viewer.id)) {
+      out.graceEndsAt = new Date(l.purchasedAt).getTime() + PICKUP_GRACE_MS;
+    } else if (l.waiterId === viewer.id && l.status === "handoff" && l.handoffAt) {
       out.graceEndsAt = new Date(l.handoffAt).getTime() + GRACE_MS;
     }
+    if (l.status === "done" && chatIds.includes(l.id)) out.chatOpen = chatStillOpen(l, now);
     if (l.status === "done" && l.waiterId && (isOwner || l.waiterId === viewer.id)) {
       const r = mine.find((x) => x.lineId === l.id);
       out.myRating = r ? r.stars : null;
@@ -254,6 +261,9 @@ async function decorate(viewer, list) {
   });
 }
 const one = async (viewer, l) => (await decorate(viewer, [l]))[0];
+// Messages close when a job ends, except after an uncollected pickup, so the two can arrange a handover.
+const chatStillOpen = (l, now = Date.now()) =>
+  l.status !== "done" || (l.outcome === "pickup_noshow" && !!l.doneAt && now - new Date(l.doneAt).getTime() < MSG_AFTER_MS);
 
 const text = (v, field, max, { required = true } = {}) => {
   const s = typeof v === "string" ? v.trim() : "";
@@ -291,21 +301,65 @@ function parseStart(v) {
   return new Date(t);
 }
 
+// Things waiters can't be asked to buy: age-restricted or regulated goods, and anything that
+// works like cash (a common way to defraud the person paying).
+const RESTRICTED =
+  /\b(alcohol|alcoholic|liquor|vodka|tequila|whiske?y|bourbon|wine|champagne|six[- ]?pack|tobacco|cigars?|cigarettes?|vapes?|vaping|nicotine|juul|cannabis|marijuana|thc|edibles|dispensary|prescriptions?|rx|firearms?|handguns?|rifles?|shotguns?|ammo|ammunition|lottery|scratchers?|gift ?cards?|prepaid (debit |visa |credit )?cards?|money orders?)\b|(?<!root )\bbeers?\b/i;
+
 function lineFields(b) {
-  const place = text(b.place, "where the line is", 120);
-  const what = text(b.what, "what it's for", 120);
+  const kind = b.kind === "pickup" || b.kind === "spot" ? b.kind : null;
+  if (!kind) fail(400, "Choose Pick it up for me or Save my spot.");
+  const pickup = kind === "pickup";
+  const place = text(b.place, pickup ? "the store or place to buy it" : "where the spot is", 120);
   const notes = text(b.notes, "notes", 500, { required: false });
-  checkVenue(place, what, notes);
   const startAt = parseStart(b.startAt);
-  return {
-    place, what, notes,
-    cat: CATS.includes(b.cat) ? b.cat : "Errands",
+  const f = {
+    kind, place, notes,
+    cat: CATS.includes(b.cat) ? b.cat : pickup ? "Food" : "Events",
     startAt,
     startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
     rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
+    item: "", itemDetails: "", itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
   };
+  if (!pickup) {
+    if (b.spotAgree !== true)
+      fail(400, "Confirm this is a spot that's OK to save, not a place in a line. Wait For Me! doesn't allow line-cutting.", "spot_agree");
+    f.what = text(b.what, "what the spot is for", 120);
+    checkVenue(place, f.what, notes);
+    return f;
+  }
+  f.item = text(b.item, "what to buy", 120);
+  f.itemDetails = text(b.itemDetails, "the item details", 200, { required: false });
+  f.itemBackup = text(b.itemBackup, "a backup choice", 120, { required: false });
+  f.itemBudget = num(b.itemBudget, "The most you'll pay for the item", 1, MAX_ITEM);
+  f.handoff = b.handoff === "dropoff" ? "dropoff" : "meet";
+  if (f.handoff === "dropoff") {
+    f.dropoffFee = Math.round(num(b.dropoffFee, "The drop-off fee", 5, 50));
+    f.dropoffAddr = text(b.dropoffAddr, "the drop-off address", 200);
+  }
+  f.what = f.item;
+  checkVenue(place, f.item, notes);
+  if ([f.item, f.itemDetails, f.itemBackup, notes].some((t) => RESTRICTED.test(t || "")))
+    fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, lottery tickets, gift cards, or money orders.");
+  return f;
 }
+
+// A receipt photo sent as a data URL. Only real JPEG, PNG, or WebP images are kept.
+function receiptImage(v) {
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(typeof v === "string" ? v : "");
+  if (!m) fail(400, "Add a photo of the receipt.");
+  const buf = Buffer.from(m[2], "base64");
+  if (buf.length > 1.2 * 1024 * 1024) fail(413, "That photo is too large. Try again; the app shrinks it automatically.");
+  const sig = buf.subarray(0, 12);
+  const ok =
+    (m[1] === "image/jpeg" && sig[0] === 0xff && sig[1] === 0xd8 && sig[2] === 0xff) ||
+    (m[1] === "image/png" && sig.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))) ||
+    (m[1] === "image/webp" && sig.subarray(0, 4).toString() === "RIFF" && sig.subarray(8, 12).toString() === "WEBP");
+  if (!ok) fail(400, "That file isn't a photo we can read. Take a picture of the receipt and try again.");
+  return { mime: m[1], data: m[2] };
+}
+const dollars = (n) => "$" + Number(n).toFixed(2);
 
 // Simple per-key rate limits (sign-in by IP; posting, offers, and messages by user).
 const buckets = new Map();
@@ -329,7 +383,7 @@ const newCode = () => String(crypto.randomInt(1000, 10000));
 
 // ---------- payment checks used by line actions ----------
 async function requireCard(u) {
-  if (pay.enabled() && !u.cardPm) fail(402, "Add a card in Account before posting a line. You're only charged for the time your waiter spends in line.", "card_required");
+  if (pay.enabled() && !u.cardPm) fail(402, "Add a card in Account before posting. You're only charged after the job, for the actual time and the receipt price.", "card_required");
 }
 async function requirePayouts(u) {
   if (!pay.enabled()) return;
@@ -571,7 +625,7 @@ async function api(req, res, urlPath, query) {
     const l = await store.getLine(id);
     if (!l || !l.waiterId || (l.ownerId !== me.id && l.waiterId !== me.id)) fail(404, "Messages aren't available for this line.");
     if (method === "POST") {
-      if (l.status === "done") fail(409, "This job is finished, so messages are closed.");
+      if (!chatStillOpen(l)) fail(409, "This job is finished, so messages are closed.");
       limit(`msg:${me.id}`, 30, 60 * 1000, "You're sending messages too fast. Wait a moment.");
       const b = await readBody(req);
       await store.addMessage(id, me.id, text(b.body, "a message", 500));
@@ -581,15 +635,28 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { messages: list.map((x) => ({ ...x, mine: x.senderId === me.id })) });
   }
 
+  const rm = urlPath.match(/^\/api\/lines\/(\d+)\/receipt$/);
+  if (rm && method === "GET") {
+    const l = await store.getLine(Number(rm[1]));
+    if (!l || (l.ownerId !== me.id && l.waiterId !== me.id && !isAdmin(me))) fail(404, "There's no receipt for this job.");
+    const r = await store.getReceipt(l.id);
+    if (!r) fail(404, "There's no receipt for this job.");
+    res.writeHead(200, {
+      "Content-Type": r.mime, "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
+    });
+    return res.end(Buffer.from(r.data, "base64"));
+  }
+
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
     const action = m[2];
     const l = await store.getLine(id);
     if (!l) fail(404, "That line no longer exists.");
-    const b = await readBody(req);
+    const b = await readBody(req, action === "purchase" ? 1800000 : 20000);
     let updated;
 
     if (action === "cancel") {
@@ -659,6 +726,7 @@ async function api(req, res, urlPath, query) {
     if (action === "extend") {
       if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can add time.");
       if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "Time can only be added while a waiter is on this line.");
+      if (l.purchasedAt) fail(409, "Your waiter already bought the item, so there's no more waiting time to add.");
       const approved = Number(l.approvedHours ?? l.hours);
       if (approved + 0.5 > 24) fail(400, "A line can't go past 24 hours.");
       // If a card hold is in place and doesn't cover the extra time, replace it with a bigger one first.
@@ -672,6 +740,7 @@ async function api(req, res, urlPath, query) {
     if (action === "cancel-booking") {
       if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can cancel it.");
       if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "This line can't be cancelled now.");
+      if (l.purchasedAt) fail(409, "Your waiter already bought the item, so this can't be cancelled. Message them to arrange the handover.");
       const outcome = cancelOutcome(l);
       updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
@@ -711,7 +780,11 @@ async function api(req, res, urlPath, query) {
     // The rest are waiter actions on their own claimed line.
     if (l.waiterId !== me.id) fail(403, "Only the waiter on this line can do that.");
 
+    const pickup = kindOf(l) === "pickup";
     if (action === "advance") {
+      if (pickup && l.status === "nearfront") fail(409, "Record the purchase with a photo of the receipt to move on.");
+      // Saved spots go straight from "saving your spot" to the handover.
+      if (!pickup && l.status === "inline") fail(409, "Hand over the spot with the booker's code when they arrive.");
       if (!WAITER_STEPS.slice(0, -1).includes(l.status)) fail(409, "This line can't move forward from here.");
       const next = STAGES[STAGES.indexOf(l.status) + 1];
       const fields = { status: next };
@@ -744,18 +817,42 @@ async function api(req, res, urlPath, query) {
     } else if (action === "release") {
       if (!["claimed", "enroute"].includes(l.status)) fail(409, "You can only release a line before you're in it.");
       updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
+    } else if (action === "purchase") {
+      if (!pickup) fail(400, "Only pickups have a purchase to record.");
+      if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the store before recording the purchase.");
+      if (pay.enabled() && l.payStatus !== "held")
+        fail(409, "The booker's payment isn't secured yet, so don't buy the item. We've asked them to update their card.", "not_secured");
+      const total = Number(b.total);
+      if (!Number.isFinite(total) || total < 0.5) fail(400, "Enter the receipt total.");
+      if (total > Number(l.itemBudget))
+        fail(400, `That's over the ${dollars(l.itemBudget)} limit for this item. Message ${l.ownerName || "the booker"} before buying anything over the limit.`);
+      const img = receiptImage(b.receipt);
+      await store.saveReceipt(id, img.mime, img.data);
+      updated = await store.updateLine(id, l.status, {
+        status: "handoff", handoffAt: new Date(), purchasedAt: new Date(), pos: null, hasReceipt: true,
+        itemTotal: Math.round(total * 100) / 100, itemNote: text(b.note, "the note", 200, { required: false }),
+      });
+    } else if (action === "soldout") {
+      if (!pickup) fail(400, "Only pickups can be marked sold out.");
+      if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the store first.");
+      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "sold_out" });
     } else if (action === "swap") {
-      if (l.status !== "handoff") fail(409, "Mark that you're at the front before completing the swap.");
+      const ready = l.status === "handoff" || (!pickup && ["inline", "nearfront"].includes(l.status));
+      if (!ready) fail(409, pickup ? "Record the purchase before handing over the item." : "Check in at the spot first.");
       if (String(b.code || "").trim() !== l.code) {
         const fails = (l.swapFails || 0) + 1;
         if (fails >= SWAP_TRIES) {
-          await store.updateLine(id, "handoff", { swapFails: 0, code: newCode(), codeResetAt: new Date() });
+          await store.updateLine(id, l.status, { swapFails: 0, code: newCode(), codeResetAt: new Date() });
           fail(400, "Too many wrong codes. For safety we gave the booker a new code. Ask them for it.");
         }
-        await store.updateLine(id, "handoff", { swapFails: fails });
+        await store.updateLine(id, l.status, { swapFails: fails });
         fail(400, `That code doesn't match. ${SWAP_TRIES - fails} ${SWAP_TRIES - fails === 1 ? "try" : "tries"} left before the code resets.`);
       }
-      updated = await store.updateLine(id, "handoff", { status: "done", doneAt: new Date(), outcome: "swapped", swapFails: 0 });
+      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: pickup ? "delivered" : "swapped", swapFails: 0 });
+    } else if (action === "leave" && pickup && l.purchasedAt) {
+      if (Date.now() < new Date(l.purchasedAt).getTime() + PICKUP_GRACE_MS)
+        fail(409, "If the booker hasn't met you, you can close the job 2 hours after the purchase.");
+      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "pickup_noshow" });
     } else if (action === "leave") {
       if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a shift while you're in line.");
       const graceOver = l.status === "handoff" && l.handoffAt && Date.now() >= new Date(l.handoffAt).getTime() + GRACE_MS;
@@ -780,7 +877,8 @@ async function api(req, res, urlPath, query) {
       const [lines, users] = await Promise.all([store.adminLines(), store.adminUsers()]);
       return send(res, 200, {
         lines: lines.map((l) => ({
-          id: l.id, place: l.place, what: l.what, status: l.status, outcome: l.outcome, startText: l.startText,
+          id: l.id, kind: l.kind, place: l.place, what: l.what, status: l.status, outcome: l.outcome, startText: l.startText,
+          itemTotal: l.itemTotal, hasReceipt: l.hasReceipt,
           startAt: l.startAt, rate: l.rate, ownerId: l.ownerId, ownerName: l.ownerName, waiterId: l.waiterId,
           waiterName: l.waiterName, checkinVerified: l.checkinVerified, createdAt: l.createdAt, bill: billing(l),
           payStatus: l.payStatus, payCaptured: l.payCaptured, payError: l.payError,

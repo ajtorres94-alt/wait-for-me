@@ -1,7 +1,7 @@
 {
   "name": "Wait For Me!",
   "short_name": "Wait For Me!",
-  "description": "Book someone to hold your spot in line, or get paid to wait.",
+  "description": "Book someone to wait in line and pick it up for you, or get paid to wait.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

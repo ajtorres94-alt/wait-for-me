@@ -4,6 +4,7 @@
 const users = [];
 const sessions = new Map(); // tokenHash -> { userId, createdAt }
 const lines = [];
+const receipts = new Map(); // line id -> { mime, data }
 const ratings = [];
 const offers = [];
 const messages = [];
@@ -98,10 +99,18 @@ module.exports = {
       id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null, outcome: null,
       approvedHours: f.hours, lat: null, lng: null, geoApprox: null, area: null, swapFails: 0, codeResetAt: null,
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
-      payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0, ...f,
+      payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
+      kind: "spot", item: "", itemDetails: "", itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
+      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, ...f,
     };
     lines.push(l);
     return withNames(l);
+  },
+  async saveReceipt(lineId, mime, data) {
+    receipts.set(lineId, { mime, data });
+  },
+  async getReceipt(lineId) {
+    return receipts.get(lineId) || null;
   },
   async getLine(id) {
     return withNames(lines.find((l) => l.id === id));
@@ -176,6 +185,7 @@ module.exports = {
   async deleteLine(id, expectStatus) {
     const i = lines.findIndex((x) => x.id === id && x.status === expectStatus);
     if (i < 0) return false;
+    receipts.delete(id);
     lines.splice(i, 1);
     for (let k = offers.length - 1; k >= 0; k--) if (offers[k].lineId === id) offers.splice(k, 1);
     return true;
@@ -319,6 +329,7 @@ module.exports = {
   async adminRemoveLine(id) {
     const i = lines.findIndex((x) => x.id === id);
     if (i < 0) return false;
+    receipts.delete(id);
     lines.splice(i, 1);
     return true;
   },
@@ -327,7 +338,7 @@ module.exports = {
   async _shiftCheckin(id, minutes) {
     const l = lines.find((x) => x.id === id);
     if (!l) return false;
-    for (const k of ["checkinAt", "doneAt", "handoffAt", "startAt", "claimedAt", "codeResetAt"])
+    for (const k of ["checkinAt", "doneAt", "handoffAt", "startAt", "claimedAt", "codeResetAt", "purchasedAt"])
       if (l[k]) l[k] = new Date(new Date(l[k]).getTime() - minutes * 60000);
     return true;
   },

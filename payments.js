@@ -6,14 +6,15 @@
 //   - When a waiter is booked and the line starts within HOLD_DAYS, the app places a
 //     hold on the booker's card for the most the job could cost.
 //   - When the job ends, the app charges the actual bill. Stripe sends the waiter's
-//     share to the waiter's Express account and the 15% service fee stays with the platform.
+//     share (their time, any drop-off fee, and the item cost they paid at the register)
+//     to the waiter's Express account, and the fees stay with the platform.
 //   - If nothing is owed (free cancellation, no-show by the waiter) the hold is released.
 //
 // Railway variables: STRIPE_SECRET_KEY (sk_test_... or sk_live_...), STRIPE_PUBLISHABLE_KEY.
 // Without STRIPE_SECRET_KEY, payments are off and the app works as before.
 
 const crypto = require("crypto");
-const { billing } = require("./billing");
+const { billing, maxTotal } = require("./billing");
 
 const API = () => (process.env.STRIPE_API_URL || "https://api.stripe.com").replace(/\/+$/, "");
 const KEY = () => (process.env.STRIPE_SECRET_KEY || "").trim();
@@ -140,7 +141,7 @@ async function ensureAccount(store, user) {
       business_profile: {
         mcc: "7299",
         url: "https://waitforme.io",
-        product_description: "Holds places in line for customers through the Wait For Me! app.",
+        product_description: "Waits in line to pick up items, and saves spots, for customers through the Wait For Me! app.",
       },
       metadata: { wfm_user: user.id },
     },
@@ -179,11 +180,10 @@ async function refreshPayouts(store, user) {
 }
 
 // ---------- holds and charges on a line ----------
-// The most a job can cost right now: approved time plus the 30 minutes a booker no-show
-// can add, at the line's rate, plus the service fee.
+// The most a job can cost right now: approved time plus 30 minutes at the line's rate,
+// the fees, and for pickups the item budget and any drop-off fee.
 function maxCharge(line) {
-  const hours = Number(line.approvedHours ?? line.hours) + 0.5;
-  return Math.ceil(hours * Number(line.rate) * 1.15 * 100) + 1;
+  return Math.ceil(maxTotal(line) * 100) + 1;
 }
 
 const holdDue = (line, now = Date.now()) => {
@@ -220,7 +220,7 @@ async function placeHold(store, line, { replace = false } = {}) {
         off_session: true,
         transfer_data: { destination: waiter.stripeAccount },
         transfer_group: `line_${line.id}`,
-        description: `Wait For Me! line #${line.id}: ${String(line.place).slice(0, 80)}`,
+        description: `Wait For Me! #${line.id}: ${String(line.place).slice(0, 80)}`,
         metadata: { wfm_line: line.id, wfm_waiter: waiter.id, wfm_booker: owner.id },
       },
       { idempotencyKey: `hold-${line.id}-${crypto.randomUUID()}` }
@@ -285,7 +285,7 @@ async function settle(store, line) {
         application_fee_amount: fee,
         transfer_data: { destination: waiter.stripeAccount },
         transfer_group: `line_${line.id}`,
-        description: `Wait For Me! line #${line.id}: ${String(line.place).slice(0, 80)}`,
+        description: `Wait For Me! #${line.id}: ${String(line.place).slice(0, 80)}`,
         metadata: { wfm_line: line.id, wfm_waiter: waiter.id, wfm_booker: owner.id },
       },
       { idempotencyKey: `charge-${line.id}` }

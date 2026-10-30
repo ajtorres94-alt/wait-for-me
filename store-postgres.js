@@ -119,6 +119,24 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS kind TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS item TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_details TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_backup TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_budget NUMERIC(10,2);
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS handoff TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS dropoff_fee NUMERIC(10,2);
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS dropoff_addr TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_total NUMERIC(10,2);
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_note TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS purchased_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS receipts (
+  line_id INT PRIMARY KEY REFERENCES lines(id) ON DELETE CASCADE,
+  mime TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 const LINE_SELECT = `
@@ -176,6 +194,18 @@ function line(r) {
       payStatus: r.pay_status || null,
       payError: r.pay_error || null,
       payCaptured: r.pay_captured || 0,
+      kind: r.kind === "pickup" ? "pickup" : "spot",
+      item: r.item || "",
+      itemDetails: r.item_details || "",
+      itemBackup: r.item_backup || "",
+      itemBudget: r.item_budget == null ? null : Number(r.item_budget),
+      handoff: r.handoff || null,
+      dropoffFee: r.dropoff_fee == null ? 0 : Number(r.dropoff_fee),
+      dropoffAddr: r.dropoff_addr || "",
+      itemTotal: r.item_total == null ? null : Number(r.item_total),
+      itemNote: r.item_note || "",
+      purchasedAt: r.purchased_at || null,
+      hasReceipt: !!r.has_receipt,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -220,6 +250,18 @@ const COLS = {
   payStatus: "pay_status",
   payError: "pay_error",
   payCaptured: "pay_captured",
+  kind: "kind",
+  item: "item",
+  itemDetails: "item_details",
+  itemBackup: "item_backup",
+  itemBudget: "item_budget",
+  handoff: "handoff",
+  dropoffFee: "dropoff_fee",
+  dropoffAddr: "dropoff_addr",
+  itemTotal: "item_total",
+  itemNote: "item_note",
+  purchasedAt: "purchased_at",
+  hasReceipt: "has_receipt",
 };
 const USER_COLS = {
   look: "look",
@@ -311,11 +353,24 @@ module.exports = {
 
   async createLine(f) {
     const r = await pool.query(
-      `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10) RETURNING id`,
-      [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt]
+      `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at,
+         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+      [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt,
+        f.kind || "spot", f.item || null, f.itemDetails || null, f.itemBackup || null, f.itemBudget ?? null,
+        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null]
     );
     return this.getLine(r.rows[0].id);
+  },
+  async saveReceipt(lineId, mime, data) {
+    await pool.query(
+      "INSERT INTO receipts (line_id, mime, data) VALUES ($1, $2, $3) ON CONFLICT (line_id) DO UPDATE SET mime = EXCLUDED.mime, data = EXCLUDED.data, created_at = now()",
+      [lineId, mime, data]
+    );
+  },
+  async getReceipt(lineId) {
+    const r = await pool.query("SELECT mime, data FROM receipts WHERE line_id = $1", [lineId]);
+    return r.rows[0] || null;
   },
   async getLine(id) {
     const r = await pool.query(`${LINE_SELECT} WHERE l.id = $1`, [id]);
@@ -567,7 +622,7 @@ module.exports = {
   },
   // Test-only: move a line's timestamps back (used by automated tests when WFM_TEST_HOOKS=1).
   async _shiftCheckin(id, minutes) {
-    const cols = ["checkin_at", "done_at", "handoff_at", "start_at", "claimed_at", "code_reset_at"];
+    const cols = ["checkin_at", "done_at", "handoff_at", "start_at", "claimed_at", "code_reset_at", "purchased_at"];
     const sets = cols.map((c) => `${c} = ${c} - ($2 || ' minutes')::interval`).join(", ");
     const r = await pool.query(`UPDATE lines SET ${sets} WHERE id = $1`, [id, String(minutes)]);
     return r.rowCount > 0;
@@ -577,7 +632,7 @@ module.exports = {
     const [u, l, r, o, m] = await Promise.all([
       pool.query("SELECT id, created_at, last_seen_at, suspended, noshows, name FROM users WHERE email NOT LIKE '%@deleted.invalid'"),
       pool.query(`SELECT id, owner_id, waiter_id, place, cat, status, outcome, start_at, created_at, claimed_at, checkin_at,
-        done_at, hours, approved_hours, rate, lat, lng, area, checkin_verified FROM lines`),
+        done_at, hours, approved_hours, rate, lat, lng, area, checkin_verified, kind, item_total, purchased_at, handoff, dropoff_fee FROM lines`),
       pool.query("SELECT stars, ratee_role, created_at FROM ratings"),
       pool.query("SELECT status, created_at FROM offers"),
       pool.query("SELECT created_at FROM messages"),
@@ -589,6 +644,7 @@ module.exports = {
         startAt: x.start_at, createdAt: x.created_at, claimedAt: x.claimed_at, checkinAt: x.checkin_at, doneAt: x.done_at,
         hours: Number(x.hours), approvedHours: x.approved_hours == null ? Number(x.hours) : Number(x.approved_hours),
         rate: Number(x.rate), lat: x.lat, lng: x.lng, area: x.area, checkinVerified: x.checkin_verified,
+        kind: x.kind || "spot", itemTotal: x.item_total == null ? null : Number(x.item_total), purchasedAt: x.purchased_at, handoff: x.handoff, dropoffFee: Number(x.dropoff_fee || 0),
       })),
       ratings: r.rows.map((x) => ({ stars: x.stars, rateeRole: x.ratee_role, createdAt: x.created_at })),
       offers: o.rows.map((x) => ({ status: x.status, createdAt: x.created_at })),
