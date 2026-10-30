@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Reset Password · Wait For Me!</title>
+<link rel="icon" type="image/png" href="/icons/icon-192-v2.png">
+<style>
+:root{--bg:#EEF0F6;--surface:#fff;--ink:#1A1F3D;--muted:#5D6485;--line:#D9DCE8;--logo:#FFCD44;--bad:#B42318;--good:#1D8A55;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#10132A;--surface:#1A1F3D;--ink:#ECEEF8;--muted:#A3A9C9;--line:#2D3359;--logo:#FFD561;--bad:#FF8A80;--good:#5BD49A;color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;
+  display:flex;align-items:flex-start;justify-content:center;
+  padding:max(40px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 40px max(16px,env(safe-area-inset-left))}
+main{width:100%;max-width:400px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:24px;display:flex;flex-direction:column;gap:16px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:800}
+.stub{background:var(--logo);color:#1A1F3D;font-weight:900;padding:3px 7px;border-radius:3px;transform:rotate(-4deg);font-size:12px}
+h1{font-size:22px;margin:0}
+p{margin:0;color:var(--muted)}
+label{display:block;font-size:14px;font-weight:700;margin-bottom:6px}
+input{width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);min-height:48px}
+input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid var(--logo);outline-offset:2px}
+button,.btn{display:block;width:100%;text-align:center;font:inherit;font-weight:800;border:0;border-radius:12px;background:var(--ink);color:var(--surface);padding:13px;min-height:50px;cursor:pointer;text-decoration:none}
+button:disabled{opacity:.6}
+form{display:flex;flex-direction:column;gap:14px}
+#msg{font-weight:600;min-height:1.5em}
+#msg.bad{color:var(--bad)}#msg.good{color:var(--good)}
+</style>
+</head>
+<body>
+<main>
+  <div class="brand"><span class="stub">No.1</span>Wait For Me!</div>
+  <h1 id="title">Choose a new password</h1>
+  <p id="lead">Pick a password with at least 8 characters. You'll be signed out on your other devices.</p>
+  <form id="f" novalidate>
+    <div><label for="p1">New password</label><input id="p1" type="password" autocomplete="new-password" minlength="8"></div>
+    <div><label for="p2">Type it again</label><input id="p2" type="password" autocomplete="new-password" minlength="8"></div>
+    <button type="submit">Save new password</button>
+  </form>
+  <div id="msg" role="status"></div>
+  <a class="btn" id="go" href="/" hidden>Open Wait For Me!</a>
+</main>
+<script>
+const token = location.hash.slice(1);
+// Take the token out of the address bar so it isn't left in history or shared by accident.
+if (token) history.replaceState(null, "", "/reset");
+const $ = (s) => document.querySelector(s);
+const say = (t, kind) => { $("#msg").textContent = t; $("#msg").className = kind || ""; };
+if (!token) {
+  $("#f").hidden = true;
+  $("#lead").textContent = "This page needs the link from your reset email. On the sign-in screen, tap Forgot password? to get a new one.";
+  $("#go").hidden = false;
+}
+$("#f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const p1 = $("#p1").value, p2 = $("#p2").value;
+  if (p1.length < 8) return say("Use at least 8 characters.", "bad");
+  if (p1 !== p2) return say("The two passwords don't match.", "bad");
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  try {
+    const r = await fetch("/api/password/reset", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ token, password: p1 }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Something went wrong. Try again.");
+    $("#f").hidden = true;
+    $("#title").textContent = "Password changed";
+    $("#lead").textContent = j.signedIn ? "You're signed in with your new password." : "Sign in with your new password.";
+    say("");
+    $("#go").hidden = false;
+  } catch (err) {
+    say(err.message, "bad");
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

@@ -97,6 +97,14 @@ CREATE TABLE IF NOT EXISTS message_reads (
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS area TEXT;
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets(user_id);
 `;
 
 const LINE_SELECT = `
@@ -288,6 +296,25 @@ module.exports = {
   async linesMissingGeo() {
     const r = await pool.query("SELECT id, place FROM lines WHERE lat IS NULL OR area IS NULL ORDER BY id DESC LIMIT 500");
     return r.rows;
+  },
+  // ---- password reset links (only a hash of each link's token is stored) ----
+  async createReset(tokenHash, userId, expiresAt) {
+    await pool.query("INSERT INTO password_resets (token_hash, user_id, expires_at) VALUES ($1, $2, $3)", [tokenHash, userId, expiresAt]);
+  },
+  // Uses up a reset link. Returns the user id, or null if the link is unknown, used, or expired.
+  async takeReset(tokenHash) {
+    const r = await pool.query(
+      "UPDATE password_resets SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now() RETURNING user_id",
+      [tokenHash]
+    );
+    return r.rows[0] ? r.rows[0].user_id : null;
+  },
+  async countResetsSince(userId, since) {
+    const r = await pool.query("SELECT COUNT(*)::int AS n FROM password_resets WHERE user_id = $1 AND created_at > $2", [userId, since]);
+    return r.rows[0].n;
+  },
+  async clearResets(userId) {
+    await pool.query("DELETE FROM password_resets WHERE user_id = $1", [userId]);
   },
   async touchUser(id) {
     await pool.query("UPDATE users SET last_seen_at = now() WHERE id = $1", [id]);

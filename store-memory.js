@@ -8,6 +8,7 @@ const ratings = [];
 const offers = [];
 const messages = [];
 const reads = new Map(); // "lineId:userId" -> last read message id
+const resets = new Map(); // tokenHash -> { userId, expiresAt, usedAt, createdAt }
 let nextUser = 1;
 let nextLine = 1;
 let nextRating = 1;
@@ -118,6 +119,25 @@ module.exports = {
   },
   async linesMissingGeo() {
     return lines.filter((l) => l.lat == null || l.area == null).map((l) => ({ id: l.id, place: l.place })).reverse().slice(0, 500);
+  },
+  async createReset(tokenHash, userId, expiresAt) {
+    resets.set(tokenHash, { userId, expiresAt: new Date(expiresAt), usedAt: null, createdAt: new Date() });
+  },
+  async takeReset(tokenHash) {
+    const r = resets.get(tokenHash);
+    if (!r || r.usedAt || r.expiresAt <= new Date()) return null;
+    r.usedAt = new Date();
+    return r.userId;
+  },
+  async countResetsSince(userId, since) {
+    return [...resets.values()].filter((r) => r.userId === userId && r.createdAt > since).length;
+  },
+  async clearResets(userId) {
+    for (const [k, r] of resets) if (r.userId === userId) resets.delete(k);
+  },
+  // Test-only: make every reset link for a user look expired.
+  async _expireResets(userId) {
+    for (const r of resets.values()) if (r.userId === userId) r.expiresAt = new Date(Date.now() - 1000);
   },
   async touchUser(id) {
     const u = users.find((x) => x.id === id);

@@ -57,6 +57,19 @@ When a line is posted, the server looks up map coordinates for the "Where is the
 
 Visit `/admin` while signed in with an email listed in the `ADMIN_EMAILS` Railway variable (comma-separated). It lists people and recent lines, and lets you remove a line, suspend or restore an account, and give someone a temporary password.
 
+## Email (password reset)
+
+"Forgot password?" on the sign-in screen emails a one-time link (valid 1 hour) to `/reset`. Email goes out through Gmail's SMTP server using these Railway variables:
+
+| Variable | Value |
+| --- | --- |
+| `SMTP_USER` | the Gmail account that sends, e.g. `wfmhelp2026@gmail.com` |
+| `SMTP_PASS` | that account's 16-character Google app password |
+| `MAIL_FROM` | optional; defaults to `SUPPORT_EMAIL`. Must be a verified "Send mail as" address in that Gmail |
+| `APP_URL` | optional; the address used in links, e.g. `https://waitforme.io` |
+
+Without `SMTP_USER` and `SMTP_PASS`, the reset screen tells people to email support. Use **Send test email** on the admin page to check the setup. `COMPANY_NAME` (default `ATowers Enterprises LLC`) is the company named on the privacy and terms pages.
+
 `/dashboard` (same admin emails) is the creator dashboard: bookings and revenue, completed jobs, fill rate, new and active users, a per-day chart, a weekday-by-hour heatmap of busy times, a map and table of top cities, top venues, line types, marketplace health, and top waiters and bookers. Pick 7, 30, 90 days, 1 year or all time; it refreshes every minute and shows times in your phone's or computer's time zone. City names come from OpenStreetMap when a line is posted; older lines are filled in when the server starts.
 
 ## Safety rules built in
@@ -74,7 +87,6 @@ Visit `/admin` while signed in with an email listed in the `ADMIN_EMAILS` Railwa
 - Card payments and waiter payouts (planned: Stripe Connect)
 - ID checks for waiters
 - Push notifications (the app refreshes while it's open)
-- Self-service password reset (needs an email service; use the admin page for now)
 - Notifications when the app is closed (needs push setup)
 
 ## Testing

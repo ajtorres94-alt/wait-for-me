@@ -11,6 +11,7 @@ const store = process.env.DATABASE_URL ? require("./store-postgres") : require("
 const { billing } = require("./billing");
 const { geocode } = require("./geocode");
 const { computeMetrics } = require("./metrics");
+const { sendMail, mailEnabled } = require("./mailer");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
@@ -310,6 +311,49 @@ function limitAuth(req) {
 
 const newCode = () => String(crypto.randomInt(1000, 10000));
 
+// ---------- password reset emails ----------
+const RESET_MS = 60 * 60 * 1000;
+// Links in emails always point at a known address, never at whatever Host header a request sent.
+const KNOWN_HOSTS = ["waitforme.io", "www.waitforme.io", "wait-for-me-production.up.railway.app"];
+function appUrl(req) {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/+$/, "");
+  const host = String(req.headers.host || "").toLowerCase();
+  if (KNOWN_HOSTS.includes(host)) return `https://${host}`;
+  if (/^localhost(:\d+)?$/.test(host)) return `http://${host}`;
+  return "https://waitforme.io";
+}
+const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function resetEmail(name, link) {
+  const first = String(name || "").split(" ")[0] || "there";
+  const support = process.env.SUPPORT_EMAIL || "";
+  const text = [
+    `Hi ${first},`,
+    "",
+    "Someone asked to reset the password for your Wait For Me! account. To choose a new password, open this link:",
+    "",
+    link,
+    "",
+    "The link works once and expires in 1 hour.",
+    "",
+    "If you didn't ask for this, you can ignore this email. Your password won't change.",
+    support ? `Questions? Reply to this email or write to ${support}.` : "",
+    "",
+    "Wait For Me!",
+  ].join("\n");
+  const html = `<!doctype html><html><body style="margin:0;background:#EEF0F6;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1A1F3D">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#EEF0F6;padding:24px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:14px;padding:28px">
+<tr><td><span style="display:inline-block;background:#FFCD44;color:#1A1F3D;font-weight:900;font-size:12px;padding:3px 8px;border-radius:3px">No.1</span>
+<span style="font-weight:800;font-size:18px;margin-left:6px">Wait For Me!</span></td></tr>
+<tr><td style="padding-top:20px;font-size:16px;line-height:1.5">Hi ${escHtml(first)},<br><br>Someone asked to reset the password for your Wait For Me! account. Tap the button to choose a new one.</td></tr>
+<tr><td style="padding:22px 0"><a href="${escHtml(link)}" style="display:inline-block;background:#1A1F3D;color:#ffffff;text-decoration:none;font-weight:700;padding:13px 22px;border-radius:10px">Choose a new password</a></td></tr>
+<tr><td style="font-size:13px;line-height:1.5;color:#5D6485">The link works once and expires in 1 hour. If you didn't ask for this, ignore this email and your password won't change.${
+    support ? `<br><br>Questions? Reply to this email or write to ${escHtml(support)}.` : ""
+  }</td></tr>
+</table></td></tr></table></body></html>`;
+  return { text, html };
+}
+
 // ---------- API ----------
 async function api(req, res, urlPath, query) {
   const method = req.method;
@@ -340,6 +384,44 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { user: publicUser(u) }, { "Set-Cookie": await startSession(req, u.id) });
   }
 
+  // ---- forgot password: email a one-time link that works for 1 hour ----
+  if (method === "POST" && urlPath === "/api/password/forgot") {
+    limitAuth(req);
+    const b = await readBody(req);
+    const email = String(b.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter the email you signed up with.");
+    if (!mailEnabled()) {
+      const help = process.env.SUPPORT_EMAIL ? ` Email ${process.env.SUPPORT_EMAIL} and we'll help you get back in.` : "";
+      fail(503, `Password reset emails aren't available yet.${help}`);
+    }
+    limit(`forgot:${email}`, 3, 60 * 60 * 1000, "We've already sent a few reset emails. Check your inbox and spam folder, or try again in an hour.");
+    const u = await store.userByEmail(email);
+    // Same answer whether or not the account exists, so this can't be used to look up who has signed up.
+    if (u && !u.suspended && (await store.countResetsSince(u.id, new Date(Date.now() - 60 * 60 * 1000))) < 3) {
+      const token = crypto.randomBytes(32).toString("base64url");
+      await store.createReset(sha256(token), u.id, new Date(Date.now() + RESET_MS));
+      const link = `${appUrl(req)}/reset#${token}`;
+      sendMail({ to: u.email, subject: "Reset your Wait For Me! password", ...resetEmail(u.name, link) }).catch((e) =>
+        console.error("Reset email failed:", e.message)
+      );
+    }
+    return send(res, 200, { ok: true });
+  }
+  if (method === "POST" && urlPath === "/api/password/reset") {
+    limitAuth(req);
+    const b = await readBody(req);
+    const password = typeof b.password === "string" ? b.password : "";
+    if (password.length < 8) fail(400, "Use a password with at least 8 characters.");
+    const userId = typeof b.token === "string" && b.token.length > 20 ? await store.takeReset(sha256(b.token)) : null;
+    const u = userId && (await store.userById(userId));
+    if (!u) fail(400, "This reset link has expired or was already used. Request a new one from the sign-in screen.");
+    await store.updateUser(u.id, { pwHash: hashPassword(password) });
+    await store.deleteSessionsFor(u.id); // signs out every other device
+    await store.clearResets(u.id);
+    if (u.suspended) return send(res, 200, { ok: true, signedIn: false });
+    return send(res, 200, { ok: true, signedIn: true }, { "Set-Cookie": await startSession(req, u.id) });
+  }
+
   if (method === "POST" && urlPath === "/api/logout") {
     const token = cookies(req)[COOKIE];
     if (token) await store.deleteSession(sha256(token));
@@ -364,6 +446,7 @@ async function api(req, res, urlPath, query) {
       .filter((l) => !["open", "done"].includes(l.status));
     if (busy.length) fail(409, "Finish or release your lines that are in progress before deleting your account.");
     await store.deleteUser(me.id);
+    await store.clearResets(me.id);
     return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(req, "", 0) });
   }
 
@@ -611,6 +694,20 @@ async function api(req, res, urlPath, query) {
         })),
       });
     }
+    if (urlPath === "/api/admin/test-email" && method === "POST") {
+      if (!mailEnabled()) fail(400, "Email isn't set up yet. Add SMTP_USER and SMTP_PASS in Railway, then redeploy.");
+      try {
+        await sendMail({
+          to: me.email,
+          subject: "Wait For Me! test email",
+          text: "This is a test from your Wait For Me! admin page. Email sending works.",
+          html: "<p>This is a test from your Wait For Me! admin page. Email sending works.</p>",
+        });
+      } catch (e) {
+        fail(502, `The email didn't send: ${e.message}`);
+      }
+      return send(res, 200, { ok: true, to: me.email });
+    }
     if (urlPath === "/api/admin/metrics" && method === "GET") {
       const q = new URL(req.url, "http://x").searchParams;
       return send(res, 200, computeMetrics(await store.metricsData(), { days: q.get("days"), tz: q.get("tz") }));
@@ -634,6 +731,7 @@ async function api(req, res, urlPath, query) {
         if (am[3] === "reset-password") {
           const temp = crypto.randomBytes(6).toString("base64url");
           await store.updateUser(id, { pwHash: hashPassword(temp) });
+          await store.clearResets(id);
           await store.deleteSessionsFor(id);
           return send(res, 200, { ok: true, tempPassword: temp });
         }
@@ -656,7 +754,7 @@ async function api(req, res, urlPath, query) {
 
 // ---------- static files ----------
 // Privacy, terms, and support pages. SUPPORT_EMAIL and COMPANY_NAME come from Railway variables.
-const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html", "/dashboard": "dashboard.html" };
+const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html", "/dashboard": "dashboard.html", "/reset": "reset.html" };
 function servePage(res, file) {
   fs.readFile(path.join(ROOT, file), "utf8", (err, html) => {
     if (err) return res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");
@@ -666,8 +764,8 @@ function servePage(res, file) {
       : "our support email, which will be listed here before launch";
     const out = html
       .replaceAll("{{CONTACT}}", contact)
-      .replaceAll("{{COMPANY}}", process.env.COMPANY_NAME || "Wait For Me!")
-      .replaceAll("{{UPDATED}}", "October 17, 2026");
+      .replaceAll("{{COMPANY}}", process.env.COMPANY_NAME || "ATowers Enterprises LLC")
+      .replaceAll("{{UPDATED}}", "October 29, 2026");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" }).end(out);
   });
 }

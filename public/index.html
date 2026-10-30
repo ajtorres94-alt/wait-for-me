@@ -463,9 +463,17 @@ document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click'
 
 // ---------- screens ----------
 function authScreen(){
-  const up=authMode==='signup';
-  return`<div class="auth">
-   <div class="ticket"><div><div class="lbl">Now serving</div><div class="num">You</div></div><div class="sep"></div><div class="txt">Book someone to hold your spot in line, or get paid to wait.</div></div>
+  const up=authMode==='signup', forgot=authMode==='forgot';
+  const ticket=`<div class="ticket"><div><div class="lbl">Now serving</div><div class="num">You</div></div><div class="sep"></div><div class="txt">Book someone to hold your spot in line, or get paid to wait.</div></div>`;
+  if(forgot)return`<div class="auth">${ticket}
+   <form class="post" id="authForm" novalidate>
+    <p class="hint" style="margin:0">Enter the email you signed up with. We'll send a link to choose a new password.</p>
+    <div class="field"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email"></div>
+    <button class="btn block" type="submit">Send reset link</button>
+    <span class="meta" id="authErr" role="alert"></span>
+   </form>
+   <button class="switch" id="authSwitch">Back to sign in</button></div>`;
+  return`<div class="auth">${ticket}
    <form class="post" id="authForm" novalidate>
     ${up?`<div class="field"><label for="a-name">Your name</label><input id="a-name" autocomplete="name" placeholder="First name and last initial"></div>`:''}
     <div class="field"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email"></div>
@@ -474,7 +482,7 @@ function authScreen(){
     <button class="btn block" type="submit">${up?'Create account':'Sign in'}</button>
     <span class="meta" id="authErr" role="alert"></span>
    </form>
-   ${up?'<div class="hint">By creating an account you agree to the <a href="/terms" target="_blank" rel="noopener">Terms of service</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy policy</a>.</div>':''}
+   ${up?'<div class="hint">By creating an account you agree to the <a href="/terms" target="_blank" rel="noopener">Terms of service</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy policy</a>.</div>':'<button class="switch" id="forgotLink">Forgot password?</button>'}
    <button class="switch" id="authSwitch">${up?'Already have an account? Sign in':'New here? Create an account'}</button></div>`}
 
 let cancelOpen=null;
@@ -740,10 +748,18 @@ function render(){
   $('#roles').hidden=!signedIn;$('#tabbar').hidden=!signedIn;
   const v=$('#view');
   if(!signedIn){
-    $('#screenTitle').textContent=authMode==='signup'?'Create your account':'Sign in';
+    $('#screenTitle').textContent=authMode==='signup'?'Create your account':authMode==='forgot'?'Reset your password':'Sign in';
+    const keepEmail=$('#a-email')?.value||'';
     v.innerHTML=authScreen();
-    $('#authSwitch').onclick=()=>{authMode=authMode==='signup'?'login':'signup';render()};
+    if(keepEmail)$('#a-email').value=keepEmail;
+    $('#authSwitch').onclick=()=>{authMode=authMode==='signup'?'login':authMode==='forgot'?'login':'signup';render()};
+    $('#forgotLink')&&($('#forgotLink').onclick=()=>{authMode='forgot';render()});
     $('#authForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
+      if(authMode==='forgot'){
+        try{await api('/password/forgot',{method:'POST',body:{email:$('#a-email').value}});
+          $('#authErr').textContent='If that email has an account, a reset link is on its way. Check your inbox and spam folder; the link expires in 1 hour.';}
+        catch(err){$('#authErr').textContent=err.message}
+        btn.disabled=false;return}
       try{const body={email:$('#a-email').value,password:$('#a-pass').value};if(authMode==='signup'){body.name=$('#a-name').value;body.adult=$('#a-adult').checked}
         me=(await api(authMode==='signup'?'/signup':'/login',{method:'POST',body})).user;await load(true);toast(authMode==='signup'?`Welcome, ${me.name.split(' ')[0]}.`:'Signed in.')}
       catch(err){$('#authErr').textContent=err.message;btn.disabled=false}});
