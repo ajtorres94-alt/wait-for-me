@@ -59,16 +59,18 @@ Visit `/admin` while signed in with an email listed in the `ADMIN_EMAILS` Railwa
 
 ## Email (password reset)
 
-"Forgot password?" on the sign-in screen emails a one-time link (valid 1 hour) to `/reset`. Email goes out through Gmail's SMTP server using these Railway variables:
+"Forgot password?" on the sign-in screen emails a one-time link (valid 1 hour) to `/reset`.
+
+Railway blocks outgoing SMTP ports, so on Railway email goes through Resend's web API:
 
 | Variable | Value |
 | --- | --- |
-| `SMTP_USER` | the Gmail account that sends, e.g. `wfmhelp2026@gmail.com` |
-| `SMTP_PASS` | that account's 16-character Google app password |
-| `MAIL_FROM` | optional; defaults to `SUPPORT_EMAIL`. Must be a verified "Send mail as" address in that Gmail |
+| `RESEND_API_KEY` | an API key from resend.com, with waitforme.io verified in Resend |
+| `MAIL_FROM` | optional; defaults to `SUPPORT_EMAIL` (support@waitforme.io) |
+| `MAIL_REPLY_TO` | optional; defaults to `SUPPORT_EMAIL` |
 | `APP_URL` | optional; the address used in links, e.g. `https://waitforme.io` |
 
-Without `SMTP_USER` and `SMTP_PASS`, the reset screen tells people to email support. Use **Send test email** on the admin page to check the setup. `COMPANY_NAME` (default `ATowers Enterprises LLC`) is the company named on the privacy and terms pages.
+On a host that allows SMTP, `SMTP_USER` and `SMTP_PASS` (a Gmail app password) work instead. Without either, the reset screen tells people to email support. Use **Send test email** on the admin page to check the setup. `COMPANY_NAME` (default `ATowers Enterprises LLC`) is the company named on the privacy and terms pages.
 
 `/dashboard` (same admin emails) is the creator dashboard: bookings and revenue, completed jobs, fill rate, new and active users, a per-day chart, a weekday-by-hour heatmap of busy times, a map and table of top cities, top venues, line types, marketplace health, and top waiters and bookers. Pick 7, 30, 90 days, 1 year or all time; it refreshes every minute and shows times in your phone's or computer's time zone. City names come from OpenStreetMap when a line is posted; older lines are filled in when the server starts.
 

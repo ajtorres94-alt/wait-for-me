@@ -1,6 +1,11 @@
-// Sends email through an SMTP server (Gmail by default) with no extra packages.
+// Sends email with no extra packages, one of two ways:
 //
-// Railway variables:
+// 1. Resend's web API (use this on Railway, which blocks outgoing SMTP ports):
+//   RESEND_API_KEY  an API key from resend.com, with waitforme.io verified there
+//   MAIL_FROM       the address people see (defaults to SUPPORT_EMAIL)
+//   MAIL_REPLY_TO   optional reply-to address (defaults to SUPPORT_EMAIL)
+//
+// 2. SMTP (Gmail by default), for hosts that allow it:
 //   SMTP_USER  the Gmail account that sends (e.g. wfmhelp2026@gmail.com)
 //   SMTP_PASS  that account's 16-character Google app password
 //   MAIL_FROM  the address people see (defaults to SUPPORT_EMAIL); must be a
@@ -21,10 +26,48 @@ const cfg = () => ({
   insecure: process.env.SMTP_INSECURE === "1", // tests only: plain TCP to a local fake server
 });
 
+const resendKey = () => (process.env.RESEND_API_KEY || "").trim();
 const enabled = () => {
   const c = cfg();
+  if (resendKey()) return !!c.from;
   return !!(c.user && c.pass && c.from);
 };
+
+// Sends through Resend's HTTPS API.
+async function sendResend({ to, subject, text, html, fromName }) {
+  const c = cfg();
+  const from = addr(c.from);
+  const replyTo = process.env.MAIL_REPLY_TO || process.env.SUPPORT_EMAIL || "";
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(process.env.RESEND_API_URL || "https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${resendKey()}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${clean(fromName).replace(/[<>"]/g, "")} <${from}>`,
+        to: [addr(to)],
+        subject: clean(subject),
+        text,
+        html,
+        ...(replyTo ? { reply_to: addr(replyTo) } : {}),
+      }),
+      signal: ctl.signal,
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      const why = j.message || j.error || `status ${r.status}`;
+      if (r.status === 401 || r.status === 403) throw new Error(`Resend refused the request (check RESEND_API_KEY and that ${from.split("@")[1]} is verified): ${why}`);
+      throw new Error(`Resend said: ${why}`);
+    }
+    return { sent: true };
+  } catch (e) {
+    if (e.name === "AbortError") throw new Error("Resend didn't answer in time. Try again in a minute.");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const clean = (s) => String(s).replace(/[\r\n]+/g, " ").trim();
 const addr = (s) => {
@@ -65,6 +108,7 @@ function build({ fromName, from, to, subject, text, html }) {
 function sendMail({ to, subject, text, html, fromName = "Wait For Me!" }) {
   const c = cfg();
   if (!enabled()) return Promise.resolve({ sent: false, reason: "Email is not set up." });
+  if (resendKey()) return sendResend({ to, subject, text, html, fromName });
   const rcpt = addr(to);
   const from = addr(c.from);
   const message = build({ fromName, from, to: rcpt, subject, text, html });
@@ -93,7 +137,10 @@ function sendMail({ to, subject, text, html, fromName = "Wait For Me!" }) {
       sock.destroy();
       err ? reject(err) : resolve({ sent: true });
     };
-    const timer = setTimeout(() => finish(new Error("Email server timed out")), 20000);
+    const timer = setTimeout(
+      () => finish(new Error("Couldn't reach the email server. Some hosts, including Railway, block email ports; use RESEND_API_KEY instead.")),
+      20000
+    );
     sock.setEncoding("utf8");
     sock.on("error", finish);
     sock.on("close", () => finish(i >= steps.length - 1 ? null : new Error("Email server closed the connection")));

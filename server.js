@@ -695,7 +695,7 @@ async function api(req, res, urlPath, query) {
       });
     }
     if (urlPath === "/api/admin/test-email" && method === "POST") {
-      if (!mailEnabled()) fail(400, "Email isn't set up yet. Add SMTP_USER and SMTP_PASS in Railway, then redeploy.");
+      if (!mailEnabled()) fail(400, "Email isn't set up yet. Add RESEND_API_KEY in Railway, then redeploy.");
       try {
         await sendMail({
           to: me.email,
