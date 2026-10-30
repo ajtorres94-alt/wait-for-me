@@ -41,11 +41,15 @@ The clock starts when the waiter checks in and stops at the purchase (pickups) o
 
 Fees (kept by the platform): 15% of the waiter's time, a $2.50 booking fee, and 3% of the item price for pickups. The booker also pays the item at the receipt price and any drop-off fee, which goes to the waiter. No fees on late cancellations or sold-out pickups. The logic lives in `billing.js`.
 
-Pickup rules: the waiter can only record a purchase when the booker's card hold is in place; purchases over the item limit are refused; a bought pickup can't be cancelled; if the booker doesn't meet within 2 hours of the purchase, the waiter can close the job (charged in full) and messages stay open 7 days. Alcohol, tobacco/vapes, cannabis, prescriptions, weapons, lottery tickets, gift/prepaid cards and money orders are refused when posting. Receipt photos are stored in the `receipts` table and served at `/api/lines/:id/receipt` to the booker, waiter and admins only.
+Pickup rules: the waiter can only record a purchase when the booker's card hold is in place; purchases over the item limit are refused; a bought pickup can't be cancelled; the booker picks a meetup window when posting (45 min, 2 h, or 4 h; food max 2 h) and gets a reminder 20 minutes before it ends; after it, the waiter can close the job (charged in full) and messages stay open 7 days. The booker can raise the item limit during the job (the card hold is replaced). Sold out requires a photo. Alcohol, tobacco/vapes, cannabis, prescriptions, weapons, lottery tickets, gift/prepaid cards and money orders are refused when posting. Receipt photos are stored in the `receipts` table and served at `/api/lines/:id/receipt` to the booker, waiter and admins only.
 
 ## Ratings
 
 After a job, the booker rates the waiter and the waiter rates the booker (1–5 stars plus optional tags). Ratings stay private for 3 days after the job, and an average only shows once someone has 3 or more. Ratings can be left for 7 days.
+
+## Phone alerts
+
+Web Push with no extra packages (`push.js`). VAPID keys are generated on first start and saved in the `app_settings` table, so there's nothing to set up. Phones subscribe from Account → Alerts (iPhone: after adding the app to the Home Screen). Alerts go out for claims, offers, status changes, purchases, sold out, cancellations, messages, added time, raised limits, and a meetup reminder (checked every 5 minutes). Only Apple, Google, Mozilla and Microsoft push services are accepted as destinations.
 
 ## How the handover code works
 

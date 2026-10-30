@@ -13,6 +13,7 @@ const { geocode } = require("./geocode");
 const { computeMetrics } = require("./metrics");
 const { sendMail, mailEnabled } = require("./mailer");
 const pay = require("./payments");
+const push = require("./push");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
@@ -182,7 +183,11 @@ const GRACE_MS = 30 * 60 * 1000; // waiter can end the shift 30 minutes after re
 const FREE_CANCEL_MS = 2 * 3600 * 1000; // cancelling 2+ hours before the start is free
 const CHECKIN_RADIUS_M = 800; // a check-in within about half a mile of the line counts as verified
 const SWAP_TRIES = 5;
-const PICKUP_GRACE_MS = 2 * 3600 * 1000; // a waiter holding a bought item can close the job 2 hours after buying it
+// After buying, the waiter holds the item for the meetup window the booker picked; then they can
+// close the job. Food can't wait longer than 2 hours.
+const MEET_CHOICES = [45, 120, 240]; // minutes
+const meetMs = (l) => (Number(l.meetWithin) || 120) * 60000;
+const meetTxt = (l) => ({ 45: "45 minutes", 120: "2 hours", 240: "4 hours" }[Number(l.meetWithin) || 120] || "2 hours");
 const MSG_AFTER_MS = 7 * 86400 * 1000; // messages stay open this long after an uncollected pickup
 
 const startMs = (l) => (l.startAt ? new Date(l.startAt).getTime() : null);
@@ -247,7 +252,7 @@ async function decorate(viewer, list) {
       out.noShowAt = noShowAllowedAt(l);
     }
     if (kindOf(l) === "pickup" && l.status === "handoff" && l.purchasedAt && (isOwner || l.waiterId === viewer.id)) {
-      out.graceEndsAt = new Date(l.purchasedAt).getTime() + PICKUP_GRACE_MS;
+      out.graceEndsAt = new Date(l.purchasedAt).getTime() + meetMs(l);
     } else if (l.waiterId === viewer.id && l.status === "handoff" && l.handoffAt) {
       out.graceEndsAt = new Date(l.handoffAt).getTime() + GRACE_MS;
     }
@@ -338,6 +343,9 @@ function lineFields(b) {
     f.dropoffFee = Math.round(num(b.dropoffFee, "The drop-off fee", 5, 50));
     f.dropoffAddr = text(b.dropoffAddr, "the drop-off address", 200);
   }
+  f.meetWithin = b.meetWithin === undefined ? (f.cat === "Food" ? 45 : 120) : Number(b.meetWithin);
+  if (!MEET_CHOICES.includes(f.meetWithin)) fail(400, "Pick when you'll meet your waiter.");
+  if (f.cat === "Food" && f.meetWithin > 120) fail(400, "Food can't wait 4 hours. Pick 45 minutes or 2 hours for the meetup.");
   f.what = f.item;
   checkVenue(place, f.item, notes);
   if ([f.item, f.itemDetails, f.itemBackup, notes].some((t) => RESTRICTED.test(t || "")))
@@ -346,9 +354,9 @@ function lineFields(b) {
 }
 
 // A receipt photo sent as a data URL. Only real JPEG, PNG, or WebP images are kept.
-function receiptImage(v) {
+function receiptImage(v, missing = "Add a photo of the receipt.") {
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(typeof v === "string" ? v : "");
-  if (!m) fail(400, "Add a photo of the receipt.");
+  if (!m) fail(400, missing);
   const buf = Buffer.from(m[2], "base64");
   if (buf.length > 1.2 * 1024 * 1024) fail(413, "That photo is too large. Try again; the app shrinks it automatically.");
   const sig = buf.subarray(0, 12);
@@ -418,6 +426,23 @@ function startPaymentSweeper() {
   if (!pay.enabled()) return;
   setTimeout(paymentSweep, 15000);
   setInterval(paymentSweep, 10 * 60 * 1000);
+}
+
+// ---------- phone notifications ----------
+const ping = (userId, title, body) => push.notify(store, userId, { title, body });
+const firstName = (n) => String(n || "Someone").split(" ")[0];
+// Every 5 minutes: remind bookers 20 minutes before their pickup meetup window ends.
+async function meetupSweep() {
+  try {
+    for (const l of await store.linesAwaitingMeetup()) {
+      const end = new Date(l.purchasedAt).getTime() + meetMs(l);
+      if (Date.now() < end - 20 * 60000) continue;
+      await store.updateLineAny(l.id, { meetReminded: true });
+      ping(l.ownerId, "Meet your waiter soon", `${firstName(l.waiterName)} has your ${l.item || l.what}. Meet up in the next 20 minutes, or they can close the job and you'll still be charged.`);
+    }
+  } catch (e) {
+    console.error("Meetup reminders failed:", e.message);
+  }
 }
 
 // ---------- password reset emails ----------
@@ -556,6 +581,7 @@ async function api(req, res, urlPath, query) {
     if (busy.length) fail(409, "Finish or release your lines that are in progress before deleting your account.");
     await store.deleteUser(me.id);
     await store.clearResets(me.id);
+    for (const s of await store.pushSubs(me.id)) await store.deletePushSub(s.endpoint);
     return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(req, "", 0) });
   }
 
@@ -585,6 +611,24 @@ async function api(req, res, urlPath, query) {
       return send(res, 200, { user: publicUser(await store.userById(me.id)), status: st });
     }
     fail(404, "Not found.");
+  }
+
+  // ---- phone notifications ----
+  if (urlPath === "/api/push/key" && method === "GET") return send(res, 200, { key: push.publicKey() });
+  if (urlPath === "/api/push/subscribe" && method === "POST") {
+    limit(`push:${me.id}`, 20, 60 * 60 * 1000, "Too many tries. Try again later.");
+    const b = await readBody(req);
+    const endpoint = String(b.endpoint || "");
+    const k = b.keys || {};
+    if (endpoint.length > 1000 || !push.allowedEndpoint(endpoint)) fail(400, "This browser's notification service isn't supported.");
+    if (!/^[A-Za-z0-9_-]{80,100}$/.test(String(k.p256dh || "")) || !/^[A-Za-z0-9_-]{16,32}$/.test(String(k.auth || ""))) fail(400, "That notification setup couldn't be read.");
+    await store.savePushSub(me.id, { endpoint, p256dh: k.p256dh, auth: k.auth });
+    return send(res, 200, { ok: true });
+  }
+  if (urlPath === "/api/push/unsubscribe" && method === "POST") {
+    const b = await readBody(req);
+    await store.deletePushSub(String(b.endpoint || ""), me.id);
+    return send(res, 200, { ok: true });
   }
 
   if (urlPath === "/api/me" && method === "PATCH") {
@@ -628,7 +672,10 @@ async function api(req, res, urlPath, query) {
       if (!chatStillOpen(l)) fail(409, "This job is finished, so messages are closed.");
       limit(`msg:${me.id}`, 30, 60 * 1000, "You're sending messages too fast. Wait a moment.");
       const b = await readBody(req);
-      await store.addMessage(id, me.id, text(b.body, "a message", 500));
+      const body = text(b.body, "a message", 500);
+      await store.addMessage(id, me.id, body);
+      const to = l.ownerId === me.id ? l.waiterId : l.ownerId;
+      ping(to, `Message from ${firstName(me.name)}`, body);
     }
     const list = await store.listMessages(id);
     if (list.length) await store.markRead(id, me.id, list[list.length - 1].id);
@@ -649,14 +696,14 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
     const action = m[2];
     const l = await store.getLine(id);
     if (!l) fail(404, "That line no longer exists.");
-    const b = await readBody(req, action === "purchase" ? 1800000 : 20000);
+    const b = await readBody(req, action === "purchase" || action === "soldout" ? 1800000 : 20000);
     let updated;
 
     if (action === "cancel") {
@@ -686,6 +733,7 @@ async function api(req, res, urlPath, query) {
       if (!updated) fail(409, "Someone else just claimed this line.");
       await store.closeOtherOffers(id, 0);
       updated = await holdIfDue(updated);
+      ping(l.ownerId, "Your request was claimed", `${firstName(me.name)} took your request at ${l.place}.`);
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -699,6 +747,7 @@ async function api(req, res, urlPath, query) {
       const rate = quarter(num(b.rate, "Your rate", MIN_RATE, MAX_RATE));
       if (rate === Number(l.rate)) fail(400, "That's the listed rate. Tap Claim to take it at that rate.");
       await store.upsertOffer(id, me.id, rate);
+      ping(l.ownerId, "New rate offer", `${firstName(me.name)} offered $${rate.toFixed(2)}/hr for ${l.place}.`);
       return send(res, 200, { line: await one(me, l) });
     }
     if (action === "withdraw-offer") {
@@ -719,6 +768,7 @@ async function api(req, res, urlPath, query) {
       await store.setOfferStatus(o.id, "accepted");
       await store.closeOtherOffers(id, o.id);
       updated = await holdIfDue(updated);
+      ping(o.waiterId, "Your offer was accepted", `You're booked for ${l.place} at $${Number(o.rate).toFixed(2)}/hr.`);
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -735,6 +785,7 @@ async function api(req, res, urlPath, query) {
       }
       updated = await store.updateLine(id, l.status, { approvedHours: approved + 0.5 });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
+      ping(l.waiterId, "Time added", `${firstName(me.name)} added 30 minutes at ${l.place}.`);
       return send(res, 200, { line: await one(me, updated) });
     }
     if (action === "cancel-booking") {
@@ -745,6 +796,7 @@ async function api(req, res, urlPath, query) {
       updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
       updated = await settleIfPaid(updated);
+      ping(l.waiterId, "Booking cancelled", `${firstName(me.name)} cancelled ${l.place}.${outcome === "cancelled_free" ? "" : " You'll still be paid for it."}`);
       return send(res, 200, { line: await one(me, updated) });
     }
     if (action === "report-noshow") {
@@ -757,6 +809,24 @@ async function api(req, res, urlPath, query) {
       if (!updated) fail(409, "This line changed. Refresh and try again.");
       await store.incNoShows(waiterId);
       updated = await releaseIfHeld(updated);
+      ping(waiterId, "Removed from a job", `You didn't check in at ${l.place} on time, so the booker reopened it.`);
+      return send(res, 200, { line: await one(me, updated) });
+    }
+
+    if (action === "raise-limit") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who posted this can change the item limit.");
+      if (kindOf(l) !== "pickup") fail(400, "Only pickups have an item limit.");
+      if (l.status === "open") fail(409, "Use Edit to change the limit before a waiter claims it.");
+      if (!["claimed", "enroute", "inline", "nearfront"].includes(l.status) || l.purchasedAt) fail(409, "The item was already bought.");
+      const budget = num(b.itemBudget, "The new item limit", 1, MAX_ITEM);
+      if (budget <= Number(l.itemBudget)) fail(400, `Enter more than the current ${dollars(l.itemBudget)} limit.`);
+      // A bigger limit needs a bigger card hold before the waiter can spend it.
+      if (pay.enabled() && l.payStatus === "held" && pay.maxCharge({ ...l, itemBudget: budget }) > l.payHeld) {
+        await pay.placeHold(store, { ...l, itemBudget: budget }, { replace: true });
+      }
+      updated = await store.updateLine(id, l.status, { itemBudget: budget });
+      if (!updated) fail(409, "This line changed. Refresh and try again.");
+      ping(l.waiterId, "Item limit raised", `${firstName(me.name)} raised the limit for ${l.item || l.what} to ${dollars(budget)}.`);
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -810,6 +880,10 @@ async function api(req, res, urlPath, query) {
         Object.assign(fields, { checkinAt: new Date(), checkinVerified: verified, checkinDist: dist });
       }
       updated = await store.updateLine(id, l.status, fields);
+      const who = firstName(me.name);
+      const say = { enroute: `${who} is on the way to ${l.place}.`, inline: pickup ? `${who} is in line at ${l.place}.` : `${who} is saving your spot.`,
+        nearfront: pickup ? `${who} is almost at the register.` : `${who} is almost at the front.`, handoff: `${who} is at the front.` }[next];
+      if (updated && say) ping(l.ownerId, "Update on your request", say);
     } else if (action === "position") {
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the line before updating your place.");
       const pos = Math.round(num(b.pos, "Place in line", 1, 100000));
@@ -832,10 +906,14 @@ async function api(req, res, urlPath, query) {
         status: "handoff", handoffAt: new Date(), purchasedAt: new Date(), pos: null, hasReceipt: true,
         itemTotal: Math.round(total * 100) / 100, itemNote: text(b.note, "the note", 200, { required: false }),
       });
+      if (updated) ping(l.ownerId, "Your item was bought", `${firstName(me.name)} bought ${l.item || l.what} for ${dollars(total)}. Meet up within ${meetTxt(l)}.`);
     } else if (action === "soldout") {
       if (!pickup) fail(400, "Only pickups can be marked sold out.");
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the store first.");
-      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "sold_out" });
+      const img = receiptImage(b.photo, "Add a photo showing it's sold out, like the empty shelf or a sold-out sign.");
+      await store.saveReceipt(id, img.mime, img.data);
+      updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "sold_out", hasReceipt: true });
+      if (updated) ping(l.ownerId, "Sold out", `${l.item || l.what} was sold out at ${l.place}. You're only charged for your waiter's time.`);
     } else if (action === "swap") {
       const ready = l.status === "handoff" || (!pickup && ["inline", "nearfront"].includes(l.status));
       if (!ready) fail(409, pickup ? "Record the purchase before handing over the item." : "Check in at the spot first.");
@@ -850,8 +928,8 @@ async function api(req, res, urlPath, query) {
       }
       updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: pickup ? "delivered" : "swapped", swapFails: 0 });
     } else if (action === "leave" && pickup && l.purchasedAt) {
-      if (Date.now() < new Date(l.purchasedAt).getTime() + PICKUP_GRACE_MS)
-        fail(409, "If the booker hasn't met you, you can close the job 2 hours after the purchase.");
+      if (Date.now() < new Date(l.purchasedAt).getTime() + meetMs(l))
+        fail(409, `If the booker hasn't met you, you can close the job ${meetTxt(l)} after the purchase.`);
       updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "pickup_noshow" });
     } else if (action === "leave") {
       if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a shift while you're in line.");
@@ -947,6 +1025,7 @@ async function api(req, res, urlPath, query) {
   }
   if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/sweep" && method === "POST") {
     await paymentSweep();
+    await meetupSweep();
     return send(res, 200, { ok: true });
   }
   // Test-only hook for automated tests (never enabled in production).
@@ -1034,6 +1113,8 @@ store
         .finally(startPaymentSweeper);
     }
     if (pay.enabled()) pay.registerDomains(["waitforme.io", "www.waitforme.io"]);
+    push.initPush(store).catch((e) => console.error("Couldn't set up notifications:", e.message));
+    setInterval(meetupSweep, 5 * 60 * 1000);
     // Fill in map coordinates and city names for lines posted before those existed.
     store.linesMissingGeo().then(async (rows) => {
       for (const r of rows) {

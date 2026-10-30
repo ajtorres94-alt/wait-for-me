@@ -293,6 +293,14 @@ async function settle(store, line) {
     if (pi.status !== "succeeded") throw new PaymentError("The charge didn't go through.", "charge_failed");
     return store.updateLineAny(line.id, { payIntent: pi.id, payStatus: "captured", payCaptured: total, payError: null });
   } catch (e) {
+    // Two tries can race (the app and the background retry). If the charge already went
+    // through, record that instead of a failure.
+    if (line.payIntent) {
+      const pi = await stripe("GET", `/v1/payment_intents/${line.payIntent}`).catch(() => null);
+      if (pi && pi.status === "succeeded") {
+        return store.updateLineAny(line.id, { payStatus: "captured", payCaptured: pi.amount_received || pi.amount, payError: null });
+      }
+    }
     console.error(`Charge for line ${line.id} failed:`, e.message);
     return store.updateLineAny(line.id, { payStatus: "charge_failed", payError: e.message });
   }

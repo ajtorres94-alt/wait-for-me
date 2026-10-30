@@ -5,6 +5,8 @@ const users = [];
 const sessions = new Map(); // tokenHash -> { userId, createdAt }
 const lines = [];
 const receipts = new Map(); // line id -> { mime, data }
+const settings = new Map();
+const pushSubs = new Map(); // endpoint -> { endpoint, userId, p256dh, auth, at }
 const ratings = [];
 const offers = [];
 const messages = [];
@@ -101,10 +103,31 @@ module.exports = {
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
       payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
       kind: "spot", item: "", itemDetails: "", itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
-      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, ...f,
+      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, ...f,
     };
     lines.push(l);
     return withNames(l);
+  },
+  async getSetting(key) {
+    return settings.get(key) ?? null;
+  },
+  async setSetting(key, value) {
+    settings.set(key, value);
+  },
+  async savePushSub(userId, { endpoint, p256dh, auth }) {
+    pushSubs.set(endpoint, { endpoint, userId, p256dh, auth, at: Date.now() });
+    const mine = [...pushSubs.values()].filter((s) => s.userId === userId).sort((a, b) => b.at - a.at);
+    mine.slice(10).forEach((s) => pushSubs.delete(s.endpoint));
+  },
+  async pushSubs(userId) {
+    return [...pushSubs.values()].filter((s) => s.userId === userId).map(({ endpoint, p256dh, auth }) => ({ endpoint, p256dh, auth }));
+  },
+  async deletePushSub(endpoint, userId) {
+    const s = pushSubs.get(endpoint);
+    if (s && (!userId || s.userId === userId)) pushSubs.delete(endpoint);
+  },
+  async linesAwaitingMeetup() {
+    return lines.filter((l) => l.status === "handoff" && l.kind === "pickup" && l.purchasedAt && !l.meetReminded).map(withNames);
   },
   async saveReceipt(lineId, mime, data) {
     receipts.set(lineId, { mime, data });

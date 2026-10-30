@@ -131,6 +131,16 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_total NUMERIC(10,2);
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_note TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS purchased_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_within INT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_reminded BOOLEAN NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint TEXT PRIMARY KEY,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS push_subs_user_idx ON push_subs(user_id);
 CREATE TABLE IF NOT EXISTS receipts (
   line_id INT PRIMARY KEY REFERENCES lines(id) ON DELETE CASCADE,
   mime TEXT NOT NULL,
@@ -206,6 +216,8 @@ function line(r) {
       itemNote: r.item_note || "",
       purchasedAt: r.purchased_at || null,
       hasReceipt: !!r.has_receipt,
+      meetWithin: r.meet_within || null,
+      meetReminded: !!r.meet_reminded,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -262,6 +274,8 @@ const COLS = {
   itemNote: "item_note",
   purchasedAt: "purchased_at",
   hasReceipt: "has_receipt",
+  meetWithin: "meet_within",
+  meetReminded: "meet_reminded",
 };
 const USER_COLS = {
   look: "look",
@@ -354,13 +368,47 @@ module.exports = {
   async createLine(f) {
     const r = await pool.query(
       `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at,
-         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
+         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
       [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt,
         f.kind || "spot", f.item || null, f.itemDetails || null, f.itemBackup || null, f.itemBudget ?? null,
-        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null]
+        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null]
     );
     return this.getLine(r.rows[0].id);
+  },
+  async getSetting(key) {
+    const r = await pool.query("SELECT value FROM app_settings WHERE key = $1", [key]);
+    return r.rows[0] ? r.rows[0].value : null;
+  },
+  async setSetting(key, value) {
+    await pool.query(
+      "INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+      [key, value]
+    );
+  },
+  async savePushSub(userId, { endpoint, p256dh, auth }) {
+    await pool.query(
+      `INSERT INTO push_subs (endpoint, user_id, p256dh, auth) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth`,
+      [endpoint, userId, p256dh, auth]
+    );
+    // Keep the 10 newest phones per person.
+    await pool.query(
+      "DELETE FROM push_subs WHERE user_id = $1 AND endpoint NOT IN (SELECT endpoint FROM push_subs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 10)",
+      [userId]
+    );
+  },
+  async pushSubs(userId) {
+    const r = await pool.query("SELECT endpoint, p256dh, auth FROM push_subs WHERE user_id = $1", [userId]);
+    return r.rows;
+  },
+  async deletePushSub(endpoint, userId) {
+    if (userId) await pool.query("DELETE FROM push_subs WHERE endpoint = $1 AND user_id = $2", [endpoint, userId]);
+    else await pool.query("DELETE FROM push_subs WHERE endpoint = $1", [endpoint]);
+  },
+  async linesAwaitingMeetup() {
+    const r = await pool.query(`${LINE_SELECT} WHERE l.status = 'handoff' AND l.kind = 'pickup' AND l.purchased_at IS NOT NULL AND NOT l.meet_reminded`);
+    return r.rows.map(line);
   },
   async saveReceipt(lineId, mime, data) {
     await pool.query(
