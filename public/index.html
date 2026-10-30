@@ -501,7 +501,7 @@ function paymentCard(){
       <div class="btns"><button class="btn small" id="card-save" data-act="card-save" disabled>Save card</button><button class="btn ghost small" data-act="card-close">Cancel</button></div></div>`
     :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
   <article class="card section"><h2>Getting paid</h2>
-    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. Need it tonight? Cash out instantly from See payouts and earnings (Stripe charges a small fee). You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
+    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. If your Stripe payouts page shows Instant Payout, you can cash out the same night for a small fee. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
     <div class="btns">${po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
       :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
     ${PAY.testMode&&po!=='ready'?'<div class="hint">Test mode: on Stripe\'s page, use test phone 000 000 0000, code 000000, SSN 000-00-0000 and their test bank account. No real money moves.</div>':''}</article>`}
@@ -514,7 +514,7 @@ function payNote(j,who){
     if(st==='held')return`<div class="hint">A hold of up to ${money(j.payHeld/100)} is on your card. You're only charged for the actual time${kindOf(j)==='pickup'?' and the receipt price':''}.</div>`;
     if(st==='failed')return`<div class="warnnote">We couldn't place a hold on your card${j.payError?`: ${esc(j.payError)}`:''}. Update your card so your waiter knows they'll be paid.</div><div class="btns"><button class="btn small" data-act="card-acct">Update card</button></div>`;
     return`<div class="hint">We'll place a hold on your card a few days before the start time.</div>`}
-  if(j.status==='done'){if(st==='captured')return`<div class="hint">Paid. Cash out instantly from Account → See payouts and earnings, or it reaches your bank on your regular payout schedule.</div>`;
+  if(j.status==='done'){if(st==='captured')return`<div class="hint">Paid. It reaches your bank on your payout schedule, or cash out instantly from Account → See payouts and earnings if Instant Payout shows there.</div>`;
     if(st==='charge_failed')return`<div class="warnnote">We're still collecting this payment from the booker. You'll be paid as soon as it goes through.</div>`;return''}
   if(st==='held')return`<div class="hint">✓ Payment secured.</div>`;
   if(st==='failed')return`<div class="warnnote">Payment isn't secured yet. We've asked ${esc(j.ownerName||'the booker')} to update their card. You can release this line with no penalty before you check in.</div>`;
