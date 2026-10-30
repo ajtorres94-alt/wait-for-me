@@ -123,6 +123,7 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS kind TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS item TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_details TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_backup TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS qty INT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS item_budget NUMERIC(10,2);
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS handoff TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS dropoff_fee NUMERIC(10,2);
@@ -208,6 +209,7 @@ function line(r) {
       item: r.item || "",
       itemDetails: r.item_details || "",
       itemBackup: r.item_backup || "",
+      qty: r.qty || 1,
       itemBudget: r.item_budget == null ? null : Number(r.item_budget),
       handoff: r.handoff || null,
       dropoffFee: r.dropoff_fee == null ? 0 : Number(r.dropoff_fee),
@@ -266,6 +268,7 @@ const COLS = {
   item: "item",
   itemDetails: "item_details",
   itemBackup: "item_backup",
+  qty: "qty",
   itemBudget: "item_budget",
   handoff: "handoff",
   dropoffFee: "dropoff_fee",
@@ -368,11 +371,11 @@ module.exports = {
   async createLine(f) {
     const r = await pool.query(
       `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at,
-         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19) RETURNING id`,
+         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20) RETURNING id`,
       [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt,
         f.kind || "spot", f.item || null, f.itemDetails || null, f.itemBackup || null, f.itemBudget ?? null,
-        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null]
+        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null]
     );
     return this.getLine(r.rows[0].id);
   },

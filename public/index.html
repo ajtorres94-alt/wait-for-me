@@ -281,6 +281,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .seg3{grid-template-columns:repeat(3,1fr)}
 .wheels.three{grid-template-columns:repeat(3,1fr);gap:8px}
 .wheels.one{grid-template-columns:1fr}
+.qtyrow{display:grid;grid-template-columns:110px 1fr;gap:12px;align-items:start}
 .seg button small{display:block;font-weight:500;font-size:11.5px;opacity:.8}
 .raise{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg);border-radius:12px;padding:10px 12px}
 .raise input{width:110px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-weight:700}
@@ -347,7 +348,7 @@ const KEYS={pickup:['open','claimed','enroute','inline','nearfront','handoff','d
 const kindOf=j=>j&&j.kind==='pickup'?'pickup':'spot';
 const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includes(j.status)?KEYS.legacy:KEYS.spot;
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
-const MIN_HOURS=0.5,FEE=0.15,BOOKING_FEE=2.5,ITEM_FEE=0.03,MAX_ITEM=150;
+const MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const money=n=>'$'+(Math.round(n*100)/100).toFixed(2).replace(/\.00$/,'');
 const $=s=>document.querySelector(s);
@@ -392,7 +393,7 @@ function facts(j,mode){
 function itemBox(j,mode){
   if(kindOf(j)!=='pickup')return'';
   const bought=!!j.purchasedAt&&j.outcome!=='sold_out';
-  const rows=[`<div><span>Buy</span><b>${esc(j.item||j.what)}</b></div>`];
+  const rows=[`<div><span>Buy</span><b>${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)}</b></div>`];
   if(j.itemDetails)rows.push(`<div><span>Details</span><span>${esc(j.itemDetails)}</span></div>`);
   if(j.itemBackup)rows.push(`<div><span>If sold out</span><span>${esc(j.itemBackup)}</span></div>`);
   rows.push(bought?`<div><span>Bought for</span><b class="mono">${money(j.itemTotal)}</b></div>`:`<div><span>Item limit</span><b class="mono">${money(j.itemBudget)}</b></div>`);
@@ -430,7 +431,7 @@ function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
   return`<div class="meter-top"><span>${kindOf(j)==='pickup'?'Time in line':'Time at the spot'}</span><b class="mono">${clockTxt(b.waited)}</b><span>of ${fmtShort(b.approved)} approved</span></div>
    <div class="bar${b.nearUp?' warn':''}"><i style="width:${pct}%"></i></div>
-   <div class="meter-bot"><span>${mode==='customer'?'Cost so far (30 min minimum)':'Earned so far (30 min minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
+   <div class="meter-bot"><span>${mode==='customer'?'Cost so far (15 min minimum)':'Earned so far (15 min minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'&&!(kindOf(j)==='pickup'&&j.purchasedAt)?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
 setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
 let myRatings=null,TAGS={waiter:[],booker:[]};
@@ -681,7 +682,7 @@ function customerMine(){
       if(cancelOpen===j.id&&!bought){
         const cost=j.cancelAs==='cancelled_free'?'It\'s free, because it\'s more than 2 hours before the start time.'
           :j.cancelAs==='cancelled_late'?`You'll pay 30 minutes of waiter time (${money(j.rate/2)}), with no fees, because it's within 2 hours of the start or your waiter is on the way.`
-          :`You'll pay for the time ${W} has waited (30-minute minimum) plus fees: about ${money(b.total)} right now.`;
+          :`You'll pay for the time ${W} has waited (15-minute minimum) plus fees: about ${money(b.total)} right now.`;
         extra+=`<div class="confirm"><b>Cancel this booking?</b><div class="meta">${cost}</div><div class="btns"><button class="btn danger-btn small" data-act="cancelbk" data-id="${j.id}">Cancel booking</button><button class="btn ghost small" data-act="cancelbk-close" data-id="${j.id}">Keep it</button></div></div>`}
     }
     if(j.status==='done'){
@@ -697,7 +698,7 @@ function customerMine(){
 let editing=null,postKind='pickup',postHandoff='meet',postDay='today';
 const APPROVED_HOURS=2; // time approved up front; bookers are asked to add more if it runs out
 const PRICE_BUFFER=1.25; // the item limit is the booker's rough price plus room for tax and price changes
-const limitFor=p=>Math.min(MAX_ITEM,Math.ceil(p*PRICE_BUFFER));
+const limitFor=(p,q=1)=>Math.min(MAX_ITEM,Math.ceil(p*q*PRICE_BUFFER));
 // Puts the time wheels on a date and picks the matching day chip.
 function setWhen(d){const now=new Date(),day=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime(),diff=(day(d)-day(now))/864e5;
   postDay=diff<=0?'today':diff===1?'tomorrow':'date';postDate=diff>1?`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`:'';
@@ -706,8 +707,8 @@ let postDate='';
 function customerPost(){
   const e=editing,pk=postKind==='pickup',cats=CATS_FOR[postKind],v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
   if(e){const st=e.startAt?new Date(e.startAt):null;if(st&&st>new Date()&&e.startText!=='ASAP')setWhen(st);else{setWhen(new Date(Date.now()+30*6e4));postDay='asap'}}
-  else{const t=new Date(Date.now()+30*6e4);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);setWhen(t)}
-  const price=e&&e.itemBudget?Math.round(e.itemBudget/PRICE_BUFFER):'';
+  else{const t=new Date(Date.now()+30*6e4);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);setWhen(t);wheel.qty=0}
+  const price=e&&e.itemBudget?Math.round(e.itemBudget/PRICE_BUFFER/(e.qty||1)):'';
   const kindBtn=(k,t,d)=>`<button type="button" role="radio" aria-checked="${postKind===k}" data-kind="${k}"><b>${t}</b><span>${d}</span></button>`;
   const dayBtn=(k,t)=>`<button type="button" class="chip" aria-pressed="${postDay===k}" data-day="${k}">${t}</button>`;
   const minDate=localInput(new Date()).slice(0,10);
@@ -717,10 +718,11 @@ function customerPost(){
      ${kindBtn('spot','Save my spot','A waiter saves a spot where that\'s normal, like a parade curb.')}</div>
    <div class="field"><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
    <div class="grp" data-for="pickup"${pk?'':' hidden'}>
-     <div class="field"><label for="f-item">What should they buy?</label><input id="f-item" maxlength="120" placeholder="e.g. Tour hoodie" value="${v('item')}"><small>One item or order per request.</small></div>
+     <div class="field"><label for="f-item">What should they buy?</label><input id="f-item" maxlength="120" placeholder="e.g. Tour hoodie" value="${v('item')}"><small>Up to ${MAX_QTY} of the same item. Some drops limit 1 per person.</small></div>
      <div class="field"><label for="f-details">Size, flavor, or other details <span class="meta">(optional)</span></label><input id="f-details" maxlength="200" placeholder="e.g. Size L, black" value="${v('itemDetails')}"></div>
      <div class="field"><label for="f-backup">If it's sold out, buy this instead <span class="meta">(optional)</span></label><input id="f-backup" maxlength="120" placeholder="e.g. The tour tee in L" value="${v('itemBackup')}"></div>
-     <div class="field"><label for="f-price">About how much is it?</label><input id="f-price" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="1" placeholder="e.g. 40" value="${price}"><small id="h-price">Your waiter pays and is paid back from your card. You're charged the receipt price.</small></div>
+     <div class="qtyrow"><div class="wheels one">${wheelHTML('qty','How many?',QTYS,String,wheel.qty)}</div>
+       <div class="field"><label for="f-price" id="l-price">${QTYS[wheel.qty]>1?'About how much each?':'About how much is it?'}</label><input id="f-price" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="1" placeholder="e.g. 40" value="${price}"><small id="h-price">Your waiter pays and is paid back from your card. You're charged the receipt price.</small></div></div>
      <div class="field"><span class="wlabel" id="l-hand">How do you want it?</span><div class="seg" role="radiogroup" aria-labelledby="l-hand">
        <button type="button" role="radio" data-hand="meet" aria-checked="${postHandoff==='meet'}">Meet up</button><button type="button" role="radio" data-hand="dropoff" aria-checked="${postHandoff==='dropoff'}">Drop it off</button></div>
        <small id="h-meet"></small></div>
@@ -768,9 +770,10 @@ function chosenStart(){
 const RATES=Array.from({length:781},(_,i)=>5+i/4);    // $5.00 … $200.00
 const HRS=Array.from({length:12},(_,i)=>i+1),MINS=[0,15,30,45],AMPM=['AM','PM'];
 const fmtMin=m=>':'+String(m).padStart(2,'0');
-const WHEELS={rate:{items:RATES,fmt:v=>fmtRate(v)},hr:{items:HRS,fmt:String},mn:{items:MINS,fmt:fmtMin},ap:{items:AMPM,fmt:String}};
+const MAX_QTY=5,QTYS=[1,2,3,4,5];
+const WHEELS={qty:{items:QTYS,fmt:String},rate:{items:RATES,fmt:v=>fmtRate(v)},hr:{items:HRS,fmt:String},mn:{items:MINS,fmt:fmtMin},ap:{items:AMPM,fmt:String}};
 const ROW=36;
-let wheel={rate:60,hr:0,mn:0,ap:0};                    // $20.00
+let wheel={rate:60,hr:0,mn:0,ap:0,qty:0};                    // $20.00
 function fmtHours(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh} hr ${m} min`:hh?`${hh} hr`:`${m} min`}
 function fmtShort(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh}h ${m}m`:hh?`${hh} hr`:`${m} min`}
 function fmtRate(r){return'$'+r.toFixed(2)}
@@ -795,17 +798,18 @@ function initWheel(key){
 function updateQuote(){
   const q=$('#quote');if(!q)return;
   const h=APPROVED_HOURS,r=RATES[wheel.rate],time=h*r,svc=time*FEE,pk=postKind==='pickup';
-  const price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,budget=price?limitFor(price):0;
+  const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,budget=price?limitFor(price,qty):0;
   const drop=pk&&postHandoff==='dropoff'?Math.max(0,parseFloat($('#f-dropfee').value)||0):0;
   const ifee=budget*ITEM_FEE,total=time+svc+BOOKING_FEE+budget+drop+ifee;
-  if(pk){$('#h-price').textContent=price>MAX_ITEM?`Items over ${money(MAX_ITEM)} aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
+  if(pk){$('#l-price').textContent=qty>1?'About how much each?':'About how much is it?';
+    $('#h-price').textContent=price*qty>MAX_ITEM?`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
     $('#h-meet').textContent=$('#f-cat').value==='Food'?'Food: meet within 45 minutes of the purchase so it stays fresh.':'Meet within 4 hours of the purchase, so after the show works.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
   q.innerHTML=row(`Waiter time (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
-    +(pk?row('Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
+    +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
     +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (30-minute minimum)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
+    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (15-minute minimum)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -835,7 +839,7 @@ function waiterFind(){
    ${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup';return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
-     <div class="hint">${pickup?`Paid for your time from check-in to purchase, 30-minute minimum. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, 30-minute minimum.`} You'll see the booker's name and notes after you claim.</div>
+     <div class="hint">${pickup?`Paid for your time from check-in to purchase, 15-minute minimum. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, 15-minute minimum.`} You'll see the booker's name and notes after you claim.</div>
      ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for the booker to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
      :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
         <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="5" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>
@@ -1024,7 +1028,7 @@ function render(){
   const t=tab[role];
   $('#screenTitle').textContent=t==='post'&&editing?'Edit request':TITLES[t];
   v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
-  if(t==='post'){['rate','hr','mn','ap'].forEach(initWheel);updateQuote();
+  if(t==='post'){['rate','hr','mn','ap','qty'].forEach(initWheel);updateQuote();
     $('#postForm').querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>setDay(b.dataset.day));
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));
     $('#postForm').querySelectorAll('[data-hand]').forEach(b=>b.onclick=()=>setHandoff(b.dataset.hand));
@@ -1033,8 +1037,8 @@ function render(){
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
       try{const {d,text}=chosenStart();
         const body={kind:postKind,place:$('#f-place').value,cat:$('#f-cat').value,startAt:d.toISOString(),startText:text,hours:editing?editing.hours:APPROVED_HOURS,rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
-        if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add about how much it costs.');if(p>MAX_ITEM)throw new Error(`Items over ${money(MAX_ITEM)} aren't supported yet.`);
-          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,itemBudget:limitFor(p),
+        if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add about how much it costs.');const q=QTYS[wheel.qty];if(p*q>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
+          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:limitFor(p,q),
           handoff:postHandoff,dropoffFee:parseFloat($('#f-dropfee').value),dropoffAddr:$('#f-dropaddr').value})}
         else{if(!$('#f-agree').checked)throw new Error('Confirm the spot is OK to save. Wait For Me! doesn\'t allow line-cutting.');Object.assign(body,{what:$('#f-what').value,spotAgree:true})}
         await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
@@ -1078,7 +1082,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-5)*4)));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-5)*4)));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}

@@ -102,7 +102,7 @@ module.exports = {
       approvedHours: f.hours, lat: null, lng: null, geoApprox: null, area: null, swapFails: 0, codeResetAt: null,
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
       payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
-      kind: "spot", item: "", itemDetails: "", itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
+      kind: "spot", item: "", itemDetails: "", qty: 1, itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
       itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, ...f,
     };
     lines.push(l);

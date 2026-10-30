@@ -187,6 +187,7 @@ const SWAP_TRIES = 5;
 // After buying, the waiter holds the item for the meetup window the booker picked; then they can
 // close the job. Food can't wait longer than 2 hours.
 const MEET_CHOICES = [45, 120, 240]; // minutes
+const MAX_QTY = 5; // most of the same item per pickup
 const meetMs = (l) => (Number(l.meetWithin) || 120) * 60000;
 const meetTxt = (l) => ({ 45: "45 minutes", 120: "2 hours", 240: "4 hours" }[Number(l.meetWithin) || 120] || "2 hours");
 const MSG_AFTER_MS = 7 * 86400 * 1000; // messages stay open this long after an uncollected pickup
@@ -330,7 +331,7 @@ function lineFields(b) {
     startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
     rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
-    item: "", itemDetails: "", itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
+    item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
   };
   if (!pickup) {
     if (b.spotAgree !== true)
@@ -342,6 +343,8 @@ function lineFields(b) {
   f.item = text(b.item, "what to buy", 120);
   f.itemDetails = text(b.itemDetails, "the item details", 200, { required: false });
   f.itemBackup = text(b.itemBackup, "a backup choice", 120, { required: false });
+  f.qty = b.qty === undefined ? 1 : Number(b.qty);
+  if (!Number.isInteger(f.qty) || f.qty < 1 || f.qty > MAX_QTY) fail(400, `Pick a quantity from 1 to ${MAX_QTY}.`);
   f.itemBudget = num(b.itemBudget, "The most you'll pay for the item", 1, MAX_ITEM);
   f.handoff = b.handoff === "dropoff" ? "dropoff" : "meet";
   if (f.handoff === "dropoff") {
@@ -912,7 +915,7 @@ async function api(req, res, urlPath, query) {
         status: "handoff", handoffAt: new Date(), purchasedAt: new Date(), pos: null, hasReceipt: true,
         itemTotal: Math.round(total * 100) / 100, itemNote: text(b.note, "the note", 200, { required: false }),
       });
-      if (updated) ping(l.ownerId, "Your item was bought", `${firstName(me.name)} bought ${l.item || l.what} for ${dollars(total)}. Meet up within ${meetTxt(l)}.`);
+      if (updated) ping(l.ownerId, "Your item was bought", `${firstName(me.name)} bought ${l.qty > 1 ? `${l.qty} × ` : ""}${l.item || l.what} for ${dollars(total)}. Meet up within ${meetTxt(l)}.`);
     } else if (action === "soldout") {
       if (!pickup) fail(400, "Only pickups can be marked sold out.");
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the store first.");

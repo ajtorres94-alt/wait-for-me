@@ -37,7 +37,7 @@ The app creates its own tables on first start.
 
 ## How billing works
 
-The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up, with a 30-minute minimum, and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time.
+The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up, with a 15-minute minimum, and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time.
 
 Fees (kept by the platform): 15% of the waiter's time, a $2.50 booking fee, and 3% of the item price for pickups. The booker also pays the item at the receipt price and any drop-off fee, which goes to the waiter. No fees on late cancellations or sold-out pickups. The logic lives in `billing.js`.
 

@@ -10,19 +10,20 @@
 //
 // Time:
 // - The clock runs from the waiter's check-in to the handover (for pickups, to the purchase).
-// - Billed in 15-minute steps, rounded up, with a 30-minute minimum.
+// - Billed in 15-minute steps, rounded up, with a 15-minute minimum.
 // - Never more than the time the booker approved (the estimate plus any added time).
 // - Approved time ran out and the waiter ended the shift: the full approved time.
 // - Booker didn't show at the front (older line-swap jobs): time waited, including the
 //   30-minute grace period, up to 30 minutes past the approved time.
-// - Booker cancelled: free if early, the 30-minute minimum (no fees) if late or once the
+// - Booker cancelled: free if early, 30 minutes of waiter pay (no fees) if late or once the
 //   waiter was on the way, time waited if the waiter was already in line.
 //
 // Fees (kept by Wait For Me!): 15% of the waiter's time pay, a $2.50 booking fee, and 3% of
 // the item price to cover card processing. No fees on a late cancellation or a sold-out pickup.
 
 const FEE = 0.15;
-const MIN_HOURS = 0.5; // shortest time billed once a waiter checks in
+const MIN_HOURS = 0.25; // shortest time billed once a waiter checks in
+const LATE_CANCEL_HOURS = 0.5; // a late cancellation pays the waiter for 30 minutes (they may already be on the way)
 const BOOKING_FEE = 2.5;
 const ITEM_FEE = 0.03;
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
@@ -48,7 +49,7 @@ function billing(line, now = Date.now()) {
       billed = 0;
       break;
     case "cancelled_late":
-      billed = MIN_HOURS;
+      billed = LATE_CANCEL_HOURS;
       feeRate = 0;
       break;
     case "time_up":
