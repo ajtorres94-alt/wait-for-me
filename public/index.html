@@ -1217,14 +1217,16 @@ function notifyChanges(prev,next){
   if(msgs.length){toast(msgs[msgs.length-1]);alertTone();try{navigator.vibrate&&navigator.vibrate([60,40,60])}catch{}}}
 
 // ---------- data ----------
-async function load(force){
+// Each refresh also resets the timer, so the pace follows what's on screen now.
+async function load(force){try{return await loadNow(force)}finally{if(typeof schedulePoll==='function'&&me)schedulePoll()}}
+async function loadNow(force){
   if(!me)return;
   const t0=Date.now();
-  const [m1,o1,s1,info,ev]=await Promise.all([...['mine','open','shifts'].map(s=>api('/lines?scope='+s)),api('/me'),api('/events').catch(()=>({events:EVENTS}))]);
-  EVENTS=ev.events||[];if(eventFilter&&!EVENTS.some(e=>e.id===eventFilter))eventFilter=null;
-  clockSkew=m1.now-Math.round((t0+Date.now())/2);
-  const mine=m1.lines,open=o1.lines,shifts=s1.lines;
-  if(info.user){me=info.user;myRatings=info.ratings;TAGS=info.tags||TAGS;if(info.payments)PAY=info.payments}
+  const sy=await api('/sync');
+  EVENTS=sy.events||[];if(eventFilter&&!EVENTS.some(e=>e.id===eventFilter))eventFilter=null;
+  clockSkew=sy.now-Math.round((t0+Date.now())/2);
+  const mine=sy.mine,open=sy.open,shifts=sy.shifts;
+  if(sy.user){me=sy.user;myRatings=sy.ratings;TAGS=sy.tags||TAGS;if(sy.payments)PAY=sy.payments}
   await Promise.all([...chatOpen].map(loadChat));
   paintChats();
   notifyChanges(lastData,{mine,open,shifts});lastData={mine,open,shifts};
@@ -1239,7 +1241,13 @@ async function load(force){
   if(!force&&role==='customer'&&tab.customer==='post'){data={mine,open,shifts};lastJSON=json;renderTabs();return}
   data={mine,open,shifts};lastJSON=json;render();
 }
-setInterval(()=>{if(me&&document.visibilityState==='visible')load(false).catch(()=>{})},5000);
+// Refresh often only while something is happening: every 5 seconds during a job or an open chat,
+// 10 while waiting for a claim or checked in at an event, otherwise 20. Alerts cover the rest.
+function pollDelay(){const busy=data.mine.some(j=>j.status!=='done'&&j.waiterId)||data.shifts.some(j=>j.status!=='done')||chatOpen.size>0;
+  return busy?5000:(data.mine.some(j=>j.status==='open')||EVENTS.some(e=>e.meHere))?10000:20000}
+let pollT=null;
+function schedulePoll(){clearTimeout(pollT);pollT=setTimeout(async()=>{if(me&&document.visibilityState==='visible'){try{await load(false)}catch{}}schedulePoll()},pollDelay())}
+schedulePoll();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load(false).catch(()=>{})});
 
 (async()=>{

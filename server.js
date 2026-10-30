@@ -409,10 +409,28 @@ function limit(key, max, windowMs, message) {
   buckets.set(key, rec);
   if (rec.n > max) fail(429, message);
 }
+// Phones at a big event share a handful of cell-carrier addresses, so the per-address cap is
+// high (it only stops scripted floods). Password guessing is stopped per account instead.
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+const clientIp = (req) => (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
 function limitAuth(req) {
-  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-  limit(`auth:${ip}`, 20, 15 * 60 * 1000, "Too many attempts. Wait 15 minutes and try again.");
+  limit(`auth:${clientIp(req)}`, 300, AUTH_WINDOW_MS, "Too many attempts from this network. Wait a few minutes and try again.");
 }
+const FAILS_PER_ACCOUNT = 10;
+function failedTooOften(email) {
+  const rec = buckets.get(`loginfail:${email}`);
+  return !!rec && Date.now() - rec.start <= AUTH_WINDOW_MS && rec.n >= FAILS_PER_ACCOUNT;
+}
+function noteFailedLogin(email) {
+  try {
+    limit(`loginfail:${email}`, 1e9, AUTH_WINDOW_MS, "");
+  } catch {}
+}
+// Forget old counters so the table doesn't grow forever.
+setInterval(() => {
+  const cutoff = Date.now() - 2 * 3600 * 1000;
+  for (const [k, rec] of buckets) if (rec.start < cutoff) buckets.delete(k);
+}, 10 * 60 * 1000).unref();
 
 const newCode = () => String(crypto.randomInt(1000, 10000));
 
@@ -577,8 +595,12 @@ async function api(req, res, urlPath, query) {
     limitAuth(req);
     const b = await readBody(req);
     const email = String(b.email || "").trim().toLowerCase();
+    if (email && failedTooOften(email)) fail(429, "Too many wrong passwords for this account. Wait 15 minutes, or tap Forgot password.");
     const u = email && (await store.userByEmail(email));
-    if (!u || !checkPassword(String(b.password || ""), u.pwHash)) fail(401, "That email and password don't match.");
+    if (!u || !checkPassword(String(b.password || ""), u.pwHash)) {
+      if (email) noteFailedLogin(email);
+      fail(401, "That email and password don't match.");
+    }
     if (u.suspended) fail(403, "This account is suspended. Contact support if you think this is a mistake.");
     return send(res, 200, { user: publicUser(u) }, { "Set-Cookie": await startSession(req, u.id) });
   }
@@ -639,6 +661,7 @@ async function api(req, res, urlPath, query) {
 
   if (urlPath === "/api/me/delete" && method === "POST") {
     limitAuth(req);
+    limit(`delete:${me.id}`, 10, AUTH_WINDOW_MS, "Too many tries. Wait 15 minutes and try again.");
     const b = await readBody(req);
     if (!checkPassword(String(b.password || ""), me.pwHash)) fail(403, "That password isn't right. Try again.");
     const busy = [...(await store.listLines({ ownerId: me.id })), ...(await store.listLines({ waiterId: me.id }))]
@@ -739,6 +762,23 @@ async function api(req, res, urlPath, query) {
       }
     }
     return send(res, 200, { results });
+  }
+
+  // Everything the app shows, in one request (the app refreshes with this instead of five calls).
+  if (urlPath === "/api/sync" && method === "GET") {
+    const [mineL, openL, shiftsL, sums, evs] = await Promise.all([
+      store.listLines({ ownerId: me.id }), store.listLines({ openExcept: me.id }), store.listLines({ waiterId: me.id }),
+      store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS)), store.upcomingEvents(me.id),
+    ]);
+    const all = new Map();
+    for (const l of [...mineL, ...openL, ...shiftsL]) all.set(l.id, l);
+    const byId = new Map((await decorate(me, [...all.values()])).map((d) => [d.id, d]));
+    const pick = (list) => list.map((l) => byId.get(l.id));
+    return send(res, 200, {
+      now: Date.now(), mine: pick(mineL), open: pick(openL), shifts: pick(shiftsL),
+      user: publicUser(me), ratings: { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) },
+      tags: TAGS, payments: paymentsInfo(), events: evs.map(publicEvent),
+    });
   }
 
   if (urlPath === "/api/lines" && method === "GET") {
