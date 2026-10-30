@@ -115,6 +115,10 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_held INT NOT NULL DEFAULT 0;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_status TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_error TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_captured INT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 `;
 
 const LINE_SELECT = `
@@ -233,6 +237,27 @@ module.exports = {
   kind: "postgres",
   async init() {
     await pool.query(SCHEMA);
+  },
+  // Stripe test and live mode have separate customers, cards and payout accounts. When the
+  // keys switch between them, forget the old mode's links so people set them up again.
+  async syncStripeMode(mode) {
+    const r = await pool.query("SELECT value FROM app_settings WHERE key = 'stripe_mode'");
+    const prev = r.rows[0] ? r.rows[0].value : null;
+    if (prev && prev !== mode) {
+      await pool.query(
+        "UPDATE users SET stripe_customer = NULL, stripe_account = NULL, card_pm = NULL, card_label = NULL, payouts_ready = false"
+      );
+      await pool.query("UPDATE lines SET pay_intent = NULL, pay_held = 0, pay_status = NULL, pay_error = NULL WHERE status <> 'done'");
+      await pool.query(
+        "UPDATE lines SET pay_status = 'void', pay_error = 'Started in Stripe ' || $1 || ' mode' WHERE status = 'done' AND pay_status IN ('held', 'charge_failed')",
+        [prev]
+      );
+    }
+    await pool.query(
+      "INSERT INTO app_settings (key, value) VALUES ('stripe_mode', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+      [mode]
+    );
+    return { previous: prev, changed: !!prev && prev !== mode };
   },
 
   async createUser({ name, email, pwHash }) {

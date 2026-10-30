@@ -68,6 +68,7 @@ Turned on by `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` (use `sk_test_`/`p
 - **Declines:** a declined hold keeps the booking, marks it unsecured, and asks the booker to update their card (updating retries right away). Failed charges are retried every 10 minutes for 6 days.
 - Waiter accounts are created with `controller.losses.payments = application`, `controller.fees.payer = application`, and an Express dashboard, so the platform is responsible for refunds and disputes.
 - Apple Pay and Google Pay need the domain registered with Stripe; the server registers waitforme.io at startup.
+- **Switching test ↔ live keys:** test and live mode have separate customers, cards and payout accounts. On startup the server notices a mode change and clears saved cards, payout setups and unfinished holds, so everyone adds their card and sets up payouts again in the new mode. Finished jobs keep their history.
 
 ## Email (password reset)
 

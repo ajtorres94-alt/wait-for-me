@@ -32,6 +32,18 @@ function withNames(l) {
 module.exports = {
   kind: "memory",
   async init() {},
+  async syncStripeMode(mode) {
+    const prev = this._stripeMode || null;
+    if (prev && prev !== mode) {
+      for (const u of users) Object.assign(u, { stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, payoutsReady: false });
+      for (const l of lines) {
+        if (l.status !== "done") Object.assign(l, { payIntent: null, payHeld: 0, payStatus: null, payError: null });
+        else if (["held", "charge_failed"].includes(l.payStatus)) Object.assign(l, { payStatus: "void", payError: `Started in Stripe ${prev} mode` });
+      }
+    }
+    this._stripeMode = mode;
+    return { previous: prev, changed: !!prev && prev !== mode };
+  },
 
   // ---- users and sessions ----
   async createUser({ name, email, pwHash }) {

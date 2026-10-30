@@ -923,7 +923,13 @@ store
     server.listen(PORT, () =>
       console.log(`Wait For Me! on port ${PORT}, storage: ${store.kind}, payments: ${pay.enabled() ? (pay.testMode() ? "Stripe test mode" : "Stripe live") : "off"}`)
     );
-    startPaymentSweeper();
+    if (pay.enabled()) {
+      store
+        .syncStripeMode(pay.testMode() ? "test" : "live")
+        .then((m) => m.changed && console.log(`Stripe switched from ${m.previous} to ${pay.testMode() ? "test" : "live"} mode: saved cards and payout setups were cleared.`))
+        .catch((e) => console.error("Couldn't check Stripe mode:", e.message))
+        .finally(startPaymentSweeper);
+    }
     if (pay.enabled()) pay.registerDomains(["waitforme.io", "www.waitforme.io"]);
     // Fill in map coordinates and city names for lines posted before those existed.
     store.linesMissingGeo().then(async (rows) => {
