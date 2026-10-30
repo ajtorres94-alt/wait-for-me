@@ -193,11 +193,15 @@ const MSG_AFTER_MS = 7 * 86400 * 1000; // messages stay open this long after an 
 const startMs = (l) => (l.startAt ? new Date(l.startAt).getTime() : null);
 const isExpired = (l, now = Date.now()) => l.status === "open" && startMs(l) != null && startMs(l) + EXPIRE_MS < now;
 
+// A booker can report a no-show 15 minutes after the start time, but never sooner than
+// 45 minutes after the claim, so a waiter who claims an ASAP or last-minute job has time to get there.
+const TRAVEL_MS = 45 * 60 * 1000;
 function noShowAllowedAt(l) {
   if (!["claimed", "enroute"].includes(l.status) || l.checkinAt) return null;
   const s = startMs(l);
-  if (s != null) return s + NOSHOW_MS;
-  return l.claimedAt ? new Date(l.claimedAt).getTime() + 60 * 60 * 1000 : null;
+  const claimed = l.claimedAt ? new Date(l.claimedAt).getTime() + TRAVEL_MS : null;
+  if (s == null) return claimed;
+  return Math.max(s + NOSHOW_MS, claimed || 0);
 }
 
 function cancelOutcome(l, now = Date.now()) {
@@ -343,7 +347,8 @@ function lineFields(b) {
     f.dropoffFee = Math.round(num(b.dropoffFee, "The drop-off fee", 5, 50));
     f.dropoffAddr = text(b.dropoffAddr, "the drop-off address", 200);
   }
-  f.meetWithin = b.meetWithin === undefined ? (f.cat === "Food" ? 45 : 120) : Number(b.meetWithin);
+  // Food: meet within 45 minutes so it stays fresh. Anything else: 4 hours, so meeting after a show works.
+  f.meetWithin = b.meetWithin === undefined ? (f.cat === "Food" ? 45 : 240) : Number(b.meetWithin);
   if (!MEET_CHOICES.includes(f.meetWithin)) fail(400, "Pick when you'll meet your waiter.");
   if (f.cat === "Food" && f.meetWithin > 120) fail(400, "Food can't wait 4 hours. Pick 45 minutes or 2 hours for the meetup.");
   f.what = f.item;
@@ -803,7 +808,7 @@ async function api(req, res, urlPath, query) {
       if (l.ownerId !== me.id) fail(403, "Only the person who booked this line can report a no-show.");
       const at = noShowAllowedAt(l);
       if (at == null) fail(409, "Your waiter has already checked in at the line.");
-      if (Date.now() < at) fail(409, "You can report a no-show 15 minutes after the start time.");
+      if (Date.now() < at) fail(409, "You can report a no-show 15 minutes after the start time (and at least 45 minutes after your waiter claimed it).");
       const waiterId = l.waiterId;
       updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
       if (!updated) fail(409, "This line changed. Refresh and try again.");

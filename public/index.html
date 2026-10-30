@@ -279,6 +279,8 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .grp:not(.two){display:grid;gap:14px}
 .nudge{display:flex;flex-direction:column;gap:10px;background:var(--info-bg);border:1px solid color-mix(in srgb,var(--info) 35%,transparent);border-radius:14px;padding:14px}
 .seg3{grid-template-columns:repeat(3,1fr)}
+.wheels.three{grid-template-columns:repeat(3,1fr);gap:8px}
+.wheels.one{grid-template-columns:1fr}
 .seg button small{display:block;font-weight:500;font-size:11.5px;opacity:.8}
 .raise{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg);border-radius:12px;padding:10px 12px}
 .raise input{width:110px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-weight:700}
@@ -691,11 +693,23 @@ function customerMine(){
       ${itemBox(j,'customer')}
       ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active||j.chatOpen?chatHTML(j,j.waiterName):''}</article>`}).join('')}</div>`}
 
-let editing=null,postKind='pickup',postHandoff='meet',postMeet=45;
+let editing=null,postKind='pickup',postHandoff='meet',postDay='today';
+const APPROVED_HOURS=2; // time approved up front; bookers are asked to add more if it runs out
+const PRICE_BUFFER=1.25; // the item limit is the booker's rough price plus room for tax and price changes
+const limitFor=p=>Math.min(MAX_ITEM,Math.ceil(p*PRICE_BUFFER));
+// Puts the time wheels on a date and picks the matching day chip.
+function setWhen(d){const now=new Date(),day=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime(),diff=(day(d)-day(now))/864e5;
+  postDay=diff<=0?'today':diff===1?'tomorrow':'date';postDate=diff>1?`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`:'';
+  wheel.hr=((d.getHours()%12)||12)-1;wheel.mn=Math.floor(d.getMinutes()/15);wheel.ap=d.getHours()>=12?1:0}
+let postDate='';
 function customerPost(){
-  const e=editing,start=e&&e.startAt?new Date(e.startAt):null,minD=localInput(new Date());
-  const cats=['Food','Releases','Errands','Events'],pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
+  const e=editing,cats=['Food','Releases','Errands','Events'],pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
+  if(e){const st=e.startAt?new Date(e.startAt):null;if(st&&st>new Date()&&e.startText!=='ASAP')setWhen(st);else{setWhen(new Date(Date.now()+30*6e4));postDay='asap'}}
+  else{const t=new Date(Date.now()+30*6e4);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);setWhen(t)}
+  const price=e&&e.itemBudget?Math.round(e.itemBudget/PRICE_BUFFER):'';
   const kindBtn=(k,t,d)=>`<button type="button" role="radio" aria-checked="${postKind===k}" data-kind="${k}"><b>${t}</b><span>${d}</span></button>`;
+  const dayBtn=(k,t)=>`<button type="button" class="chip" aria-pressed="${postDay===k}" data-day="${k}">${t}</button>`;
+  const minDate=localInput(new Date()).slice(0,10);
   return`<form class="post" id="postForm" novalidate>
    <div class="kinds" role="radiogroup" aria-label="What do you need?">
      ${kindBtn('pickup','Pick it up for me','A waiter stands in line, buys it, and hands it to you.')}
@@ -705,12 +719,10 @@ function customerPost(){
      <div class="field"><label for="f-item">What should they buy?</label><input id="f-item" maxlength="120" placeholder="e.g. Tour hoodie" value="${v('item')}"><small>One item or order per request.</small></div>
      <div class="field"><label for="f-details">Size, flavor, or other details <span class="meta">(optional)</span></label><input id="f-details" maxlength="200" placeholder="e.g. Size L, black" value="${v('itemDetails')}"></div>
      <div class="field"><label for="f-backup">If it's sold out, buy this instead <span class="meta">(optional)</span></label><input id="f-backup" maxlength="120" placeholder="e.g. The tour tee in L" value="${v('itemBackup')}"></div>
-     <div class="field"><label for="f-budget">Most you'll pay for the item</label><input id="f-budget" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="0.01" placeholder="e.g. 40" value="${v('itemBudget')}"><small>Tax included, up to ${money(MAX_ITEM)}. Your waiter pays at the register and is paid back from your card. You're charged the receipt price, not this limit.</small></div>
+     <div class="field"><label for="f-price">About how much is it?</label><input id="f-price" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="1" placeholder="e.g. 40" value="${price}"><small id="h-price">Your waiter pays and is paid back from your card. You're charged the receipt price.</small></div>
      <div class="field"><span class="wlabel" id="l-hand">How do you want it?</span><div class="seg" role="radiogroup" aria-labelledby="l-hand">
-       <button type="button" role="radio" data-hand="meet" aria-checked="${postHandoff==='meet'}">Meet up</button><button type="button" role="radio" data-hand="dropoff" aria-checked="${postHandoff==='dropoff'}">Drop it off</button></div></div>
-     <div class="field"><span class="wlabel" id="l-meet">When will you meet your waiter?</span><div class="seg seg3" role="radiogroup" aria-labelledby="l-meet">
-       ${[[45,'Right away','within 45 min'],[120,'Soon','within 2 hours'],[240,'After the show','within 4 hours']].map(([m,t,d])=>`<button type="button" role="radio" data-meet="${m}" aria-checked="${postMeet===m}"${m===240&&(e?e.cat:'Food')==='Food'?' hidden':''}>${t}<small>${d}</small></button>`).join('')}</div>
-       <small>Counted from when your waiter buys it. If you haven't met by then, they can close the job and you're still charged.</small></div>
+       <button type="button" role="radio" data-hand="meet" aria-checked="${postHandoff==='meet'}">Meet up</button><button type="button" role="radio" data-hand="dropoff" aria-checked="${postHandoff==='dropoff'}">Drop it off</button></div>
+       <small id="h-meet"></small></div>
      <div class="two grp" data-for="dropoff"${postHandoff==='dropoff'?'':' hidden'}>
        <div class="field"><label for="f-dropfee">Drop-off fee</label><input id="f-dropfee" type="number" inputmode="numeric" min="5" max="50" step="1" value="${v('dropoffFee',10)||10}"><small>All of it goes to your waiter. $5 to $50.</small></div>
        <div class="field"><label for="f-dropaddr">Drop-off address</label><input id="f-dropaddr" maxlength="200" autocomplete="street-address" placeholder="Street, city" value="${v('dropoffAddr')}"><small>Only your waiter sees it.</small></div></div>
@@ -720,10 +732,13 @@ function customerPost(){
      <div class="rule" role="note"><b>No line-cutting.</b> ${SPOT_RULE}</div>
      <label class="check" for="f-agree"><input id="f-agree" type="checkbox"${e&&kindOf(e)==='spot'?' checked':''}> This spot is OK to save, and no one waiting in line will be skipped.</label>
    </div>
-   <div class="two"><div class="field"><label for="f-cat">Type</label><select id="f-cat">${cats.map(c=>`<option${(e?e.cat:'Food')===c?' selected':''}>${c}</option>`).join('')}</select></div>
-   <div class="field"><label for="f-when">When should they arrive?</label><input id="f-when" type="datetime-local" min="${minD}" value="${start&&start>new Date()?localInput(start):''}"></div></div>
-   <div class="wheels">${wheelHTML('hours','Estimated wait',HOURS,fmtHours,wheel.hours)}${wheelHTML('rate','Hourly rate',RATES,fmtRate,wheel.rate)}</div>
-   <div class="field"><label for="f-notes">Notes for your waiter</label><textarea id="f-notes" rows="2" maxlength="500" placeholder="${pk?'Where to meet, how to reach you':'When you\'ll arrive, how to reach you, what to bring'}">${esc(e?e.notes||'':'')}</textarea><small>Only the waiter who takes your request sees your notes and name.</small></div>
+   <div class="field"><label for="f-cat">Type</label><select id="f-cat">${cats.map(c=>`<option${(e?e.cat:pk?'Food':'Events')===c?' selected':''}>${c}</option>`).join('')}</select></div>
+   <div class="field"><span class="wlabel" id="l-when">When should they get there?</span>
+     <div class="filters" role="group" aria-labelledby="l-when">${dayBtn('asap','ASAP')}${dayBtn('today','Today')}${dayBtn('tomorrow','Tomorrow')}${dayBtn('date','Pick a date')}</div>
+     <input id="f-date" type="date" min="${minDate}" value="${postDate}" aria-label="Date"${postDay==='date'?'':' hidden'} style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px">
+     <div class="wheels three" id="when-wheels"${postDay==='asap'?' hidden':''}>${wheelHTML('hr','Hour',HRS,String,wheel.hr)}${wheelHTML('mn','Minute',MINS,fmtMin,wheel.mn)}${wheelHTML('ap','AM or PM',AMPM,String,wheel.ap)}</div>
+     <small id="h-when">${postDay==='asap'?'Waiters nearby see it right away and head over once they claim it.':''}</small></div>
+   <div class="wheels one">${wheelHTML('rate','Hourly rate',RATES,fmtRate,wheel.rate)}</div>
    <div class="quote" id="quote"></div>
    <button class="btn block" type="submit">${e?'Save changes':'Post request'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">Cancel editing</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
 // Switch the post form between the two kinds without losing what's been typed.
@@ -733,20 +748,28 @@ function setPostKind(k){postKind=k;const f=$('#postForm');if(!f)return;
   $('#l-place').textContent=k==='pickup'?'Where should they buy it?':'Where is the spot?';
   $('#f-place').placeholder=k==='pickup'?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena';
   $('#h-place').textContent=k==='pickup'?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.';
-  $('#f-notes').placeholder=k==='pickup'?'Where to meet, how to reach you':'When you\'ll arrive, how to reach you, what to bring';
-  if(!editing)$('#f-cat').value=k==='pickup'?'Food':'Events';syncMeet();updateQuote()}
-// Food can't wait 4 hours, so that choice only shows for other types.
-function syncMeet(){const f=$('#postForm');if(!f)return;const food=$('#f-cat').value==='Food',late=f.querySelector('[data-meet="240"]');
-  late.hidden=food;if(food&&postMeet===240)setMeet(45)}
-function setMeet(m){postMeet=m;$('#postForm').querySelectorAll('[data-meet]').forEach(b=>b.setAttribute('aria-checked',+b.dataset.meet===m))}
+  if(!editing)$('#f-cat').value=k==='pickup'?'Food':'Events';updateQuote()}
 function setHandoff(h){postHandoff=h;const f=$('#postForm');f.querySelectorAll('[data-hand]').forEach(b=>b.setAttribute('aria-checked',b.dataset.hand===h));
   f.querySelector('.grp[data-for="dropoff"]').hidden=h!=='dropoff';updateQuote()}
+function setDay(k){postDay=k;const f=$('#postForm');f.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.day===k));
+  $('#f-date').hidden=k!=='date';$('#when-wheels').hidden=k==='asap';
+  $('#h-when').textContent=k==='asap'?'Waiters nearby see it right away and head over once they claim it.':'';
+  if(k==='date'&&!$('#f-date').value)$('#f-date').showPicker?.()}
+// The start time picked on the form. Throws a message the form shows if it's not usable.
+function chosenStart(){
+  const now=new Date();if(postDay==='asap')return{d:now,text:'ASAP'};
+  let d;if(postDay==='date'){const v=$('#f-date').value;if(!v)throw new Error('Pick a date.');const [y,m,dd]=v.split('-').map(Number);d=new Date(y,m-1,dd)}
+  else{d=new Date(now);if(postDay==='tomorrow')d.setDate(d.getDate()+1)}
+  d.setHours(HRS[wheel.hr]%12+(wheel.ap?12:0),MINS[wheel.mn],0,0);
+  if(d<now-5*6e4)throw new Error('That time has already passed. Pick a later time, or ASAP.');
+  return{d,text:fmtStart(d)}}
 // ---------- scroll wheels ----------
-const HOURS=Array.from({length:96},(_,i)=>(i+1)/4);   // 15 min … 24 hr
 const RATES=Array.from({length:781},(_,i)=>5+i/4);    // $5.00 … $200.00
-const WHEELS={hours:{items:HOURS,fmt:v=>fmtHours(v)},rate:{items:RATES,fmt:v=>fmtRate(v)}};
+const HRS=Array.from({length:12},(_,i)=>i+1),MINS=[0,15,30,45],AMPM=['AM','PM'];
+const fmtMin=m=>':'+String(m).padStart(2,'0');
+const WHEELS={rate:{items:RATES,fmt:v=>fmtRate(v)},hr:{items:HRS,fmt:String},mn:{items:MINS,fmt:fmtMin},ap:{items:AMPM,fmt:String}};
 const ROW=36;
-let wheel={hours:7,rate:60};                           // 2 hr, $20.00
+let wheel={rate:60,hr:0,mn:0,ap:0};                    // $20.00
 function fmtHours(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh} hr ${m} min`:hh?`${hh} hr`:`${m} min`}
 function fmtShort(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh}h ${m}m`:hh?`${hh} hr`:`${m} min`}
 function fmtRate(r){return'$'+r.toFixed(2)}
@@ -770,15 +793,18 @@ function initWheel(key){
 }
 function updateQuote(){
   const q=$('#quote');if(!q)return;
-  const h=HOURS[wheel.hours],r=RATES[wheel.rate],time=h*r,svc=time*FEE,pk=postKind==='pickup';
-  const budget=pk?Math.min(MAX_ITEM,Math.max(0,parseFloat($('#f-budget').value)||0)):0,drop=pk&&postHandoff==='dropoff'?Math.max(0,parseFloat($('#f-dropfee').value)||0):0;
+  const h=APPROVED_HOURS,r=RATES[wheel.rate],time=h*r,svc=time*FEE,pk=postKind==='pickup';
+  const price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,budget=price?limitFor(price):0;
+  const drop=pk&&postHandoff==='dropoff'?Math.max(0,parseFloat($('#f-dropfee').value)||0):0;
   const ifee=budget*ITEM_FEE,total=time+svc+BOOKING_FEE+budget+drop+ifee;
+  if(pk){$('#h-price').textContent=price>MAX_ITEM?`Items over ${money(MAX_ITEM)} aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
+    $('#h-meet').textContent=$('#f-cat').value==='Food'?'Food: meet within 45 minutes of the purchase so it stays fresh.':'Meet within 4 hours of the purchase, so after the show works.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
-  q.innerHTML=row(`Waiter time (${fmtHours(h)} × ${fmtRate(r)}/hr)`,money(time))
+  q.innerHTML=row(`Waiter time (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
     +(pk?row('Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
     +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')
-    +`<div class="total"><span>${pk?'Most you\'ll pay':'Estimated total'}</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">${pk?'You pay the receipt price for the item and only for the time your waiter spends in line (1 hour minimum).':'You only pay for the time your waiter spends saving your spot (1 hour minimum).'}</div>`}
+    +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
+    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (1 hour minimum)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -997,17 +1023,18 @@ function render(){
   const t=tab[role];
   $('#screenTitle').textContent=t==='post'&&editing?'Edit request':TITLES[t];
   v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
-  if(t==='post'){initWheel('hours');initWheel('rate');updateQuote();
+  if(t==='post'){['rate','hr','mn','ap'].forEach(initWheel);updateQuote();
+    $('#postForm').querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>setDay(b.dataset.day));
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));
     $('#postForm').querySelectorAll('[data-hand]').forEach(b=>b.onclick=()=>setHandoff(b.dataset.hand));
-    $('#postForm').querySelectorAll('[data-meet]').forEach(b=>b.onclick=()=>setMeet(+b.dataset.meet));
-    $('#f-cat').addEventListener('change',syncMeet);syncMeet();
-    ['#f-budget','#f-dropfee'].forEach(id=>$(id).addEventListener('input',updateQuote));
+    $('#f-cat').addEventListener('change',updateQuote);
+    ['#f-price','#f-dropfee'].forEach(id=>$(id).addEventListener('input',updateQuote));
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
-      try{const w=$('#f-when').value;if(!w)throw new Error('Pick when the waiter should arrive.');const d=new Date(w);
-        const body={kind:postKind,place:$('#f-place').value,cat:$('#f-cat').value,startAt:d.toISOString(),startText:fmtStart(d),hours:HOURS[wheel.hours],rate:RATES[wheel.rate],notes:$('#f-notes').value};
-        if(postKind==='pickup')Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,itemBudget:parseFloat($('#f-budget').value),
-          handoff:postHandoff,dropoffFee:parseFloat($('#f-dropfee').value),dropoffAddr:$('#f-dropaddr').value,meetWithin:postMeet});
+      try{const {d,text}=chosenStart();
+        const body={kind:postKind,place:$('#f-place').value,cat:$('#f-cat').value,startAt:d.toISOString(),startText:text,hours:editing?editing.hours:APPROVED_HOURS,rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
+        if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add about how much it costs.');if(p>MAX_ITEM)throw new Error(`Items over ${money(MAX_ITEM)} aren't supported yet.`);
+          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,itemBudget:limitFor(p),
+          handoff:postHandoff,dropoffFee:parseFloat($('#f-dropfee').value),dropoffAddr:$('#f-dropaddr').value})}
         else{if(!$('#f-agree').checked)throw new Error('Confirm the spot is OK to save. Wait For Me! doesn\'t allow line-cutting.');Object.assign(body,{what:$('#f-what').value,spotAgree:true})}
         await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
         const was=editing;editing=null;tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.')}
@@ -1050,7 +1077,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postMeet=j.meetWithin||120;wheel.hours=Math.max(0,HOURS.indexOf(j.hours));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-5)*4)));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-5)*4)));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}
