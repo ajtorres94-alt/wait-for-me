@@ -17,8 +17,8 @@ const push = require("./push");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
-// Types per kind of request. (Older requests may still say "Releases".)
-const CATS = { pickup: ["Food", "Errands"], spot: ["Events", "Errands"] };
+// Each request's type is its kind ("Pickup" or "Spot"). Older requests may still hold
+// Food, Releases, Errands, or Events.
 const COOKIE = "wfm_session";
 const SESSION_DAYS = 30;
 
@@ -289,7 +289,7 @@ const num = (v, field, min, max) => {
 };
 
 // Rates are set between bookers and waiters; these are only sanity limits.
-const MIN_RATE = 5;
+const MIN_RATE = 10;
 const MAX_RATE = 200;
 
 // Hours and rates move in quarter steps (15 minutes, 25 cents).
@@ -326,7 +326,7 @@ function lineFields(b) {
   const startAt = parseStart(b.startAt);
   const f = {
     kind, place, notes,
-    cat: b.cat === undefined ? CATS[kind][0] : CATS[kind].includes(b.cat) ? b.cat : fail(400, `Pick a type: ${CATS[kind].join(" or ")}.`),
+    cat: pickup ? "Pickup" : "Spot",
     startAt,
     startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
@@ -351,10 +351,10 @@ function lineFields(b) {
     f.dropoffFee = Math.round(num(b.dropoffFee, "The drop-off fee", 5, 50));
     f.dropoffAddr = text(b.dropoffAddr, "the drop-off address", 200);
   }
-  // Food: meet within 45 minutes so it stays fresh. Anything else: 4 hours, so meeting after a show works.
-  f.meetWithin = b.meetWithin === undefined ? (f.cat === "Food" ? 45 : 240) : Number(b.meetWithin);
+  // The waiter holds the item for 4 hours after buying it, so meeting after a show works.
+  // (Bookers are asked to meet within 30 minutes for food; the app can't tell what's food.)
+  f.meetWithin = b.meetWithin === undefined ? 240 : Number(b.meetWithin);
   if (!MEET_CHOICES.includes(f.meetWithin)) fail(400, "Pick when you'll meet your waiter.");
-  if (f.cat === "Food" && f.meetWithin > 120) fail(400, "Food can't wait 4 hours. Pick 45 minutes or 2 hours for the meetup.");
   f.what = f.item;
   checkVenue(place, f.item, notes);
   if ([f.item, f.itemDetails, f.itemBackup, notes].some((t) => RESTRICTED.test(t || "")))

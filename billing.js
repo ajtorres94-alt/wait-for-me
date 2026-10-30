@@ -18,20 +18,25 @@
 // - Booker cancelled: free if early, 30 minutes of waiter pay (no fees) if late or once the
 //   waiter was on the way, time waited if the waiter was already in line.
 //
-// Fees (kept by Wait For Me!): 15% of the waiter's time pay, a $2.50 booking fee, and 3% of
+// Fees (kept by Wait For Me!): 15% of the waiter's time pay, a booking fee ($4.99 for pickups,
+// $2.50 for saved spots), and 3% of
 // the item price to cover card processing. No fees on a late cancellation or a sold-out pickup.
 
 const FEE = 0.15;
 const MIN_HOURS = 0.25; // shortest time billed once a waiter checks in
 const LATE_CANCEL_HOURS = 0.5; // a late cancellation pays the waiter for 30 minutes (they may already be on the way)
-const BOOKING_FEE = 2.5;
+const BOOKING_FEE = 2.5; // saved spots
+const PICKUP_BOOKING_FEE = 4.99;
+const bookingFeeFor = (line) => (kindOf(line) === "pickup" ? PICKUP_BOOKING_FEE : BOOKING_FEE);
 const ITEM_FEE = 0.03;
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
 const HOUR = 3600 * 1000;
 
 const roundCents = (n) => Math.round(n * 100) / 100;
 const quarterUp = (h) => Math.ceil(h * 4 - 1e-9) / 4;
-const kindOf = (line) => (line.kind === "pickup" ? "pickup" : "spot");
+function kindOf(line) {
+  return line.kind === "pickup" ? "pickup" : "spot";
+}
 
 function billing(line, now = Date.now()) {
   const approved = Number(line.approvedHours ?? line.hours);
@@ -71,7 +76,7 @@ function billing(line, now = Date.now()) {
   const dropoff = bought && line.handoff === "dropoff" ? roundCents(Number(line.dropoffFee) || 0) : 0;
   const waiterPay = roundCents(timePay + dropoff);
   const serviceFee = roundCents(timePay * feeRate);
-  const bookingFee = feeRate > 0 && billed > 0 ? BOOKING_FEE : 0;
+  const bookingFee = feeRate > 0 && billed > 0 ? bookingFeeFor(line) : 0;
   const itemFee = roundCents(item * ITEM_FEE);
   const fee = roundCents(serviceFee + bookingFee + itemFee);
   return {
@@ -96,7 +101,7 @@ function billing(line, now = Date.now()) {
 function maxTotal(line) {
   const hours = Number(line.approvedHours ?? line.hours) + 0.5;
   const time = hours * Number(line.rate);
-  let total = time * (1 + FEE) + BOOKING_FEE;
+  let total = time * (1 + FEE) + bookingFeeFor(line);
   if (kindOf(line) === "pickup") {
     const budget = Number(line.itemBudget) || 0;
     total += budget * (1 + ITEM_FEE);
@@ -105,4 +110,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
