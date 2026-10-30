@@ -12,6 +12,7 @@ const { billing } = require("./billing");
 const { geocode } = require("./geocode");
 const { computeMetrics } = require("./metrics");
 const { sendMail, mailEnabled } = require("./mailer");
+const pay = require("./payments");
 
 const STAGES = ["open", "claimed", "enroute", "inline", "nearfront", "handoff", "done"];
 const WAITER_STEPS = ["claimed", "enroute", "inline", "nearfront", "handoff"]; // statuses a waiter can move forward from
@@ -32,13 +33,14 @@ const TYPES = {
 };
 
 class HttpError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
-const fail = (status, message) => {
-  throw new HttpError(status, message);
+const fail = (status, message, code) => {
+  throw new HttpError(status, message, code);
 };
 
 function send(res, status, body, headers = {}) {
@@ -121,7 +123,12 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
 const isAdmin = (u) => !!u && ADMIN_EMAILS.includes(String(u.email).toLowerCase());
 
 const publicUser = (u) =>
-  u && { id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "", isAdmin: isAdmin(u) };
+  u && {
+    id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "", isAdmin: isAdmin(u),
+    card: u.cardPm ? u.cardLabel || "Card on file" : null,
+    payouts: u.payoutsReady ? "ready" : u.stripeAccount ? "started" : "none",
+  };
+const paymentsInfo = () => ({ enabled: pay.enabled(), publishableKey: pay.publishableKey(), testMode: pay.testMode() });
 const AVATARS = Array.from({ length: 10 }, (_, i) => `a${i}`);
 
 // What each person may see. Only the booker sees the swap code. Until a waiter is on the
@@ -141,6 +148,15 @@ function lineFor(viewer, l) {
   }
   delete out.swapFails;
   if (!isOwner) delete out.codeResetAt;
+  delete out.payIntent;
+  if (!isOwner) {
+    delete out.payError;
+    delete out.payHeld;
+  }
+  if (!isOwner && !isWaiter) {
+    delete out.payStatus;
+    delete out.payCaptured;
+  }
   return out;
 }
 
@@ -311,6 +327,45 @@ function limitAuth(req) {
 
 const newCode = () => String(crypto.randomInt(1000, 10000));
 
+// ---------- payment checks used by line actions ----------
+async function requireCard(u) {
+  if (pay.enabled() && !u.cardPm) fail(402, "Add a card in Account before posting a line. You're only charged for the time your waiter spends in line.", "card_required");
+}
+async function requirePayouts(u) {
+  if (!pay.enabled()) return;
+  if (!u.payoutsReady && u.stripeAccount) await pay.refreshPayouts(store, u).catch(() => {});
+  if (!u.payoutsReady) fail(402, "Set up payouts in Account first, so we can pay you for this line.", "payouts_required");
+}
+// Card holds are placed when a waiter is booked and the line starts within a few days.
+async function holdIfDue(line) {
+  if (!pay.enabled() || !line || !line.waiterId || !pay.holdDue(line)) return line;
+  return (await pay.placeHold(store, line)) || line;
+}
+async function settleIfPaid(line) {
+  if (!pay.enabled() || !line || line.status !== "done") return line;
+  return (await pay.settle(store, line)) || line;
+}
+async function releaseIfHeld(line) {
+  if (!pay.enabled() || !line) return line;
+  return (await pay.releaseHold(store, line)) || line;
+}
+// Every 10 minutes: place holds that are now due and retry charges that didn't go through.
+async function paymentSweep() {
+  try {
+    for (const l of await store.linesForPayments()) {
+      if (l.status === "done") await pay.settle(store, l);
+      else if (pay.holdDue(l)) await pay.placeHold(store, l);
+    }
+  } catch (e) {
+    console.error("Payment sweep failed:", e.message);
+  }
+}
+function startPaymentSweeper() {
+  if (!pay.enabled()) return;
+  setTimeout(paymentSweep, 15000);
+  setInterval(paymentSweep, 10 * 60 * 1000);
+}
+
 // ---------- password reset emails ----------
 const RESET_MS = 60 * 60 * 1000;
 // Links in emails always point at a known address, never at whatever Host header a request sent.
@@ -434,7 +489,7 @@ async function api(req, res, urlPath, query) {
     if (!me) return send(res, 200, { user: null });
     const sums = await store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS));
     const ratings = { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) };
-    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS });
+    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS, payments: paymentsInfo() });
   }
   if (!me) fail(401, "Sign in to continue.");
 
@@ -448,6 +503,34 @@ async function api(req, res, urlPath, query) {
     await store.deleteUser(me.id);
     await store.clearResets(me.id);
     return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(req, "", 0) });
+  }
+
+  // ---- payments (Stripe) ----
+  if (urlPath.startsWith("/api/payments/")) {
+    if (!pay.enabled()) fail(404, "Payments aren't switched on yet.");
+    if (urlPath === "/api/payments/card/start" && method === "POST") {
+      limit(`card:${me.id}`, 10, 60 * 60 * 1000, "Too many card attempts. Try again in an hour.");
+      return send(res, 200, await pay.startCardSetup(store, me));
+    }
+    if (urlPath === "/api/payments/card/finish" && method === "POST") {
+      const b = await readBody(req);
+      const label = await pay.finishCardSetup(store, me, b.setupIntentId);
+      // Retry any holds that failed on this booker's lines now that the card changed.
+      for (const l of await store.listLines({ ownerId: me.id })) {
+        if (!["open", "done"].includes(l.status) && l.payStatus === "failed" && pay.holdDue(l)) await pay.placeHold(store, l);
+      }
+      return send(res, 200, { user: publicUser(await store.userById(me.id)), card: label });
+    }
+    if (urlPath === "/api/payments/payouts/link" && method === "POST") {
+      limit(`payout:${me.id}`, 20, 60 * 60 * 1000, "Too many tries. Try again in an hour.");
+      if (me.stripeAccount && !me.payoutsReady) await pay.refreshPayouts(store, me);
+      return send(res, 200, await pay.payoutLink(store, me, appUrl(req)));
+    }
+    if (urlPath === "/api/payments/payouts/refresh" && method === "POST") {
+      const st = await pay.refreshPayouts(store, me);
+      return send(res, 200, { user: publicUser(await store.userById(me.id)), status: st });
+    }
+    fail(404, "Not found.");
   }
 
   if (urlPath === "/api/me" && method === "PATCH") {
@@ -475,6 +558,7 @@ async function api(req, res, urlPath, query) {
     if ((await store.countLines(me.id, { openOnly: true })) >= 10)
       fail(429, "You have 10 open lines already. Cancel or wait for one to be claimed before posting more.");
     const f = lineFields(b);
+    await requireCard(me);
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
     // Look up map coordinates in the background so posting stays instant.
     geocode(line.place).then((g) => g && store.setLineGeo(line.id, g)).catch(() => {});
@@ -530,9 +614,11 @@ async function api(req, res, urlPath, query) {
     if (action === "claim") {
       if (l.ownerId === me.id) fail(400, "You can't claim your own line.");
       if (isExpired(l)) fail(409, "This line's start time has passed.");
+      await requirePayouts(me);
       updated = await store.updateLine(id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date() });
       if (!updated) fail(409, "Someone else just claimed this line.");
       await store.closeOtherOffers(id, 0);
+      updated = await holdIfDue(updated);
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -542,6 +628,7 @@ async function api(req, res, urlPath, query) {
       if (l.status !== "open" || isExpired(l)) fail(409, "This line is no longer open.");
       if ((await store.countOffersSince(me.id, new Date(Date.now() - 3600 * 1000))) >= 30)
         fail(429, "You've sent a lot of offers this hour. Try again later.");
+      await requirePayouts(me);
       const rate = quarter(num(b.rate, "Your rate", MIN_RATE, MAX_RATE));
       if (rate === Number(l.rate)) fail(400, "That's the listed rate. Tap Claim to take it at that rate.");
       await store.upsertOffer(id, me.id, rate);
@@ -564,6 +651,7 @@ async function api(req, res, urlPath, query) {
       if (!updated) fail(409, "This line was just claimed.");
       await store.setOfferStatus(o.id, "accepted");
       await store.closeOtherOffers(id, o.id);
+      updated = await holdIfDue(updated);
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -573,6 +661,10 @@ async function api(req, res, urlPath, query) {
       if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "Time can only be added while a waiter is on this line.");
       const approved = Number(l.approvedHours ?? l.hours);
       if (approved + 0.5 > 24) fail(400, "A line can't go past 24 hours.");
+      // If a card hold is in place and doesn't cover the extra time, replace it with a bigger one first.
+      if (pay.enabled() && l.payStatus === "held" && pay.maxCharge({ ...l, approvedHours: approved + 0.5 }) > l.payHeld) {
+        await pay.placeHold(store, { ...l, approvedHours: approved + 0.5 }, { replace: true });
+      }
       updated = await store.updateLine(id, l.status, { approvedHours: approved + 0.5 });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
       return send(res, 200, { line: await one(me, updated) });
@@ -583,6 +675,7 @@ async function api(req, res, urlPath, query) {
       const outcome = cancelOutcome(l);
       updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
+      updated = await settleIfPaid(updated);
       return send(res, 200, { line: await one(me, updated) });
     }
     if (action === "report-noshow") {
@@ -594,6 +687,7 @@ async function api(req, res, urlPath, query) {
       updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
       await store.incNoShows(waiterId);
+      updated = await releaseIfHeld(updated);
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -674,6 +768,8 @@ async function api(req, res, urlPath, query) {
       }
     }
     if (!updated) fail(409, "This line changed. Refresh and try again.");
+    if (action === "release") updated = await releaseIfHeld(updated);
+    if (updated.status === "done") updated = await settleIfPaid(updated);
     return send(res, 200, { line: await one(me, updated) });
   }
 
@@ -687,6 +783,7 @@ async function api(req, res, urlPath, query) {
           id: l.id, place: l.place, what: l.what, status: l.status, outcome: l.outcome, startText: l.startText,
           startAt: l.startAt, rate: l.rate, ownerId: l.ownerId, ownerName: l.ownerName, waiterId: l.waiterId,
           waiterName: l.waiterName, checkinVerified: l.checkinVerified, createdAt: l.createdAt, bill: billing(l),
+          payStatus: l.payStatus, payCaptured: l.payCaptured, payError: l.payError,
         })),
         users: users.map((u) => ({
           id: u.id, name: u.name, email: u.email, suspended: u.suspended, noshows: u.noshows,
@@ -716,6 +813,8 @@ async function api(req, res, urlPath, query) {
     if (am && method === "POST") {
       const id = Number(am[2]);
       if (am[1] === "lines" && am[3] === "remove") {
+        const gone = await store.getLine(id);
+        if (gone && gone.status !== "done") await releaseIfHeld(gone).catch(() => {});
         if (!(await store.adminRemoveLine(id))) fail(404, "That line doesn't exist.");
         return send(res, 200, { ok: true });
       }
@@ -743,6 +842,10 @@ async function api(req, res, urlPath, query) {
   if (process.env.WFM_TEST_HOOKS === "1" && process.env.WFM_SEED_FILE && urlPath === "/api/test/seed-metrics" && method === "POST" && store._seedMetrics) {
     return send(res, 200, { users: await store._seedMetrics(require(process.env.WFM_SEED_FILE)()) });
   }
+  if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/sweep" && method === "POST") {
+    await paymentSweep();
+    return send(res, 200, { ok: true });
+  }
   // Test-only hook for automated tests (never enabled in production).
   if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/shift" && method === "POST" && store._shiftCheckin) {
     const b = await readBody(req);
@@ -765,7 +868,7 @@ function servePage(res, file) {
     const out = html
       .replaceAll("{{CONTACT}}", contact)
       .replaceAll("{{COMPANY}}", process.env.COMPANY_NAME || "ATowers Enterprises LLC")
-      .replaceAll("{{UPDATED}}", "October 29, 2026");
+      .replaceAll("{{UPDATED}}", "October 30, 2026");
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" }).end(out);
   });
 }
@@ -807,7 +910,8 @@ const server = http.createServer(async (req, res) => {
   try {
     await api(req, res, urlPath, query);
   } catch (e) {
-    if (e instanceof HttpError) return send(res, e.status, { error: e.message });
+    if (e instanceof HttpError) return send(res, e.status, { error: e.message, ...(e.code ? { code: e.code } : {}) });
+    if (e instanceof pay.PaymentError) return send(res, e.status, { error: e.message, code: e.code });
     console.error(e);
     send(res, 500, { error: "Something went wrong on our end. Try again in a moment." });
   }
@@ -816,7 +920,11 @@ const server = http.createServer(async (req, res) => {
 store
   .init()
   .then(() => {
-    server.listen(PORT, () => console.log(`Wait For Me! on port ${PORT}, storage: ${store.kind}`));
+    server.listen(PORT, () =>
+      console.log(`Wait For Me! on port ${PORT}, storage: ${store.kind}, payments: ${pay.enabled() ? (pay.testMode() ? "Stripe test mode" : "Stripe live") : "off"}`)
+    );
+    startPaymentSweeper();
+    if (pay.enabled()) pay.registerDomains(["waitforme.io", "www.waitforme.io"]);
     // Fill in map coordinates and city names for lines posted before those existed.
     store.linesMissingGeo().then(async (rows) => {
       for (const r of rows) {

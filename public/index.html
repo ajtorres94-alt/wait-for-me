@@ -274,6 +274,8 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .field small{color:var(--muted);font-size:12px}
 .note{font-size:13px;color:var(--muted);background:var(--bg);border-radius:10px;padding:10px 12px}
+.cardbox{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.card-el{min-height:120px;padding:4px 0}
 </style>
 <div class="intro" id="intro" role="dialog" aria-label="Wait For Me!">
   <div class="intro-in">
@@ -327,7 +329,7 @@ async function api(path,{method='GET',body}={}){
   catch{throw new Error('You seem to be offline. Check your connection and try again.')}
   let j={};try{j=await r.json()}catch{}
   if(r.status===401&&path!=='/login'){me=null;render()}
-  if(!r.ok)throw new Error(j.error||'Something went wrong. Try again.');
+  if(!r.ok){const e=new Error(j.error||'Something went wrong. Try again.');e.code=j.code;throw e}
   return j;
 }
 
@@ -360,6 +362,51 @@ function meterInner(j,mode){
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
 setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
 let myRatings=null,TAGS={waiter:[],booker:[]};
+// ---------- payments (Stripe) ----------
+let PAY={enabled:false},cardOpen=false,cardUI=null,stripeP=null;
+function loadStripe(){if(!stripeP)stripeP=new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://js.stripe.com/v3/';
+  s.onload=()=>res(window.Stripe(PAY.publishableKey));s.onerror=()=>{stripeP=null;rej(new Error("The card form couldn't load. Check your connection and try again."))};document.head.appendChild(s)});return stripeP}
+async function mountCard(){const host=$('#card-el');if(!host||host.dataset.mounted)return;host.dataset.mounted='1';
+  host.closest('.card').scrollIntoView({block:'start',behavior:'smooth'});
+  try{const stripe=await loadStripe();const {clientSecret}=await api('/payments/card/start',{method:'POST'});
+    const dark=matchMedia('(prefers-color-scheme: dark)').matches;
+    const elements=stripe.elements({clientSecret,appearance:{theme:dark?'night':'stripe',variables:{colorPrimary:dark?'#FFD561':'#1A1F3D',borderRadius:'10px',fontFamily:'system-ui, -apple-system, Segoe UI, sans-serif'}}});
+    const pe=elements.create('payment',{layout:'tabs'});pe.mount(host);cardUI={stripe,elements};const s=$('#card-save');if(s)s.disabled=false}
+  catch(e){const x=$('#cardErr');if(x)x.textContent=e.message}}
+async function finishCard(id){const r=await api('/payments/card/finish',{method:'POST',body:{setupIntentId:id}});me=r.user;cardOpen=false;cardUI=null;toast(`Saved ${r.card}. You can post lines now.`)}
+function goAccount(msg,openCard){tab[role]='account';if(openCard)cardOpen=true;render();window.scrollTo(0,0);if(msg)toast(msg)}
+function payNeedsSetup(err){if(err&&err.code==='card_required'){goAccount('Add a card to post lines.',true);return true}
+  if(err&&err.code==='payouts_required'){goAccount('Set up payouts so we can pay you, then claim the line.');return true}return false}
+function paymentCard(){
+  if(!PAY.enabled)return`<article class="card section"><h2>Payments</h2>
+    <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other using the totals shown on each finished line.</div></article>`;
+  const po=me.payouts;
+  return`<article class="card section"><h2>Paying for lines</h2>
+    <div class="kv"><div>Card for bookings<small>Charged after each job for the time your waiter actually spent in line.</small></div><b>${me.card?esc(me.card):'None'}</b></div>
+    ${cardOpen?`<div class="cardbox"><div id="card-el" class="card-el"></div>
+      ${PAY.testMode?'<div class="hint">Test mode: use card 4242 4242 4242 4242, any future date, any 3-digit CVC and any ZIP. No real money moves.</div>':''}
+      <span class="meta" id="cardErr" role="alert"></span>
+      <div class="btns"><button class="btn small" id="card-save" data-act="card-save" disabled>Save card</button><button class="btn ghost small" data-act="card-close">Cancel</button></div></div>`
+    :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
+  <article class="card section"><h2>Getting paid</h2>
+    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings to your bank. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
+    <div class="btns">${po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
+      :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
+    ${PAY.testMode&&po!=='ready'?'<div class="hint">Test mode: on Stripe\'s page, use test phone 000 000 0000, code 000000, SSN 000-00-0000 and their test bank account. No real money moves.</div>':''}</article>`}
+function payNote(j,who){
+  if(!PAY.enabled||!j.waiterId)return'';const st=j.payStatus;
+  if(who==='customer'){
+    if(j.status==='done'){if(st==='captured')return`<div class="hint">Charged ${money(j.payCaptured/100)} to ${esc(me.card||'your card')}.</div>`;
+      if(st==='released')return`<div class="hint">No charge. The hold on your card was released.</div>`;
+      if(st==='charge_failed')return`<div class="warnnote">The charge didn't go through${j.payError?`: ${esc(j.payError)}`:''}. Update your card in Account and we'll try again.</div><div class="btns"><button class="btn small" data-act="card-acct">Update card</button></div>`;return''}
+    if(st==='held')return`<div class="hint">A hold of up to ${money(j.payHeld/100)} is on your card. You're only charged for the time your waiter actually spends in line.</div>`;
+    if(st==='failed')return`<div class="warnnote">We couldn't place a hold on your card${j.payError?`: ${esc(j.payError)}`:''}. Update your card so your waiter knows they'll be paid.</div><div class="btns"><button class="btn small" data-act="card-acct">Update card</button></div>`;
+    return`<div class="hint">We'll place a hold on your card a few days before the start time.</div>`}
+  if(j.status==='done'){if(st==='captured')return`<div class="hint">Paid. Stripe sends it to your bank on your payout schedule.</div>`;
+    if(st==='charge_failed')return`<div class="warnnote">We're still collecting this payment from the booker. You'll be paid as soon as it goes through.</div>`;return''}
+  if(st==='held')return`<div class="hint">✓ Payment secured.</div>`;
+  if(st==='failed')return`<div class="warnnote">Payment isn't secured yet. We've asked ${esc(j.ownerName||'the booker')} to update their card. You can release this line with no penalty before you check in.</div>`;
+  return`<div class="hint">We'll secure payment from the booker a few days before the start time.</div>`}
 const ratingTxt=r=>r&&r.avg!=null?`★ ${r.avg.toFixed(1)} · ${r.count} ratings`:'New · fewer than 3 ratings';
 const rateDraft={};
 function rateHTML(j,name,kind){
@@ -526,7 +573,7 @@ function customerMine(){
     return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pill}</div>
       ${j.status!=='open'?steps(j.status):''}
       <div class="stepnote"><span><b>${j.status==='open'&&j.expired?'Start time passed':STAGES[i].label}</b></span><span>${j.waiterId?'Your waiter':j.expired?'Hidden from waiters':'Visible to waiters now'}</span></div>
-      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active?chatHTML(j,j.waiterName):''}</article>`}).join('')}</div>`}
+      ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active?chatHTML(j,j.waiterName):''}</article>`}).join('')}</div>`}
 
 let editing=null;
 function customerPost(){
@@ -630,7 +677,7 @@ function waiterShifts(){
      return`<article class="card"><div class="row"><div><h3>${esc(j.place)}</h3><div class="meta">${esc(j.what)}</div></div>${pillFor(j.status)}</div>
        ${steps(j.status)}<div class="stepnote"><span><b>${STAGES[i].short}</b></span>${j.pos&&j.status!=='done'?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
-       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'?chatHTML(j,j.ownerName):''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
+       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'?chatHTML(j,j.ownerName):''}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a line from <b>Find lines</b>.</div>`}</div>`}
 
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
@@ -639,13 +686,12 @@ function account(){
     <div class="kv"><div>As a waiter</div><b>${myRatings?ratingTxt(myRatings.waiter):'—'}</b></div>
     <div class="kv"><div>As a booker</div><b>${myRatings?ratingTxt(myRatings.booker):'—'}</b></div>
     <div class="hint">Ratings count 3 days after each job, and your average shows once you have 3.</div></article>
+  ${paymentCard()}
   <article class="card section"><h2>Your avatar</h2>
     <div class="avgrid" role="group" aria-label="Choose an avatar">${AVATARS.map((A,i)=>`<button type="button" class="avpick" data-act="avatar" data-av="a${i}" aria-pressed="${me.avatar==='a'+i}">${avatarSVG('a'+i)}</button>`).join('')}</div>
     <button type="button" class="btn ghost small" data-act="avatar" data-av="" aria-pressed="${!me.avatar}">Use my initials instead</button></article>
   <article class="card section"><h2>What you wear when waiting</h2>
     <div class="codebox"><label class="meta" for="acct-look" style="width:100%">Optional. Customers see this so they can find you in line.</label><input id="acct-look" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit">Save</button></div></article>
-  <article class="card section"><h2>Payments</h2>
-    <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other using the totals shown on each finished line.</div></article>
   ${done.length?`<article class="card section"><h2>Completed lines</h2>${done.map(j=>{const b=billOf(j);return`<div class="kv"><div>${esc(j.place)}<small>${fmtShort(b.billed)} billed · waiter ${money(b.pay)} + fee ${money(b.fee)}</small></div><b class="mono">${money(b.total)}</b></div>`}).join('')}</article>`:''}
   <article class="card section"><h2>How it works</h2>
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
@@ -775,7 +821,8 @@ function render(){
         const body={place:$('#f-place').value,what:$('#f-what').value,cat:$('#f-cat').value,startAt:d.toISOString(),startText:fmtStart(d),hours:HOURS[wheel.hours],rate:RATES[wheel.rate],notes:$('#f-notes').value};
         await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
         const was=editing;editing=null;tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Line posted. Waiters can claim it now.')}
-      catch(err){$('#formErr').textContent=err.message;btn.disabled=false}})}
+      catch(err){if(payNeedsSetup(err))return;$('#formErr').textContent=err.message;btn.disabled=false}})}
+  if(t==='account'&&cardOpen)mountCard();
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
   v.querySelectorAll('[data-near]').forEach(b=>b.onclick=()=>{if(near.on){near.on=false;near.radius=0;render()}else locate()});
   v.querySelectorAll('[data-radius]').forEach(b=>b.onclick=()=>{near.radius=+b.dataset.radius;render()});
@@ -797,6 +844,14 @@ $('#view').addEventListener('click',async e=>{
   const a=b.dataset.act,id=b.dataset.id;b.disabled=true;
   try{
     if(a==='tut-customer'||a==='tut-waiter'){b.disabled=false;openTut(a==='tut-customer'?'customer':'waiter');return}
+    if(a==='card-open'||a==='card-acct'){if(a==='card-acct'){goAccount('',true);return}cardOpen=true;b.disabled=false;render();return}
+    if(a==='card-close'){cardOpen=false;cardUI=null;b.disabled=false;render();return}
+    if(a==='card-save'){if(!cardUI){b.disabled=false;return}$('#cardErr').textContent='';
+      const r=await cardUI.stripe.confirmSetup({elements:cardUI.elements,confirmParams:{return_url:location.origin+'/?card=return'},redirect:'if_required'});
+      if(r.error){$('#cardErr').textContent=r.error.message;b.disabled=false;return}
+      await finishCard(r.setupIntent.id);await load(true);return}
+    if(a==='payouts'){const r=await api('/payments/payouts/link',{method:'POST'});location.href=r.url;return}
+    if(a==='payouts-check'){const r=await api('/payments/payouts/refresh',{method:'POST'});me=r.user;toast(r.status.ready?'Payouts are on. You can claim lines now.':r.status.needsInfo?'Stripe still needs a few details. Tap Finish payout setup.':'Stripe is still reviewing your details. Check again soon.');await load(true);return}
     if(a==='logout'){await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';lastData=null;authMode='login';render();return}
     if(a==='delete-open'||a==='delete-cancel'){delOpen=a==='delete-open';render();if(delOpen)$('#del-pass').focus();return}
     if(a==='delete-confirm'){await api('/me/delete',{method:'POST',body:{password:$('#del-pass').value}});
@@ -830,7 +885,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='leave'){const r=await api(`/lines/${id}/leave`,{method:'POST'});toast(`Shift ended. You earned ${money(r.line.bill.waiterPay)}.`)}
     if(a==='rate'){const d=rateDraft[id];await api(`/lines/${id}/rate`,{method:'POST',body:{stars:d.stars,tags:d.tags}});delete rateDraft[id];toast('Thanks. Your rating counts in 3 days.')}
     await load(true);
-  }catch(err){toast(err.message);b.disabled=false}
+  }catch(err){if(payNeedsSetup(err))return;toast(err.message);b.disabled=false}
 });
 
 $('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}
@@ -863,13 +918,14 @@ async function load(force){
   const [m1,o1,s1,info]=await Promise.all([...['mine','open','shifts'].map(s=>api('/lines?scope='+s)),api('/me')]);
   clockSkew=m1.now-Math.round((t0+Date.now())/2);
   const mine=m1.lines,open=o1.lines,shifts=s1.lines;
-  if(info.user){me=info.user;myRatings=info.ratings;TAGS=info.tags||TAGS}
+  if(info.user){me=info.user;myRatings=info.ratings;TAGS=info.tags||TAGS;if(info.payments)PAY=info.payments}
   await Promise.all([...chatOpen].map(loadChat));
   paintChats();
   notifyChanges(lastData,{mine,open,shifts});lastData={mine,open,shifts};
   // The clock fields change every refresh; leave them out when deciding whether to redraw.
   const json=JSON.stringify([mine,open,shifts,myRatings,chatData],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
   if(!force&&json===lastJSON)return;
+  if(!force&&cardOpen&&tab[role]==='account')return; // keep the card form in place while it's open
   // Don't redraw while someone is typing in the page; the next check picks it up.
   const typing=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#view')&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
   if(!force&&typing)return;
@@ -881,7 +937,13 @@ setInterval(()=>{if(me&&document.visibilityState==='visible')load(false).catch((
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load(false).catch(()=>{})});
 
 (async()=>{
-  try{me=(await api('/me')).user}catch{me=null}
+  try{const info=await api('/me');me=info.user;if(info.payments)PAY=info.payments}catch{me=null}
+  // Coming back from Stripe (payout setup, or a card that needed bank confirmation).
+  const q=new URLSearchParams(location.search);
+  if(q.has('payouts')||q.has('setup_intent')||q.has('card'))history.replaceState(null,'',location.pathname);
+  if(me&&q.has('payouts')){tab[role]='account';try{const r=await api('/payments/payouts/refresh',{method:'POST'});me=r.user;
+    toast(r.status.ready?'Payouts are on. You can claim lines now.':r.status.needsInfo?'Payout setup isn\'t finished yet. Tap Finish payout setup.':'Thanks. Stripe is reviewing your details.')}catch(err){toast(err.message)}}
+  if(me&&q.get('setup_intent')){tab[role]='account';try{if(q.get('redirect_status')==='succeeded')await finishCard(q.get('setup_intent'));else toast("The card wasn't added. Try again.")}catch(err){toast(err.message)}}
   if(me){try{await load(true)}catch(err){toast(err.message);render()}}else render();
 })();
 

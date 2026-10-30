@@ -36,7 +36,8 @@ module.exports = {
   // ---- users and sessions ----
   async createUser({ name, email, pwHash }) {
     if (users.some((u) => u.email === email)) return null;
-    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date(), lastSeenAt: null };
+    const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date(), lastSeenAt: null,
+      stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, payoutsReady: false };
     users.push(u);
     return u;
   },
@@ -48,7 +49,7 @@ module.exports = {
   },
   async updateUser(id, fields) {
     const u = users.find((x) => x.id === id);
-    if (u) for (const k of ["look", "avatar", "suspended", "pwHash"]) if (fields[k] !== undefined) u[k] = fields[k];
+    if (u) for (const k of ["look", "avatar", "suspended", "pwHash", "stripeCustomer", "stripeAccount", "cardPm", "cardLabel", "payoutsReady"]) if (fields[k] !== undefined) u[k] = fields[k];
     return u || null;
   },
   async incNoShows(id) {
@@ -84,7 +85,8 @@ module.exports = {
     const l = {
       id: nextLine++, waiterId: null, status: "open", pos: null, checkinAt: null, doneAt: null, outcome: null,
       approvedHours: f.hours, lat: null, lng: null, geoApprox: null, area: null, swapFails: 0, codeResetAt: null,
-      checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now, ...f,
+      checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
+      payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0, ...f,
     };
     lines.push(l);
     return withNames(l);
@@ -112,6 +114,22 @@ module.exports = {
     if (!l || l.status !== expectStatus) return null;
     Object.assign(l, fields, { updatedAt: new Date() });
     return withNames(l);
+  },
+  async updateLineAny(id, fields) {
+    const l = lines.find((x) => x.id === id);
+    if (!l) return null;
+    Object.assign(l, fields);
+    return withNames(l);
+  },
+  async linesForPayments() {
+    const cutoff = Date.now() - 6 * 86400 * 1000;
+    return lines
+      .filter(
+        (l) =>
+          (!["open", "done"].includes(l.status) && (!l.payStatus || l.payStatus === "failed")) ||
+          (l.status === "done" && ["held", "charge_failed"].includes(l.payStatus) && l.doneAt && new Date(l.doneAt) > cutoff)
+      )
+      .map(withNames);
   },
   async setLineGeo(id, geo) {
     const l = lines.find((x) => x.id === id);

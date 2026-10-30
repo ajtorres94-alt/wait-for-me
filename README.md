@@ -57,6 +57,18 @@ When a line is posted, the server looks up map coordinates for the "Where is the
 
 Visit `/admin` while signed in with an email listed in the `ADMIN_EMAILS` Railway variable (comma-separated). It lists people and recent lines, and lets you remove a line, suspend or restore an account, and give someone a temporary password.
 
+## Payments (Stripe Connect)
+
+Turned on by `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` (use `sk_test_`/`pk_test_` keys to test, then the live keys to go live). Without them, the app runs with no payments, as before.
+
+- **Bookers** save a card, Apple Pay, or Google Pay in Account (Stripe's Payment Element). A card is required to post a line.
+- **Waiters** set up payouts in Account through Stripe's hosted Express onboarding. Payouts must be on to claim a line or make an offer.
+- **Holds:** when a waiter is booked and the line starts within 5 days, the booker's card gets a manual-capture hold for (approved hours + 0.5) × rate × 1.15. A background job places holds as lines come within 5 days, and adding time replaces the hold with a bigger one.
+- **Charging:** when the job ends, the app captures the actual bill (`billing.js`) as a destination charge: the waiter's share goes to their Express account, and the 15% fee stays with the platform as the application fee. Free cancellations and waiter no-shows release the hold. Late cancellations charge 1 hour of waiter pay with no fee.
+- **Declines:** a declined hold keeps the booking, marks it unsecured, and asks the booker to update their card (updating retries right away). Failed charges are retried every 10 minutes for 6 days.
+- Waiter accounts are created with `controller.losses.payments = application`, `controller.fees.payer = application`, and an Express dashboard, so the platform is responsible for refunds and disputes.
+- Apple Pay and Google Pay need the domain registered with Stripe; the server registers waitforme.io at startup.
+
 ## Email (password reset)
 
 "Forgot password?" on the sign-in screen emails a one-time link (valid 1 hour) to `/reset`.

@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS password_resets (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets(user_id);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_account TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS card_pm TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS card_label TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS payouts_ready BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_intent TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_held INT NOT NULL DEFAULT 0;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_status TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_error TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_captured INT NOT NULL DEFAULT 0;
 `;
 
 const LINE_SELECT = `
@@ -119,6 +129,8 @@ function user(r) {
     r && {
       id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "",
       suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at, lastSeenAt: r.last_seen_at || null,
+      stripeCustomer: r.stripe_customer || null, stripeAccount: r.stripe_account || null, cardPm: r.card_pm || null,
+      cardLabel: r.card_label || null, payoutsReady: !!r.payouts_ready,
     }
   );
 }
@@ -155,6 +167,11 @@ function line(r) {
       lng: r.lng,
       geoApprox: r.geo_approx,
       area: r.area || null,
+      payIntent: r.pay_intent || null,
+      payHeld: r.pay_held || 0,
+      payStatus: r.pay_status || null,
+      payError: r.pay_error || null,
+      payCaptured: r.pay_captured || 0,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -194,6 +211,22 @@ const COLS = {
   lat: "lat",
   lng: "lng",
   geoApprox: "geo_approx",
+  payIntent: "pay_intent",
+  payHeld: "pay_held",
+  payStatus: "pay_status",
+  payError: "pay_error",
+  payCaptured: "pay_captured",
+};
+const USER_COLS = {
+  look: "look",
+  avatar: "avatar",
+  suspended: "suspended",
+  pwHash: "pw_hash",
+  stripeCustomer: "stripe_customer",
+  stripeAccount: "stripe_account",
+  cardPm: "card_pm",
+  cardLabel: "card_label",
+  payoutsReady: "payouts_ready",
 };
 
 module.exports = {
@@ -214,11 +247,15 @@ module.exports = {
     return user(r.rows[0]) || null;
   },
   async updateUser(id, fields) {
-    const r = await pool.query(
-      `UPDATE users SET look = COALESCE($2, look), avatar = COALESCE($3, avatar),
-         suspended = COALESCE($4, suspended), pw_hash = COALESCE($5, pw_hash) WHERE id = $1 RETURNING *`,
-      [id, fields.look ?? null, fields.avatar ?? null, fields.suspended ?? null, fields.pwHash ?? null]
-    );
+    const sets = [];
+    const args = [id];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!USER_COLS[k] || v === undefined) continue;
+      args.push(v);
+      sets.push(`${USER_COLS[k]} = $${args.length}`);
+    }
+    if (!sets.length) return this.userById(id);
+    const r = await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE id = $1 RETURNING *`, args);
     return user(r.rows[0]) || null;
   },
   async userById(id) {
@@ -286,6 +323,28 @@ module.exports = {
       args
     );
     return r.rows[0] ? this.getLine(id) : null;
+  },
+  // Changes a line whatever its status (used for payment bookkeeping).
+  async updateLineAny(id, fields) {
+    const sets = [];
+    const args = [id];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!COLS[k]) continue;
+      args.push(v);
+      sets.push(`${COLS[k]} = $${args.length}`);
+    }
+    if (!sets.length) return this.getLine(id);
+    await pool.query(`UPDATE lines SET ${sets.join(", ")} WHERE id = $1`, args);
+    return this.getLine(id);
+  },
+  // Booked lines that still need a card hold, and finished lines whose charge hasn't gone through.
+  async linesForPayments() {
+    const r = await pool.query(
+      `${LINE_SELECT} WHERE (l.status NOT IN ('open', 'done') AND (l.pay_status IS NULL OR l.pay_status = 'failed'))
+         OR (l.status = 'done' AND l.pay_status IN ('held', 'charge_failed') AND l.done_at > now() - interval '6 days')
+       ORDER BY l.id LIMIT 200`
+    );
+    return r.rows.map(line);
   },
   async setLineGeo(id, geo) {
     await pool.query("UPDATE lines SET lat = $2, lng = $3, geo_approx = $4, area = COALESCE($5, area) WHERE id = $1", [
