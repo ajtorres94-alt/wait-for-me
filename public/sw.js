@@ -1,5 +1,5 @@
 // Service worker: lets phones install the app and open it without a connection.
-const CACHE = "wait-for-me-v34";
+const CACHE = "wait-for-me-v35";
 const FILES = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192-v2.png", "/icons/icon-512-v2.png"];
 
 self.addEventListener("install", (e) => {
