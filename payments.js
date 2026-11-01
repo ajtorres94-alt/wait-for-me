@@ -204,6 +204,7 @@ const holdDue = (line, now = Date.now()) => {
 // Places (or replaces) the card hold for a booked line. Records the outcome on the line
 // instead of throwing, so a declined card doesn't undo the booking; the booker is asked
 // to update their card and the app retries.
+const WAITER_ACCOUNT_MSG = "Your waiter's payout account needs an update with Stripe.";
 async function placeHold(store, line, { replace = false } = {}) {
   const owner = await store.userById(line.ownerId);
   const waiter = line.waiterId && (await store.userById(line.waiterId));
@@ -214,7 +215,7 @@ async function placeHold(store, line, { replace = false } = {}) {
     return store.updateLineAny(line.id, { payStatus: "failed", payError: "No card on file." });
   }
   if (!waiter.stripeAccount) {
-    return store.updateLineAny(line.id, { payStatus: "failed", payError: "The waiter hasn't set up payouts." });
+    return store.updateLineAny(line.id, { payStatus: "failed", payError: WAITER_ACCOUNT_MSG });
   }
   try {
     const pi = await stripe(
@@ -244,6 +245,9 @@ async function placeHold(store, line, { replace = false } = {}) {
     const msg = e.code === "authentication_required" || e.code === "requires_action"
       ? "Your bank wants you to confirm this card. Add it again in Account."
       : e.message;
+    // Stripe refuses the hold when the waiter's account can't receive money (for example, Stripe asked them for more details).
+    const waiterSide = ["insufficient_capabilities_for_transfer", "account_invalid"].includes(e.code) || /destination|transfers? capabilit|connected account/i.test(String(e.message));
+    if (waiterSide) return store.updateLineAny(line.id, { payStatus: "failed", payError: WAITER_ACCOUNT_MSG });
     if (replace) throw new PaymentError(`We couldn't hold the added time on your card: ${msg}`, e.code || "card_declined");
     return store.updateLineAny(line.id, { payStatus: "failed", payError: msg });
   }
@@ -368,5 +372,5 @@ module.exports = {
   checkKey,
   enabled, publishableKey, testMode, PaymentError, HOLD_DAYS,
   startCardSetup, finishCardSetup, payoutLink, refreshPayouts,
-  placeHold, releaseHold, settle, holdDue, maxCharge, registerDomains, refund,
+  placeHold, releaseHold, settle, holdDue, maxCharge, registerDomains, refund, WAITER_ACCOUNT_MSG,
 };

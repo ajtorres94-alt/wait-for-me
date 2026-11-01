@@ -161,6 +161,7 @@ function lineFor(viewer, l) {
   delete out.swapFails;
   if (!isOwner) delete out.codeResetAt;
   delete out.payIntent;
+  if (l.payStatus === "failed") out.payProblem = l.payError === pay.WAITER_ACCOUNT_MSG ? "waiter" : "card";
   if (!isOwner) {
     delete out.payError;
     delete out.payHeld;
@@ -351,7 +352,7 @@ function parseStart(v) {
 // Things waiters can't be asked to buy: age-restricted or regulated goods, and anything that
 // works like cash (a common way to defraud the person paying).
 const RESTRICTED =
-  /\b(alcohol|alcoholic|liquor|vodka|tequila|whiske?y|bourbon|wine|champagne|six[- ]?pack|tobacco|cigars?|cigarettes?|vapes?|vaping|nicotine|juul|cannabis|marijuana|thc|edibles|dispensary|prescriptions?|rx|firearms?|handguns?|rifles?|shotguns?|ammo|ammunition|lottery|scratchers?|gift ?cards?|prepaid (debit |visa |credit )?cards?|money orders?)\b|(?<!root )\bbeers?\b/i;
+  /\b(alcohol|alcoholic|liquor|vodka|tequila|whiske?y|bourbon|wine|champagne|six[- ]?pack|tobacco|cigars?|cigarettes?|vapes?|vaping|nicotine|juul|cannabis|marijuana|thc|edibles|dispensary|prescriptions?|rx|firearms?|handguns?|rifles?|shotguns?|ammo|ammunition|lottery|scratchers?|gift ?cards?|prepaid (debit |visa |credit )?cards?|money orders?|tickets?|wristbands?|parking (pass(es)?|permits?)|admission)\b|(?<!root )\bbeers?\b/i;
 
 function lineFields(b, event = null) {
   const kind = b.kind === "pickup" || b.kind === "spot" ? b.kind : null;
@@ -396,7 +397,7 @@ function lineFields(b, event = null) {
   f.what = f.item;
   checkVenue(place, f.item, notes);
   if ([f.item, f.itemDetails, f.itemBackup, notes].some((t) => RESTRICTED.test(t || "")))
-    fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, lottery tickets, gift cards, or money orders.");
+    fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, tickets or admission (including wristbands and parking passes), lottery tickets, gift cards, or money orders.");
   return f;
 }
 
@@ -479,19 +480,64 @@ function requireAdult(u) {
 async function requireCard(u) {
   if (pay.enabled() && !u.cardPm) fail(402, "Add a card in Account before posting. You're only charged after the job, for the actual time and the receipt price.", "card_required");
 }
+// When each waiter's Stripe status was last checked (in memory; a restart just checks again).
+const payoutsChecked = new Map();
+const PAYOUT_RECHECK_MS = 6 * 3600 * 1000;
 async function requirePayouts(u) {
   if (!pay.enabled()) return;
-  if (!u.payoutsReady && u.stripeAccount) await pay.refreshPayouts(store, u).catch(() => {});
+  const stale = Date.now() - (payoutsChecked.get(u.id) || 0) > PAYOUT_RECHECK_MS;
+  if (u.stripeAccount && (!u.payoutsReady || stale)) {
+    await pay.refreshPayouts(store, u).then(() => payoutsChecked.set(u.id, Date.now())).catch(() => {});
+    if (!u.payoutsReady && stale) fail(402, "Stripe needs a few more details before you can be paid. Tap Finish payout setup in Account, then claim the job.", "payouts_required");
+  }
   if (!u.payoutsReady) fail(402, "Set up payouts in Account first, so we can pay you for this line.", "payouts_required");
 }
 // Card holds are placed when a waiter is booked and the line starts within a few days.
 async function holdIfDue(line) {
   if (!pay.enabled() || !line || !line.waiterId || !pay.holdDue(line)) return line;
-  return (await pay.placeHold(store, line)) || line;
+  const after = (await pay.placeHold(store, line)) || line;
+  await afterHold(line, after);
+  return after;
 }
 async function settleIfPaid(line) {
   if (!pay.enabled() || !line || line.status !== "done") return line;
-  return (await pay.settle(store, line)) || line;
+  const after = (await pay.settle(store, line)) || line;
+  await afterSettle(line, after);
+  return after;
+}
+// Tells the right person when a card hold fails, and the waiter when it's fixed.
+async function afterHold(before, after) {
+  try {
+    if (!after || !after.waiterId) return;
+    const what = after.item || after.what || after.place;
+    if (after.payStatus === "held" && before.payStatus === "failed") {
+      ping(after.waiterId, "Payment secured", `You can buy ${what} now. The booker's payment is in place.`);
+      return;
+    }
+    if (after.payStatus !== "failed" || (before.payStatus === "failed" && before.payError === after.payError)) return;
+    if (after.payError === pay.WAITER_ACCOUNT_MSG) {
+      const w = await store.userById(after.waiterId);
+      if (w && w.stripeAccount) await pay.refreshPayouts(store, w).catch(() => {});
+      payoutsChecked.set(after.waiterId, Date.now());
+      ping(after.waiterId, "Update your payout account", `Stripe needs more details before you can be paid. Open Account and tap Finish payout setup. Don't buy ${what} until it's done, or release the job.`);
+      ping(after.ownerId, "Your waiter is sorting out payment", `${firstName(after.waiterName)} needs to update their payout account before buying. If it isn't fixed soon, they'll release the job so someone else can take it.`);
+    } else {
+      ping(after.ownerId, "Your card didn't go through", `We couldn't hold your card for ${what}. Update it in Account so ${firstName(after.waiterName)} can buy it.`);
+      ping(after.waiterId, "Don't buy yet", `The booker's card for ${what} didn't go through. We've asked them to update it. If it isn't fixed in about 10 minutes, release the job.`);
+    }
+  } catch (e) {
+    console.error("Hold alert failed:", e.message);
+  }
+}
+// A charge that fails after a job is done: the waiter may have spent their own money, so tell an admin right away.
+async function afterSettle(before, after) {
+  try {
+    if (!after || after.payStatus !== "charge_failed" || before.payStatus === "charge_failed") return;
+    ping(after.ownerId, "Your payment didn't go through", `The charge for your Wait For Me! job at ${after.place} failed. Update your card in Account and we'll try again.`);
+    flagAdmins(`Charge failed on job #${after.id}`, `The final charge for job #${after.id} at ${after.place} failed: ${after.payError || "unknown reason"}. Booker: ${after.ownerName || after.ownerId}. Waiter: ${after.waiterName || after.waiterId}${after.itemTotal ? `, who spent ${dollars(after.itemTotal)} on the item` : ""}. The app retries every 10 minutes; check the admin page.`);
+  } catch (e) {
+    console.error("Charge alert failed:", e.message);
+  }
 }
 async function releaseIfHeld(line) {
   if (!pay.enabled() || !line) return line;
@@ -501,8 +547,8 @@ async function releaseIfHeld(line) {
 async function paymentSweep() {
   try {
     for (const l of await store.linesForPayments()) {
-      if (l.status === "done") await pay.settle(store, l);
-      else if (pay.holdDue(l)) await pay.placeHold(store, l);
+      if (l.status === "done") await afterSettle(l, await pay.settle(store, l));
+      else if (pay.holdDue(l)) await afterHold(l, await pay.placeHold(store, l));
     }
   } catch (e) {
     console.error("Payment sweep failed:", e.message);
@@ -582,10 +628,27 @@ async function meetupSweep() {
       const end = new Date(l.purchasedAt).getTime() + meetMs(l);
       if (Date.now() < end - 20 * 60000) continue;
       await store.updateLineAny(l.id, { meetReminded: true });
-      ping(l.ownerId, "Meet your waiter soon", `${firstName(l.waiterName)} has your ${l.item || l.what}. Meet up in the next 20 minutes, or they can close the job and you'll still be charged.`);
+      ping(l.ownerId, "Meet your waiter soon", `${firstName(l.waiterName)} has your ${l.item || l.what}. Meet up in the next 20 minutes, or they can close the job and keep the item (you'd still pay for their time).`);
     }
   } catch (e) {
     console.error("Meetup reminders failed:", e.message);
+  }
+  await unclaimedSweep();
+}
+// 15 minutes after a request starts (or is posted, if later) with nobody claiming it, tell the booker once.
+const UNCLAIMED_MS = 15 * 60000;
+async function unclaimedSweep() {
+  try {
+    const now = Date.now();
+    for (const l of await store.listLines({ openExcept: -1 })) {
+      if (l.unclaimedPinged) continue;
+      const ref = Math.max(new Date(l.createdAt).getTime(), startMs(l) ?? 0);
+      if (now < ref + UNCLAIMED_MS) continue;
+      await store.updateLineAny(l.id, { unclaimedPinged: true });
+      ping(l.ownerId, "No waiter yet", `Nobody has claimed ${l.item || l.what || "your request"} at ${l.place} yet. Raising your rate usually gets it claimed faster, or cancel it free.`);
+    }
+  } catch (e) {
+    console.error("Unclaimed reminders failed:", e.message);
   }
 }
 
@@ -1085,6 +1148,9 @@ async function api(req, res, urlPath, query) {
       if (!["claimed", "enroute", "inline", "nearfront"].includes(l.status) || l.purchasedAt) fail(409, "The item was already bought.");
       const budget = num(b.itemBudget, "The new item limit", 1, MAX_ITEM);
       if (budget <= Number(l.itemBudget)) fail(400, `Enter more than the current ${dollars(l.itemBudget)} limit.`);
+      const owedElsewhere = outOfPocket(await store.listLines({ waiterId: l.waiterId })) - Number(l.itemBudget);
+      if (owedElsewhere + budget > FLOAT_MAX)
+        fail(409, `Your waiter can't cover more than ${dollars(FLOAT_MAX)} of items at once, so the highest this limit can go is ${dollars(Math.max(Number(l.itemBudget), FLOAT_MAX - owedElsewhere))}.`, "float_cap");
       // A bigger limit needs a bigger card hold before the waiter can spend it.
       if (pay.enabled() && l.payStatus === "held" && pay.maxCharge({ ...l, itemBudget: budget }) > l.payHeld) {
         await pay.placeHold(store, { ...l, itemBudget: budget }, { replace: true });

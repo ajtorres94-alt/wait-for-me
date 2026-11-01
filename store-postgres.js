@@ -138,6 +138,7 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS purchased_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS has_receipt BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_within INT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_reminded BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS unclaimed_pinged BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint TEXT PRIMARY KEY,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -258,7 +259,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -328,6 +329,7 @@ const COLS = {
   rush: "rush",
   payRefunded: "pay_refunded",
   meetReminded: "meet_reminded",
+  unclaimedPinged: "unclaimed_pinged",
 };
 const USER_COLS = {
   look: "look",
@@ -800,7 +802,7 @@ module.exports = {
   },
   // Test-only: move a line's timestamps back (used by automated tests when WFM_TEST_HOOKS=1).
   async _shiftCheckin(id, minutes) {
-    const cols = ["checkin_at", "done_at", "handoff_at", "start_at", "claimed_at", "code_reset_at", "purchased_at"];
+    const cols = ["checkin_at", "done_at", "handoff_at", "start_at", "claimed_at", "code_reset_at", "purchased_at", "created_at"];
     const sets = cols.map((c) => `${c} = ${c} - ($2 || ' minutes')::interval`).join(", ");
     const r = await pool.query(`UPDATE lines SET ${sets} WHERE id = $1`, [id, String(minutes)]);
     return r.rowCount > 0;

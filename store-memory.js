@@ -438,7 +438,7 @@ module.exports = {
   async _shiftCheckin(id, minutes) {
     const l = lines.find((x) => x.id === id);
     if (!l) return false;
-    for (const k of ["checkinAt", "doneAt", "handoffAt", "startAt", "claimedAt", "codeResetAt", "purchasedAt"])
+    for (const k of ["checkinAt", "doneAt", "handoffAt", "startAt", "claimedAt", "codeResetAt", "purchasedAt", "createdAt"])
       if (l[k]) l[k] = new Date(new Date(l[k]).getTime() - minutes * 60000);
     return true;
   },

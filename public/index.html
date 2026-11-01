@@ -416,7 +416,7 @@ function itemBox(j,mode){
   rows.push(`<div><span>Handover</span><span>${j.handoff==='dropoff'?`Drop-off (+${money(j.dropoffFee)} to the waiter)`:'Meet up'}, within ${MEET_TXT[j.meetWithin||120]} of buying</span></div>`);
   if(j.handoff==='dropoff'&&j.dropoffAddr&&(mode==='waiter'||mode==='customer'))rows.push(`<div><span>Drop off at</span><span>${esc(j.dropoffAddr)}</span></div>`);
   if(bought&&j.itemNote)rows.push(`<div><span>Note</span><span>${esc(j.itemNote)}</span></div>`);
-  return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>`:''}</div>`}
+  return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>${bought&&j.itemNote&&/together with other orders/.test(j.itemNote)?'<div class="hint">Your waiter bought several orders at once, so this receipt also shows other people\'s items.</div>':''}`:''}</div>`}
 const MEET_TXT={45:'45 min',120:'2 hours',240:'4 hours'};
 const SPOT_RULE='Save my spot is only for places where saving a spot is normal, like a parade route or the lawn at an outdoor show. Wait For Me! does not condone or endorse line-cutting, so it can\'t be used to hold a place in a line.';
 const SPOT_RULE_SHORT='Saving a spot only, not a place in a line. Wait For Me! does not condone or endorse line-cutting.';
@@ -545,12 +545,14 @@ function payNote(j,who){
       if(st==='released')return`<div class="hint">No charge. The hold on your card was released.</div>`;
       if(st==='charge_failed')return`<div class="warnnote">The charge didn't go through${j.payError?`: ${esc(j.payError)}`:''}. Update your card in Account and we'll try again.</div><div class="btns"><button class="btn small" data-act="card-acct">Update card</button></div>`;return''}
     if(st==='held')return`<div class="hint">A hold of up to ${money(j.payHeld/100)} is on your card. You're only charged for the actual time${kindOf(j)==='pickup'?' and the receipt price':''}.</div>`;
+    if(st==='failed'&&j.payProblem==='waiter')return`<div class="warnnote">Your card is fine. ${esc(j.waiterName||'Your waiter')} needs to update their payout account with Stripe before buying. If it isn't sorted soon, they'll release the job so another waiter can take it.</div>`;
     if(st==='failed')return`<div class="warnnote">We couldn't place a hold on your card${j.payError?`: ${esc(j.payError)}`:''}. Update your card so your waiter knows they'll be paid.</div><div class="btns"><button class="btn small" data-act="card-acct">Update card</button></div>`;
     return`<div class="hint">We'll place a hold on your card a few days before the start time.</div>`}
   if(j.status==='done'){if(st==='captured')return`<div class="hint">Paid. It reaches your bank on your payout schedule, or cash out instantly from Account → See payouts and earnings if Instant Payout shows there.</div>`;
     if(st==='charge_failed')return`<div class="warnnote">We're still collecting this payment from the booker. You'll be paid as soon as it goes through.</div>`;return''}
   if(st==='held')return`<div class="hint">✓ Payment secured.</div>`;
-  if(st==='failed')return`<div class="warnnote">Payment isn't secured yet. We've asked ${esc(j.ownerName||'the booker')} to update their card. You can release this line with no penalty before you check in.</div>`;
+  if(st==='failed'&&j.payProblem==='waiter')return`<div class="warnnote">Stripe needs more details on your payout account before you can be paid. Open Account and tap Finish payout setup. Don't buy anything until it's done, or release the job.</div><div class="btns"><button class="btn small" data-act="payouts">Finish payout setup</button></div>`;
+  if(st==='failed')return`<div class="warnnote">Payment isn't secured yet. We've asked ${esc(j.ownerName||'the booker')} to update their card. If it isn't fixed in about 10 minutes, release the job; there's no penalty.</div>`;
   return`<div class="hint">We'll secure payment from the booker a few days before the start time.</div>`}
 const ratingTxt=r=>r&&r.avg!=null?`★ ${r.avg.toFixed(1)} · ${r.count} ratings`:'New · fewer than 3 ratings';
 const rateDraft={};
@@ -771,7 +773,7 @@ function customerPost(){
      ${kindBtn('pickup','Pick it up for me','A waiter stands in line, buys it, and hands it to you.')}
      ${kindBtn('spot','Save my spot','A waiter saves a spot where that\'s normal, like a parade curb.')}</div>
    ${EVENTS.length?`<div class="field"><span class="wlabel" id="l-event">At an event?</span><div class="filters" role="group" aria-labelledby="l-event">
-     <button type="button" class="chip" aria-pressed="${!postEvent}" data-event="">No</button>${EVENTS.map(ev=>`<button type="button" class="chip" aria-pressed="${postEvent===ev.id}" data-event="${ev.id}">${esc(ev.name)} · ${evWhen(ev)}</button>`).join('')}</div>
+     <button type="button" class="chip" aria-pressed="${!postEvent}" data-event="">No</button>${EVENTS.map(ev=>`<button type="button" class="chip" aria-pressed="${postEvent===ev.id}" data-event="${ev.id}">${esc(ev.name)} · ${evWhen(ev)} · ${ev.here} waiter${ev.here===1?'':'s'} here</button>`).join('')}</div>
      <small id="h-event">${eventHint()}</small></div>`:''}
    <div class="field"><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
    <div class="grp" data-for="pickup"${pk?'':' hidden'}>
@@ -961,7 +963,7 @@ function waiterShifts(){
      if(pickup&&(j.status==='inline'||j.status==='nearfront'))ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span>`;
      if(pickup&&(j.status==='inline'||j.status==='nearfront')){
        const d=buyDraft[j.id]||{};
-       if(!secured)extra+=`<div class="warnnote">Don't buy anything yet. The booker's payment isn't secured, so you might not be paid back. We've asked them to update their card.</div>`;
+       if(!secured)extra+=`<div class="warnnote">Don't buy anything yet. ${j.payProblem==='waiter'?'Your payout account needs an update with Stripe first (Account → Finish payout setup).':'The booker\'s payment isn\'t secured, so you might not be paid back. We\'ve asked them to update their card.'}</div>`;
        else ctl+=`<div class="buybox"><b>Bought it?</b><div class="hint">Pay at the register (up to ${money(j.itemBudget)}, tax included), then enter the total and take a photo of the receipt. You're paid back with your earnings.</div>
          <div class="row2"><label class="sr" for="buy-${j.id}">Receipt total</label><input id="buy-${j.id}" type="number" inputmode="decimal" min="0.5" max="${j.itemBudget}" step="0.01" placeholder="Total $" value="${d.total??''}">
            <label class="photo-btn">${d.photo?`<img class="thumb" src="${d.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo'}<input type="file" accept="image/*" capture="environment" data-photo="${j.id}"></label></div>
