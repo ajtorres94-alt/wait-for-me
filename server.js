@@ -326,7 +326,7 @@ const num = (v, field, min, max) => {
 };
 
 // Rates are set between bookers and waiters; these are only sanity limits.
-const MIN_RATE = 10;
+const MIN_RATE = 15;
 const MAX_RATE = 200;
 
 // Hours and rates move in quarter steps (15 minutes, 25 cents).

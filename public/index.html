@@ -400,7 +400,7 @@ const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pic
 // The most a job could cost the booker (time at the approved hours, fees, and for pickups the item limit and drop-off fee).
 function upTo(j,hours){const h=hours??(j.bill?j.bill.approvedHours:j.hours),time=h*j.rate;
   let t=Math.max(MIN_PAY,time)*(1+FEE)+bookingFeeFor(j)+(j.rush?RUSH_FEE:0);if(kindOf(j)==='pickup'){t+=(+j.itemBudget||0)*(1+ITEM_FEE);if(j.handoff==='dropoff')t+=+j.dropoffFee||0}return t}
-const waiterUpTo=j=>(j.bill?j.bill.approvedHours:j.hours)*j.rate+(kindOf(j)==='pickup'&&j.handoff==='dropoff'?+j.dropoffFee||0:0);
+const waiterUpTo=j=>(j.bill?j.bill.approvedHours:j.hours)*j.rate+(kindOf(j)==='pickup'&&j.handoff==='dropoff'?+j.dropoffFee||0:0)+(j.rush?RUSH_FEE:0);
 function facts(j,mode){
   const b=billOf(j),done=j.status==='done';
   const third=mode==='customer'?(done?['Paid',money(b.total)]:['Up to',money(upTo(j))]):(done?['Earned',money(b.pay)]:['Up to',money(waiterUpTo(j))]);
@@ -430,8 +430,8 @@ function billOf(j){
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
-  const raw=r2(billed*j.rate),minApplied=billed>0&&raw<MIN_PAY,time=minApplied?MIN_PAY:raw,item=bought?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
-  const pay=r2(time+drop),svc=r2(time*FEE),book=billed>0?bookingFeeFor(j):0,ifee=r2(item*ITEM_FEE),rush=j.rush&&billed>0?RUSH_FEE:0,fee=r2(svc+book+ifee+rush);
+  const raw=r2(billed*j.rate),minApplied=billed>0&&raw<MIN_PAY,time=minApplied?MIN_PAY:raw,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
+  const rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(time+drop+rush),svc=r2(time*FEE),book=billed>0?bookingFeeFor(j):0,ifee=r2(item*ITEM_FEE),fee=r2(svc+book+ifee);
   const live=!!ci&&!bought;
   return{approved,waited:w,billed,time,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
@@ -441,9 +441,10 @@ function billRows(b,who){
   const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.minApplied?` (${money(MIN_PAY)} minimum)`:''),money(b.time)]];
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
-  const fee=b.svc+b.book+b.ifee+b.rush;
+  if(b.rush)rows.push([who==='customer'?'Rush bonus (goes to your waiter)':'Rush bonus',money(b.rush)]);
+  const fee=b.svc+b.book+b.ifee;
   if(who==='customer'&&fee>0)rows.push(['Service fee',money(fee)]);
-  return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}${who==='customer'&&fee>0?feeDetails([['15% of waiter time',b.svc],['Booking',b.book],['Card processing (3% of item)',b.ifee],['Rush (ASAP)',b.rush]]):''}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
+  return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}${who==='customer'&&fee>0?feeDetails([['15% of waiter time',b.svc],['Booking',b.book],['Card processing (3% of item)',b.ifee]]):''}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
 const clockTxt=h=>{const m=Math.floor(h*60);return`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`};
 function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
@@ -830,13 +831,13 @@ function chosenStart(){
   if(d<now-5*6e4)throw new Error('That time has already passed. Pick a later time, or ASAP.');
   return{d,text:fmtStart(d)}}
 // ---------- scroll wheels ----------
-const RATES=Array.from({length:761},(_,i)=>10+i/4);   // $10.00 … $200.00
+const RATES=Array.from({length:741},(_,i)=>15+i/4);   // $15.00 … $200.00
 const HRS=Array.from({length:12},(_,i)=>i+1),MINS=[0,15,30,45],AMPM=['AM','PM'];
 const fmtMin=m=>':'+String(m).padStart(2,'0');
 const MAX_QTY=5,QTYS=[1,2,3,4,5];
 const WHEELS={qty:{items:QTYS,fmt:String},rate:{items:RATES,fmt:v=>fmtRate(v)},hr:{items:HRS,fmt:String},mn:{items:MINS,fmt:fmtMin},ap:{items:AMPM,fmt:String}};
 const ROW=36;
-let wheel={rate:40,hr:0,mn:0,ap:0,qty:0};                    // $20.00
+let wheel={rate:20,hr:0,mn:0,ap:0,qty:0};                    // $20.00 (RATES starts at $15)
 function fmtHours(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh} hr ${m} min`:hh?`${hh} hr`:`${m} min`}
 function fmtShort(h){const hh=Math.floor(h),m=Math.round((h-hh)*60);return hh&&m?`${hh}h ${m}m`:hh?`${hh} hr`:`${m} min`}
 function fmtRate(r){return'$'+r.toFixed(2)}
@@ -871,7 +872,7 @@ function updateQuote(){
   const book=pk?PICKUP_BOOKING_FEE:BOOKING_FEE;
   q.innerHTML=row(`Your waiter (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
     +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
-    +row('Service fee',money(svc+book+ifee+rush))+feeDetails([['15% of waiter time',svc],['Booking',book],['Card processing (3% of item)',ifee],['Rush (ASAP)',rush]])
+    +(rush?row('Rush bonus (goes to your waiter)',money(rush)):'')+row('Service fee',money(svc+book+ifee))+feeDetails([['15% of waiter time',svc],['Booking',book],['Card processing (3% of item)',ifee]])
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
     +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (waiters earn at least $8)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`
     +`<div class="hint" style="display:block"><b>About the card hold:</b> when a waiter claims your request, your bank shows a temporary hold of up to about ${money(total+r*0.5*(1+FEE))}. It isn't a charge. When the job ends, you're charged only what was used and the rest of the hold drops off, usually within a few days depending on your bank.</div>`}
@@ -934,7 +935,7 @@ function waiterFind(){
      <div class="hint">${pickup?`Paid for your time from check-in to purchase, at least $8 a job. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
      ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for the booker to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
      :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
-        <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="10" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>
+        <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="15" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>
         <div class="btns"><button class="btn small" data-act="offer" data-id="${j.id}">Send offer</button><button class="btn ghost small" data-act="offer-cancel" data-id="${j.id}">Cancel</button></div></div>`
      :selecting?`<label class="check pick"><input type="checkbox" data-pick="${j.id}"${picked.has(j.id)?' checked':''}${!picked.has(j.id)&&picked.size>=5?' disabled':''}> Add to this trip</label>`
      :`<div class="btns"><button class="btn small" data-act="claim" data-id="${j.id}">Claim at ${fmtRate(j.rate)}/hr</button><button class="btn ghost small" data-act="offer-open" data-id="${j.id}">Offer a different rate</button></div>`}</article>`}).join(''):`<div class="empty">No open jobs${near.on&&near.radius?` within ${near.radius} miles`:''}${filter==='All'?'':' of this kind'} right now. New ones show up here automatically.</div>`}</div>`}
@@ -1185,7 +1186,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postEvent=j.eventId||null;wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-10)*4)));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postEvent=j.eventId||null;wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-RATES[0])*4)));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}

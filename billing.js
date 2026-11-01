@@ -20,8 +20,8 @@
 //
 // Fees (kept by Wait For Me!): 15% of the waiter's time pay, a booking fee ($4.99 for pickups,
 // $2.50 for saved spots), and 3% of
-// the item price to cover card processing, plus a $1.99 rush fee on ASAP requests. No fees on a
-// late cancellation or a sold-out pickup.
+// the item price to cover card processing. No fees on a late cancellation or a sold-out pickup.
+// ASAP requests add a $1.99 rush bonus that goes entirely to the waiter.
 // Waiters earn at least $8 for their time on any job they're paid for.
 // Booker misses a pickup meetup: they pay the waiter's time (and any drop-off fee) and our fees, but
 // not the item. The waiter keeps the item.
@@ -84,12 +84,13 @@ function billing(line, now = Date.now()) {
   const timePay = minApplied ? MIN_PAY : rawPay;
   const item = itemCharged ? roundCents(Number(line.itemTotal) || 0) : 0;
   const dropoff = bought && line.handoff === "dropoff" ? roundCents(Number(line.dropoffFee) || 0) : 0;
-  const waiterPay = roundCents(timePay + dropoff);
+  // ASAP requests: the rush fee goes to the waiter as a bonus (not on late cancellations).
+  const rushFee = line.rush && billed > 0 && line.outcome !== "cancelled_late" ? RUSH_FEE : 0;
+  const waiterPay = roundCents(timePay + dropoff + rushFee);
   const serviceFee = roundCents(timePay * feeRate);
   const bookingFee = feeRate > 0 && billed > 0 ? bookingFeeFor(line) : 0;
   const itemFee = roundCents(item * ITEM_FEE);
-  const rushFee = line.rush && feeRate > 0 && billed > 0 ? RUSH_FEE : 0;
-  const fee = roundCents(serviceFee + bookingFee + itemFee + rushFee);
+  const fee = roundCents(serviceFee + bookingFee + itemFee);
   return {
     approvedHours: approved,
     waitedHours: Math.round(waited * 100) / 100,
