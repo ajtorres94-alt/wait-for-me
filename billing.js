@@ -40,6 +40,10 @@ const BASE_FEE = 2.99;
 const PCT_FEE = 0.09;
 const FEE_CAP = 12;
 const v2 = (line) => Number(line.pricingV) >= 2;
+// Group runs: when a waiter buys several orders at the same stand in one wait, each booker pays 75%
+// of the usual time charge (at least $6). The waiter still earns more for that wait than for one order.
+const BUNDLE_RATE = 0.75;
+const BUNDLE_MIN_PAY = 6;
 const serviceFeeV2 = (timePay, item) => roundCents(Math.min(FEE_CAP, BASE_FEE + PCT_FEE * (timePay + item)));
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
 const HOUR = 3600 * 1000;
@@ -87,7 +91,10 @@ function billing(line, now = Date.now()) {
 
   const rawPay = roundCents(billed * line.rate);
   const minApplied = billed > 0 && rawPay < MIN_PAY;
-  const timePay = minApplied ? MIN_PAY : rawPay;
+  const fullTimePay = minApplied ? MIN_PAY : rawPay;
+  const grouped = !!line.bundled && billed > 0 && line.outcome !== "cancelled_late";
+  const timePay = grouped ? Math.max(BUNDLE_MIN_PAY, roundCents(rawPay * BUNDLE_RATE)) : fullTimePay;
+  const bundleSaving = grouped ? roundCents(fullTimePay - timePay) : 0;
   const item = itemCharged ? roundCents(Number(line.itemTotal) || 0) : 0;
   const dropoff = bought && line.handoff === "dropoff" ? roundCents(Number(line.dropoffFee) || 0) : 0;
   // ASAP requests: the rush fee goes to the waiter as a bonus (not on late cancellations).
@@ -104,6 +111,8 @@ function billing(line, now = Date.now()) {
     billedHours: billed,
     timePay,
     minApplied,
+    bundled: grouped,
+    bundleSaving,
     dropoff,
     waiterPay,
     item,
@@ -135,4 +144,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };

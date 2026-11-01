@@ -140,6 +140,7 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_within INT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_reminded BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS unclaimed_pinged BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pricing_v INT NOT NULL DEFAULT 1;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS bundled BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint TEXT PRIMARY KEY,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -260,7 +261,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -332,6 +333,7 @@ const COLS = {
   meetReminded: "meet_reminded",
   unclaimedPinged: "unclaimed_pinged",
   pricingV: "pricing_v",
+  bundled: "bundled",
 };
 const USER_COLS = {
   look: "look",
@@ -539,6 +541,11 @@ module.exports = {
   async deletePushSub(endpoint, userId) {
     if (userId) await pool.query("DELETE FROM push_subs WHERE endpoint = $1 AND user_id = $2", [endpoint, userId]);
     else await pool.query("DELETE FROM push_subs WHERE endpoint = $1", [endpoint]);
+  },
+  // Pickups not bought yet (open or with a waiter), posted in the last 12 hours: for grouping orders into runs.
+  async activePickups() {
+    const r = await pool.query(`${LINE_SELECT} WHERE l.kind = 'pickup' AND l.status IN ('open','claimed','enroute','inline','nearfront') AND l.purchased_at IS NULL AND l.created_at > now() - interval '12 hours' LIMIT 500`);
+    return r.rows.map(line);
   },
   async linesAwaitingMeetup() {
     const r = await pool.query(`${LINE_SELECT} WHERE l.status = 'handoff' AND l.kind = 'pickup' AND l.purchased_at IS NOT NULL AND NOT l.meet_reminded`);

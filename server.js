@@ -618,6 +618,27 @@ async function flagAdmins(title, body) {
     console.error("Admin alert failed:", e.message);
   }
 }
+// Orders at the same stand: same event (if any) and the same place name, ignoring case and extra spaces.
+const standKey = (l) => (l.eventId || "") + "|" + String(l.place || "").trim().toLowerCase().replace(/\s+/g, " ");
+const RUN_NEAR_M = 300;
+// Other runs a booker's open request could join: unbought orders at a different stand at the same event, or very close by.
+function runsFor(l, active) {
+  if (l.status !== "open" || l.kind !== "pickup") return [];
+  const near = (x) =>
+    (l.eventId && x.eventId === l.eventId) ||
+    (!l.eventId && !x.eventId && l.lat != null && x.lat != null && metersBetween({ lat: l.lat, lng: l.lng }, { lat: x.lat, lng: x.lng }) <= RUN_NEAR_M);
+  const groups = new Map();
+  for (const x of active) {
+    if (x.id === l.id || standKey(x) === standKey(l) || !near(x)) continue;
+    const k = standKey(x);
+    const g = groups.get(k) || { targetId: x.id, place: x.place, orders: 0, waiterOn: false };
+    g.orders++;
+    if (x.waiterId) g.waiterOn = true;
+    if (x.id < g.targetId) [g.targetId, g.place] = [x.id, x.place];
+    groups.set(k, g);
+  }
+  return [...groups.values()].sort((a, b) => b.orders - a.orders || b.waiterOn - a.waiterOn).slice(0, 3);
+}
 const firstName = (n) => String(n || "Someone").split(" ")[0];
 // Every 5 minutes: remind bookers 20 minutes before their pickup meetup window ends.
 async function meetupSweep() {
@@ -941,6 +962,10 @@ async function api(req, res, urlPath, query) {
     for (const l of [...mineL, ...openL, ...shiftsL]) all.set(l.id, l);
     const byId = new Map((await decorate(me, [...all.values()])).map((d) => [d.id, d]));
     const pick = (list) => list.map((l) => byId.get(l.id));
+    if (mineL.some((l) => l.status === "open" && l.kind === "pickup")) {
+      const active = await store.activePickups();
+      for (const l of mineL) { const d = byId.get(l.id); if (d && l.status === "open") d.runs = runsFor(l, active); }
+    }
     return send(res, 200, {
       now: Date.now(), mine: pick(mineL), open: pick(openL), shifts: pick(shiftsL),
       user: publicUser(me), ratings: { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) },
@@ -1014,7 +1039,7 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
@@ -1139,6 +1164,25 @@ async function api(req, res, urlPath, query) {
       return send(res, 200, { line: await one(me, l) });
     }
 
+    // A booker moves their open request onto another stand's run, so one waiter can buy them together.
+    if (action === "join-run") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who posted this can change it.");
+      if (l.status !== "open") fail(409, "A waiter already claimed this request.");
+      const run = runsFor(l, await store.activePickups()).find((g) => g.targetId === Number(b.targetId));
+      if (!run) fail(409, "That group run isn't available anymore.");
+      const t = await store.getLine(run.targetId);
+      const moved = await store.updateLine(id, "open", { place: t.place, eventId: t.eventId || l.eventId || null, lat: t.lat, lng: t.lng, geoApprox: t.geoApprox, area: t.area });
+      if (!moved) fail(409, "A waiter just claimed this request.");
+      // Waiters already on that run (and not yet past their purchase) hear about the new order.
+      const pinged = new Set();
+      for (const x of await store.activePickups())
+        if (x.waiterId && x.waiterId !== me.id && !pinged.has(x.waiterId) && standKey(x) === standKey(moved)) {
+          pinged.add(x.waiterId);
+          ping(x.waiterId, "New order at your stand", `Someone added ${moved.item || "an order"} at ${moved.place}. Claim it in Find jobs to buy it on the same run.`);
+        }
+      return send(res, 200, { line: await one(me, moved) });
+    }
+
     if (action === "raise-limit") {
       if (l.ownerId !== me.id) fail(403, "Only the person who posted this can change the item limit.");
       if (kindOf(l) !== "pickup") fail(400, "Only pickups have an item limit.");
@@ -1209,6 +1253,12 @@ async function api(req, res, urlPath, query) {
         Object.assign(fields, { checkinAt: new Date(), checkinVerified: verified, checkinDist: dist });
       }
       updated = await store.updateLine(id, l.status, fields);
+      // Group run: this check-in and the waiter's other unbought orders at the same stand share one wait.
+      if (updated && next === "inline" && pickup) {
+        const same = (await store.listLines({ waiterId: me.id })).filter((x) => x.kind === "pickup" && ["inline", "nearfront"].includes(x.status) && !x.purchasedAt && standKey(x) === standKey(l));
+        if (same.length > 1) for (const x of same) if (!x.bundled) await store.updateLineAny(x.id, { bundled: true });
+        if (same.length > 1) updated = await store.getLine(id);
+      }
       const who = firstName(me.name);
       const say = { enroute: `${who} is on the way to ${l.place}.`, inline: pickup ? `${who} is in line at ${l.place}.` : `${who} is saving your spot.`,
         nearfront: pickup ? `${who} is almost at the register.` : `${who} is almost at the front.`, handoff: `${who} is at the front.` }[next];

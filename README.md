@@ -127,3 +127,8 @@ On a host that allows SMTP, `SMTP_USER` and `SMTP_PASS` (a Gmail app password) w
 ## Testing
 
 `WFM_TEST_HOOKS=1` turns on a test-only endpoint for moving the clock in automated tests. Never set it on Railway.
+
+
+## Group runs
+
+When a waiter checks in and has two or more unbought pickups at the same stand (same event and place name, ignoring case and spacing), those orders are marked `bundled`. Each bundled order bills 75% of the normal time charge (minimum $6, `BUNDLE_RATE` / `BUNDLE_MIN_PAY` in billing.js); the receipt shows the saving. Bookers with an open request see up to 3 nearby runs (same event, or within 300 m when there's no event) and can move their request onto one with `POST /api/lines/:id/join-run {targetId}`; waiters already on that run get an alert.
