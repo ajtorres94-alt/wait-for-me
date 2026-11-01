@@ -310,6 +310,10 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .seg button[aria-checked="true"]{border-color:var(--ink);background:var(--ink);color:var(--bg)}
 .bitems{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-weight:600}
 .card.bundle{border-color:var(--ink)}
+.feedet{font-size:13px;color:var(--muted);margin:-2px 0 4px}
+.feedet summary{cursor:pointer;padding:2px 0;list-style:none;text-decoration:underline;text-underline-offset:2px}
+.feedet summary::-webkit-details-marker{display:none}
+.feedet>div{display:flex;justify-content:space-between;padding:2px 0 2px 12px}
 .buybox{display:flex;flex-direction:column;gap:10px;background:var(--bg);border-radius:12px;padding:12px;width:100%}
 .buybox .row2{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .buybox input[type=number]{width:120px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-weight:700}
@@ -427,12 +431,15 @@ function billOf(j){
   const live=!!ci&&!bought;
   return{approved,waited:w,billed,time,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
+// One "Service fee" line, with the parts behind a tap for anyone who wants them.
+function feeDetails(parts){const p=parts.filter(([,v])=>v>0);return`<details class="feedet"><summary>What's in the service fee</summary>${p.map(([k,v])=>`<div><span>${k}</span><span class="mono">${money(v)}</span></div>`).join('')}</details>`}
 function billRows(b,who){
   const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.minApplied?` (${money(MIN_PAY)} minimum)`:''),money(b.time)]];
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
-  if(who==='customer'){rows.push(['Service fee (15% of time)',money(b.svc)]);if(b.book)rows.push(['Booking fee',money(b.book)]);if(b.ifee)rows.push(['Card processing (3% of item)',money(b.ifee)]);if(b.rush)rows.push(['Rush fee (ASAP)',money(b.rush)])}
-  return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
+  const fee=b.svc+b.book+b.ifee+b.rush;
+  if(who==='customer'&&fee>0)rows.push(['Service fee',money(fee)]);
+  return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}${who==='customer'&&fee>0?feeDetails([['15% of waiter time',b.svc],['Booking',b.book],['Card processing (3% of item)',b.ifee],['Rush (ASAP)',b.rush]]):''}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
 const clockTxt=h=>{const m=Math.floor(h*60);return`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`};
 function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
@@ -839,9 +846,10 @@ function updateQuote(){
     $('#h-price').textContent=price*qty>MAX_ITEM?`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
     $('#h-meet').textContent='Meet within 4 hours of the purchase, so after the show works. For food, meet within 30 minutes so it stays fresh.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
-  q.innerHTML=row(`Waiter time (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
+  const book=pk?PICKUP_BOOKING_FEE:BOOKING_FEE;
+  q.innerHTML=row(`Your waiter (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
     +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
-    +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(pk?PICKUP_BOOKING_FEE:BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')+(rush?row('Rush fee (ASAP)',money(rush)):'')
+    +row('Service fee',money(svc+book+ifee+rush))+feeDetails([['15% of waiter time',svc],['Booking',book],['Card processing (3% of item)',ifee],['Rush (ASAP)',rush]])
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
     +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (waiters earn at least $8)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`
     +`<div class="hint" style="display:block"><b>About the card hold:</b> when a waiter claims your request, your bank shows a temporary hold of up to about ${money(total+r*0.5*(1+FEE))}. It isn't a charge. When the job ends, you're charged only what was used and the rest of the hold drops off, usually within a few days depending on your bank.</div>`}
