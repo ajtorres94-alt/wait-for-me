@@ -520,8 +520,9 @@ function agreementBox(){return`<div class="agree"><b>Waiter agreement</b><ul>
   <li>You set your own minimum rate and can offer a different rate on any job.</li>
   <li>You decide how to do each job and use your own phone and transportation.</li>
   <li>You're free to work for other apps, competitors or your own customers.</li>
-  <li>You're responsible for your own taxes. Stripe sends you a 1099 if you earn enough to need one.</li></ul>
-  <label class="check" for="agree-cb"><input id="agree-cb" type="checkbox"> <span>I agree to the waiter agreement and the <a href="/terms#waiters" target="_blank" rel="noopener">Terms</a>.</span></label>
+  <li>You're responsible for your own taxes. Stripe sends you a 1099 if you earn enough to need one.</li>
+  <li>You'll follow the <a href="/terms#conduct" target="_blank" rel="noopener">waiter code of conduct</a>: obey venue rules and staff, never cut or hold places in line, never pose as staff, respect everyone, and be honest about receipts.</li></ul>
+  <label class="check" for="agree-cb"><input id="agree-cb" type="checkbox"> <span>I agree to the waiter agreement, the <a href="/terms#conduct" target="_blank" rel="noopener">code of conduct</a> and the <a href="/terms#waiters" target="_blank" rel="noopener">Terms</a>.</span></label>
   <div class="btns"><button class="btn small" data-act="agree">Agree and continue</button></div></div>`}
 const RATE_CHOICES=[null,15,20,25,30,40,50];
 function rateBox(){const cur=me.minRate??null;return`<div class="kv"><div>Your minimum rate<small>You'll only see jobs, and get event alerts, at this hourly rate or higher. Change it any time.</small></div>
@@ -539,7 +540,7 @@ function paymentCard(){
     :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
   <article class="card section"><h2>Getting paid</h2>
     <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. If your Stripe payouts page shows Instant Payout, you can cash out the same night for a small fee. Your very first payout can take about 7 days while Stripe sets up your account, so start with small items. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
-    ${me.contractorAgreed?`<div class="hint">You accepted the <a href="/terms#waiters" target="_blank" rel="noopener">waiter agreement</a> on ${new Date(me.contractorAcceptedAt).toLocaleDateString()}.</div>`:agreementBox()}
+    ${me.contractorAgreed?`<div class="hint">You accepted the <a href="/terms#waiters" target="_blank" rel="noopener">waiter agreement</a> and <a href="/terms#conduct" target="_blank" rel="noopener">code of conduct</a> on ${new Date(me.contractorAcceptedAt).toLocaleDateString()}.</div>`:agreementBox()}
     <div class="btns">${!me.contractorAgreed?'':po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
       :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
     ${rateBox()}

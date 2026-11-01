@@ -126,7 +126,7 @@ const isAdmin = (u) => !!u && ADMIN_EMAILS.includes(String(u.email).toLowerCase(
 
 // The waiter agreement (independent contractor terms). Bump the version when its terms change,
 // and every waiter is asked to accept again before claiming jobs.
-const CONTRACTOR_VERSION = "2026-11-01";
+const CONTRACTOR_VERSION = "2026-11-01b"; // b: adds the waiter code of conduct
 function requireAgreement(u) {
   if (u.contractorVersion !== CONTRACTOR_VERSION) fail(403, "Accept the waiter agreement in Account first.", "agreement_required");
 }
