@@ -23,6 +23,8 @@
 // the item price to cover card processing, plus a $1.99 rush fee on ASAP requests. No fees on a
 // late cancellation or a sold-out pickup.
 // Waiters earn at least $8 for their time on any job they're paid for.
+// Booker misses a pickup meetup: they pay the waiter's time (and any drop-off fee) and our fees, but
+// not the item. The waiter keeps the item.
 
 const FEE = 0.15;
 const MIN_HOURS = 0.25; // shortest time billed once a waiter checks in
@@ -46,6 +48,8 @@ function billing(line, now = Date.now()) {
   const approved = Number(line.approvedHours ?? line.hours);
   const pickup = kindOf(line) === "pickup";
   const bought = pickup && !!line.purchasedAt && line.outcome !== "sold_out";
+  // Booker missed the meetup: they aren't charged for the item; the waiter keeps it.
+  const itemCharged = bought && line.outcome !== "pickup_noshow";
   const checkin = line.checkinAt ? new Date(line.checkinAt).getTime() : null;
   const endAt = bought ? line.purchasedAt : line.doneAt;
   const end = endAt ? new Date(endAt).getTime() : now;
@@ -78,7 +82,7 @@ function billing(line, now = Date.now()) {
   const rawPay = roundCents(billed * line.rate);
   const minApplied = billed > 0 && rawPay < MIN_PAY;
   const timePay = minApplied ? MIN_PAY : rawPay;
-  const item = bought ? roundCents(Number(line.itemTotal) || 0) : 0;
+  const item = itemCharged ? roundCents(Number(line.itemTotal) || 0) : 0;
   const dropoff = bought && line.handoff === "dropoff" ? roundCents(Number(line.dropoffFee) || 0) : 0;
   const waiterPay = roundCents(timePay + dropoff);
   const serviceFee = roundCents(timePay * feeRate);

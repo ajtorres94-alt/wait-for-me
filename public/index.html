@@ -503,7 +503,7 @@ function paymentCard(){
       <div class="btns"><button class="btn small" id="card-save" data-act="card-save" disabled>Save card</button><button class="btn ghost small" data-act="card-close">Cancel</button></div></div>`
     :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
   <article class="card section"><h2>Getting paid</h2>
-    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. If your Stripe payouts page shows Instant Payout, you can cash out the same night for a small fee. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
+    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. If your Stripe payouts page shows Instant Payout, you can cash out the same night for a small fee. Your very first payout can take about 7 days while Stripe sets up your account, so start with small items. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
     <div class="btns">${po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
       :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
     ${PAY.testMode&&po!=='ready'?'<div class="hint">Test mode: on Stripe\'s page, use test phone 000 000 0000, code 000000, SSN 000-00-0000 and their test bank account. No real money moves.</div>':''}</article>`}
@@ -546,7 +546,7 @@ const OUTCOME_TXT={
     cancelled_late:()=>`You cancelled within 2 hours of the start or after your waiter left for the line, so you pay 30 minutes of waiter time with no fees.`,
     cancelled_inline:w=>`You cancelled after ${w} checked in, so you pay for the time they waited.`,
     sold_out:w=>`It was sold out when ${w} got to the register, so nothing was bought. You pay only for the time they waited, with no fees.`,
-    pickup_noshow:w=>`You didn't meet ${w} within the meetup window, so the job closed and you were charged in full. Message them to arrange getting your item.`},
+    pickup_noshow:w=>`You didn't meet ${w} within the meetup window, so the job closed and you were charged for their time but not the item. They keep it.`},
   waiter:{
     time_up:()=>`The approved time ran out and you ended the shift.`,
     customer_noshow:o=>`${o} didn't swap in within 30 minutes, so you ended the shift and are paid for your time.`,
@@ -554,7 +554,7 @@ const OUTCOME_TXT={
     cancelled_late:o=>`${o} cancelled late, so you're paid for 30 minutes.`,
     cancelled_inline:o=>`${o} cancelled after you checked in, so you're paid for the time you waited.`,
     sold_out:()=>`It was sold out, so you're paid for the time you waited.`,
-    pickup_noshow:o=>`${o} didn't meet you within the meetup window, so you were paid in full, including the item. Arrange the handover with them in Messages.`}};
+    pickup_noshow:o=>`${o} didn't meet you within the meetup window, so you were paid for your time. The booker wasn't charged for the item, so it's yours to keep (or return, if the stand allows).`}};
 // ---- problem reports ----
 const reportOpen=new Set(),reportDraft={};
 const REASONS={customer:["Waiter didn't show","Wrong item","Item missing or damaged","Charged the wrong amount","Safety concern","Something else"],
@@ -681,8 +681,8 @@ function customerMine(){
     if(active&&!j.checkinAt)extra+=`<div class="hint">The clock starts when ${W} checks in${pickup?' at the store':' at the spot'}. You only pay for time they actually spend${pickup?' in line':' there'}.</div>`;
     if(active&&j.noShowAt&&nowS()>=j.noShowAt)extra+=`<div class="warnnote">${W} hasn't checked in and it's past the start time. You can report a no-show and your request reopens for other waiters, at no charge.</div>`;
     if(active&&b.nearUp)extra+=`<div class="warnnote">${b.timeUp?'Your approved time is up.':'Your approved time is almost up.'} Add time, or ${W} can end the shift when it runs out.</div>`;
-    if(active&&bought&&j.graceEndsAt)extra+=nowS()>=j.graceEndsAt?`<div class="warnnote">Your meetup window has passed. ${W} can close the job now, and you'd still be charged in full. Message them to meet up.</div>`
-      :`<div class="hint">Meet ${W} by ${clockOf(j.graceEndsAt)}. After that they can close the job, and you'd still be charged in full and need to arrange pickup in Messages.</div>`;
+    if(active&&bought&&j.graceEndsAt)extra+=nowS()>=j.graceEndsAt?`<div class="warnnote">Your meetup window has passed. ${W} can close the job now and keep the item; you'd pay for their time but not the item. Message them to meet up.</div>`
+      :`<div class="hint">Meet ${W} by ${clockOf(j.graceEndsAt)}. After that they can close the job and keep the item, and you'd pay only for their time.</div>`;
     if(bought&&active)extra+=billRows(b,'customer');
     if(j.status==='open'){
       actions=j.expired?`<button class="btn small" data-act="edit" data-id="${j.id}">Change the time</button><button class="btn ghost small" data-act="cancel" data-id="${j.id}">Remove</button>`
@@ -854,18 +854,20 @@ function locate(){
     e=>{near.busy=false;near.on=false;render();toast(e.code===1?'Location is blocked. Allow location for this app in your phone\'s settings, then try again.':'Couldn\'t get your location. Try again in a moment.')},
     {enableHighAccuracy:false,timeout:10000,maximumAge:300000});
 }
-let eventFilter=null,selecting=false;const picked=new Set();
+let eventFilter=null,selecting=false;const picked=new Set();let WSTATS={done:0,canBatch:false,batchMinJobs:10,floatMax:200,outOfPocket:0};
 // Requests at the same stand (same event and place) can be done in one trip.
 const standKey=j=>(j.eventId||'')+'|'+String(j.place||'').trim().toLowerCase().replace(/\s+/g,' ');
 function standGroups(list){const g=new Map();for(const j of list){const k=standKey(j);if(!g.has(k))g.set(k,[]);g.get(k).push(j)}return[...g.values()].filter(x=>x.length>1)}
 function bundleCards(open){
   if(selecting)return'';
   const groups=standGroups(open.filter(j=>kindOf(j)==='pickup'));if(!groups.length)return'';
-  return`<div class="section"><h2>One trip, several orders</h2>${groups.map(g=>{const take=g.slice(0,5),upto=take.reduce((s,j)=>s+waiterUpTo(j),0);
+  return`<div class="section"><h2>One trip, several orders</h2>${groups.map(g=>{let room=WSTATS.floatMax-WSTATS.outOfPocket;const take=[];
+    for(const j of g){if(take.length>=5)break;if(+j.itemBudget<=room){take.push(j);room-=+j.itemBudget}}
+    if(!take.length)take.push(g[0]);const upto=take.reduce((s,j)=>s+waiterUpTo(j),0),capped=take.length<Math.min(g.length,5);
     return`<article class="card bundle"><div class="row"><div><span class="kindtag">${g.length} orders</span><h3>${esc(g.reduce((x,y)=>x.id<y.id?x:y).place)}</h3>${g[0].event?`<div class="meta">${esc(g[0].event.name)}</div>`:''}</div><span class="pill open">Up to ${money(upto)}</span></div>
     <ul class="bitems">${take.map(j=>`<li>${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)} <span class="meta">· ${fmtRate(j.rate)}/hr · limit ${money(j.itemBudget)}</span></li>`).join('')}</ul>
-    <div class="hint">Wait once and get paid by each booker for your time${take.length<g.length?` (claim up to 5 at once, then come back for the rest)`:''}. Some stands limit how many each customer can buy, so check before you claim.</div>
-    <div class="btns"><button class="btn small" data-act="claim-stand" data-ids="${take.map(j=>j.id).join(',')}">Claim all ${take.length}</button></div></article>`}).join('')}</div>`}
+    <div class="hint">Wait once and get paid by each booker for your time. You pay up to ${money(take.reduce((s,j)=>s+ +j.itemBudget,0))} at the register and get it back with your pay.${capped?` You can have up to ${money(WSTATS.floatMax)} of items to buy at once, so this trip covers ${take.length}.`:take.length<g.length?' Claim up to 5 at once, then come back for the rest.':''} Some stands limit how many each customer can buy, so check before you claim.</div>
+    ${WSTATS.canBatch?`<div class="btns"><button class="btn small" data-act="claim-stand" data-ids="${take.map(j=>j.id).join(',')}">${take.length>1?`Claim all ${take.length}`:'Claim 1'}</button></div>`:`<div class="note">Claiming several at once opens up after you finish ${WSTATS.batchMinJobs} jobs (you've finished ${WSTATS.done}). You can still claim these one at a time below.</div>`}</article>`}).join('')}</div>`}
 function eventCards(){
   if(!EVENTS.length)return'';
   return`<div class="section"><h2>Events</h2>${EVENTS.map(e=>`<article class="card evcard${eventFilter===e.id?' on':''}"><div class="row"><div><span class="kindtag ev">${e.live?'Happening now':esc(evWhen(e))}</span><h3>${esc(e.name)}</h3><div class="meta">${esc(e.venue)}</div></div></div>
@@ -883,7 +885,7 @@ function waiterFind(){
   }
   const radii=[[0,'Any distance'],[5,'5 mi'],[10,'10 mi'],[25,'25 mi']];
   const evName=eventFilter&&(EVENTS.find(e=>e.id===eventFilter)||{}).name;
-  const selBar=open.length>1?(selecting?`<div class="selbar"><span><b>${picked.size}</b> selected${picked.size>=5?' (most at once)':''}</span><span class="btns"><button class="btn small" data-act="claim-batch"${picked.size?'':' disabled'}>Claim ${picked.size||''}</button><button class="btn ghost small" data-act="select-off">Cancel</button></span></div>`
+  const selBar=open.length>1&&WSTATS.canBatch?(selecting?`<div class="selbar"><span><b>${picked.size}</b> selected${picked.size>=5?' (most at once)':''}</span><span class="btns"><button class="btn small" data-act="claim-batch"${picked.size?'':' disabled'}>Claim ${picked.size||''}</button><button class="btn ghost small" data-act="select-off">Cancel</button></span></div>`
     :`<div class="btns"><button class="btn ghost small" data-act="select-on">Claim several at once</button></div>`):'';
   return`<div class="list">${eventCards()}${evName?`<div class="note">Showing requests for <b>${esc(evName)}</b>.</div>`:''}<div class="filters" role="group" aria-label="Filter by kind">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
    <div class="filters" role="group" aria-label="Distance">
@@ -935,8 +937,8 @@ function waiterShifts(){
          <div class="btns"><button class="btn danger-btn small" data-act="soldout" data-id="${j.id}"${sp?'':' disabled'}>Yes, it's sold out</button><button class="btn ghost small" data-act="sold-close" data-id="${j.id}">Not yet</button></div></div>`}}
      if(bought&&j.status==='handoff'){
        extra+=billRows(b,'waiter');
-       if(j.graceEndsAt&&nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't met you within the meetup window. You can close the job and be paid in full, including the item. Keep the item safe and arrange the handover in Messages.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">Close job (booker didn't meet)</button>`;
-       else if(j.graceEndsAt)extra+=`<div class="hint">If ${O} hasn't met you by ${clockOf(j.graceEndsAt)}, you can close the job and be paid in full. Message them below.</div>`}
+       if(j.graceEndsAt&&nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't met you within the meetup window. You can close the job: you're paid for your time, the booker isn't charged for the item, and you keep it. Message them first in case they're on the way.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">Close job (booker didn't meet)</button>`;
+       else if(j.graceEndsAt)extra+=`<div class="hint">If ${O} hasn't met you by ${clockOf(j.graceEndsAt)}, you can close the job and be paid for your time, and keep the item (the booker won't be charged for it). Message them below.</div>`}
      else if(j.status==='handoff'&&j.graceEndsAt){
        if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't swapped in within 30 minutes. You can end the shift and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (booker didn't show)</button>`;
        else extra+=`<div class="hint">If ${O} doesn't swap in by ${clockOf(j.graceEndsAt)}, you can end the shift and be paid for your time. Message them below.</div>`}
@@ -1253,12 +1255,12 @@ async function loadNow(force){
   EVENTS=sy.events||[];if(eventFilter&&!EVENTS.some(e=>e.id===eventFilter))eventFilter=null;
   clockSkew=sy.now-Math.round((t0+Date.now())/2);
   const mine=sy.mine,open=sy.open,shifts=sy.shifts;
-  if(sy.user){me=sy.user;myRatings=sy.ratings;TAGS=sy.tags||TAGS;if(sy.payments)PAY=sy.payments}
+  if(sy.waiter)WSTATS=sy.waiter;if(sy.user){me=sy.user;myRatings=sy.ratings;TAGS=sy.tags||TAGS;if(sy.payments)PAY=sy.payments}
   await Promise.all([...chatOpen].map(loadChat));
   paintChats();
   notifyChanges(lastData,{mine,open,shifts});lastData={mine,open,shifts};
   // The clock fields change every refresh; leave them out when deciding whether to redraw.
-  const json=JSON.stringify([mine,open,shifts,myRatings,chatData,EVENTS],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
+  const json=JSON.stringify([mine,open,shifts,myRatings,chatData,EVENTS,WSTATS],(k,v)=>k==='waitedHours'||k==='timeUp'?undefined:v);
   if(!force&&json===lastJSON)return;
   if(!force&&cardOpen&&tab[role]==='account')return; // keep the card form in place while it's open
   // Don't redraw while someone is typing in the page; the next check picks it up.

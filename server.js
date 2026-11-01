@@ -188,6 +188,18 @@ const SWAP_TRIES = 5;
 const REPORT_WINDOW_MS = 14 * 86400 * 1000; // problems can be reported up to 14 days after a job
 const REPORT_REASONS = ["Waiter didn't show", "Wrong item", "Item missing or damaged", "Charged the wrong amount", "Booker didn't show", "Safety concern", "Something else"];
 const BATCH_MAX = 5; // most requests a waiter can claim in one go
+const BATCH_MIN_JOBS = 10; // finished jobs a waiter needs before claiming several at once (admins exempt)
+const FLOAT_MAX = 200; // most a waiter can have out of pocket at once: item limits on pickups they haven't bought yet
+const FINISHED = new Set(["swapped", "delivered", "customer_noshow", "time_up", "pickup_noshow", "sold_out"]);
+const jobsDone = (lines) => lines.filter((l) => l.status === "done" && FINISHED.has(l.outcome)).length;
+// Item money a waiter may still have to spend on pickups they've claimed but not bought.
+const outOfPocket = (lines) =>
+  lines.filter((l) => l.kind === "pickup" && ["claimed", "enroute", "inline", "nearfront"].includes(l.status) && !l.purchasedAt)
+    .reduce((s, l) => s + (Number(l.itemBudget) || 0), 0);
+function waiterStats(me, lines) {
+  const done = jobsDone(lines);
+  return { done, canBatch: isAdmin(me) || done >= BATCH_MIN_JOBS, batchMinJobs: BATCH_MIN_JOBS, floatMax: FLOAT_MAX, outOfPocket: outOfPocket(lines) };
+}
 // After buying, the waiter holds the item for the meetup window the booker picked; then they can
 // close the job. Food can't wait longer than 2 hours.
 const MEET_CHOICES = [45, 120, 240]; // minutes
@@ -489,6 +501,11 @@ async function eventFor(eventId) {
 async function claimLine(me, l) {
   if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
   if (isExpired(l)) fail(409, "This request's start time has passed.");
+  if (l.kind === "pickup") {
+    const owed = outOfPocket(await store.listLines({ waiterId: me.id }));
+    if (owed + Number(l.itemBudget || 0) > FLOAT_MAX)
+      fail(409, `That would put more than ${dollars(FLOAT_MAX)} of item purchases on you at once (you have up to ${dollars(owed)} to buy already). Buy what you've claimed first, then claim more.`, "float_cap");
+  }
   let updated = await store.updateLine(l.id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date() });
   if (!updated) fail(409, "Someone else just claimed this request.");
   await store.closeOtherOffers(l.id, 0);
@@ -751,6 +768,8 @@ async function api(req, res, urlPath, query) {
     if (!ids.length) fail(400, "Pick the requests to claim.");
     if (ids.length > BATCH_MAX) fail(400, `You can claim up to ${BATCH_MAX} at a time.`);
     await requirePayouts(me);
+    if (ids.length > 1 && !waiterStats(me, await store.listLines({ waiterId: me.id })).canBatch)
+      fail(403, `Claiming several at once opens up after you finish ${BATCH_MIN_JOBS} jobs. You can still claim them one at a time.`, "batch_locked");
     const results = [];
     for (const id of ids) {
       try {
@@ -777,7 +796,7 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, {
       now: Date.now(), mine: pick(mineL), open: pick(openL), shifts: pick(shiftsL),
       user: publicUser(me), ratings: { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) },
-      tags: TAGS, payments: paymentsInfo(), events: evs.map(publicEvent),
+      tags: TAGS, payments: paymentsInfo(), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL),
     });
   }
 
