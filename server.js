@@ -450,6 +450,31 @@ setInterval(() => {
   const cutoff = Date.now() - 2 * 3600 * 1000;
   for (const [k, rec] of buckets) if (rec.start < cutoff) buckets.delete(k);
 }, 10 * 60 * 1000).unref();
+// Rate-limit counters and payout recheck times survive restarts and redeploys: they're saved to the
+// database every minute and when Railway stops the app, and loaded again at start-up.
+async function saveCounters() {
+  try {
+    const cut = Date.now() - 24 * 3600e3;
+    const b = [...buckets].filter(([, r]) => r.start > cut);
+    const p = [...payoutsChecked].filter(([, t]) => t > cut);
+    await store.setSetting("counters", JSON.stringify({ b, p }));
+  } catch (e) {
+    console.error("Couldn't save counters:", e.message);
+  }
+}
+async function loadCounters() {
+  try {
+    const raw = await store.getSetting("counters");
+    if (!raw) return;
+    const { b = [], p = [] } = JSON.parse(raw);
+    for (const [k, r] of b) if (!buckets.has(k)) buckets.set(k, r);
+    for (const [k, t] of p) if (!payoutsChecked.has(Number(k))) payoutsChecked.set(Number(k), t);
+  } catch (e) {
+    console.error("Couldn't load counters:", e.message);
+  }
+}
+setInterval(saveCounters, 60 * 1000).unref();
+for (const sig of ["SIGTERM", "SIGINT"]) process.on(sig, () => saveCounters().finally(() => process.exit(0)));
 
 const newCode = () => String(crypto.randomInt(1000, 10000));
 
@@ -617,6 +642,23 @@ async function flagAdmins(title, body) {
   } catch (e) {
     console.error("Admin alert failed:", e.message);
   }
+}
+// Hamming distance between two 64-bit image fingerprints written as hex.
+function hamming(a, b) {
+  let d = 0;
+  for (let i = 0; i < 16; i++) { let x = parseInt(a[i], 16) ^ parseInt(b[i], 16); while (x) { d += x & 1; x >>= 1; } }
+  return d;
+}
+// The waiter's phone must be near the store when it reports a location-checked step (like recording a purchase).
+function checkAtPlace(l, b, where) {
+  const exact = l.lat != null && l.lng != null && !l.geoApprox;
+  if (!exact) return;
+  const lat = Number(b.lat), lng = Number(b.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || b.lat === null || b.lng === null)
+    fail(400, `Turn on location for this app so we can confirm you're at ${where}, then try again.`, "location_required");
+  const acc = Math.min(Math.max(Number(b.accuracy) || 0, 0), 500);
+  const dist = metersBetween({ lat, lng }, { lat: l.lat, lng: l.lng });
+  if (dist - acc > CHECKIN_RADIUS_M) fail(400, `You're about ${(dist / 1609.34).toFixed(1)} miles from ${where}. Record the purchase while you're there.`, "too_far");
 }
 // Orders at the same stand: same event (if any) and the same place name, ignoring case and extra spaces.
 const standKey = (l) => (l.eventId || "") + "|" + String(l.place || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -1270,7 +1312,7 @@ async function api(req, res, urlPath, query) {
       // Group run: this check-in and the waiter's other unbought orders at the same stand share one wait.
       if (updated && next === "inline" && pickup) {
         const same = (await store.listLines({ waiterId: me.id })).filter((x) => x.kind === "pickup" && ["inline", "nearfront"].includes(x.status) && !x.purchasedAt && standKey(x) === standKey(l));
-        if (same.length > 1) for (const x of same) if (!x.bundled) await store.updateLineAny(x.id, { bundled: true });
+        if (same.length > 1) for (const x of same) if (!x.bundled || (x.bundleSize || 0) < same.length) await store.updateLineAny(x.id, { bundled: true, bundleSize: same.length });
         if (same.length > 1) updated = await store.getLine(id);
       }
       const who = firstName(me.name);
@@ -1294,9 +1336,20 @@ async function api(req, res, urlPath, query) {
       if (total > Number(l.itemBudget))
         fail(400, `That's over the ${dollars(l.itemBudget)} limit for this item. Message ${l.ownerName || "the booker"} before buying anything over the limit.`);
       const img = receiptImage(b.receipt);
+      // Fake-receipt checks: the waiter must be at the store, and the photo can't be one used on another job.
+      checkAtPlace(l, b, "the store");
+      const sha = crypto.createHash("sha256").update(img.data).digest("hex");
+      const dhash = /^[0-9a-f]{16}$/.test(String(b.receiptHash || "")) ? String(b.receiptHash) : null;
+      const sameRun = (x) => x.bundled && l.bundled && standKey(x) === standKey(l) && x.purchasedAt && Date.now() - new Date(x.purchasedAt).getTime() < 3 * 3600e3;
+      const reused = (await store.listLines({ waiterId: me.id })).find((x) => x.id !== l.id && !sameRun(x) &&
+        ((x.receiptSha && x.receiptSha === sha) || (dhash && x.receiptDhash && hamming(dhash, x.receiptDhash) <= 6)));
+      if (reused) {
+        flagAdmins(`Possible reused receipt on job #${l.id}`, `${me.name} (${me.email}) tried to record job #${l.id} at ${l.place} with a receipt photo that matches job #${reused.id}. It was refused.`);
+        fail(409, "This receipt photo matches one from another job. Take a photo of the receipt for this purchase.", "receipt_reused");
+      }
       await store.saveReceipt(id, img.mime, img.data);
       updated = await store.updateLine(id, l.status, {
-        status: "handoff", handoffAt: new Date(), purchasedAt: new Date(), pos: null, hasReceipt: true,
+        status: "handoff", handoffAt: new Date(), purchasedAt: new Date(), pos: null, hasReceipt: true, receiptSha: sha, receiptDhash: dhash,
         itemTotal: Math.round(total * 100) / 100, itemNote: text(b.note, "the note", 200, { required: false }),
       });
       if (updated) ping(l.ownerId, "Your item was bought", `${firstName(me.name)} bought ${l.qty > 1 ? `${l.qty} × ` : ""}${l.item || l.what} for ${dollars(total)}. Meet up within ${meetTxt(l)}.`);
@@ -1567,12 +1620,14 @@ process.on("unhandledRejection", (e) => {
 process.on("uncaughtException", (e) => {
   console.error("Uncaught exception:", e);
   alertCrash("Server crashed and is restarting", e);
+  saveCounters().catch(() => {});
   setTimeout(() => process.exit(1), 3000); // give the alert a moment to send; Railway restarts the app
 });
 
 store
   .init()
-  .then(() => {
+  .then(async () => {
+    await loadCounters();
     server.listen(PORT, () =>
       console.log(`Wait For Me! on port ${PORT}, storage: ${store.kind}, payments: ${pay.enabled() ? (pay.testMode() ? "Stripe test mode" : "Stripe live") : "off"}`)
     );

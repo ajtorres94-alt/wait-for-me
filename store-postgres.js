@@ -141,6 +141,9 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_reminded BOOLEAN NOT NULL DEFAUL
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS unclaimed_pinged BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pricing_v INT NOT NULL DEFAULT 1;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS bundled BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS bundle_size INT NOT NULL DEFAULT 0;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS receipt_sha TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS receipt_dhash TEXT;
 CREATE TABLE IF NOT EXISTS push_subs (
   endpoint TEXT PRIMARY KEY,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -261,7 +264,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -334,6 +337,9 @@ const COLS = {
   unclaimedPinged: "unclaimed_pinged",
   pricingV: "pricing_v",
   bundled: "bundled",
+  bundleSize: "bundle_size",
+  receiptSha: "receipt_sha",
+  receiptDhash: "receipt_dhash",
 };
 const USER_COLS = {
   look: "look",

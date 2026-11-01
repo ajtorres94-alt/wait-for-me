@@ -365,7 +365,7 @@ const kindOf=j=>j&&j.kind==='pickup'?'pickup':'spot';
 const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includes(j.status)?KEYS.legacy:KEYS.spot;
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
 const BUNDLE_RATE=0.75,BUNDLE_MIN_PAY=6,BASE_FEE=2.99,PCT_FEE=0.09,FEE_CAP=12,v2=j=>+j.pricingV>=2,svcV2=(t,i)=>r2(Math.min(FEE_CAP,BASE_FEE+PCT_FEE*(t+i)));
-const MIN_PAY=8,RUSH_FEE=1.99,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
+const GROUP_MAX_HOURLY=35,MIN_PAY=8,RUSH_FEE=4,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const bookingFeeFor=j=>kindOf(j)==='pickup'?PICKUP_BOOKING_FEE:BOOKING_FEE;
 const money=n=>'$'+(Math.round(n*100)/100).toFixed(2).replace(/\.00$/,'');
@@ -419,7 +419,7 @@ function itemBox(j,mode){
   rows.push(`<div><span>Handover</span><span>${j.handoff==='dropoff'?`Drop-off (+${money(j.dropoffFee)} to the waiter)`:'Meet up'}, within ${MEET_TXT[j.meetWithin||120]} of buying</span></div>`);
   if(j.handoff==='dropoff'&&j.dropoffAddr&&(mode==='waiter'||mode==='customer'))rows.push(`<div><span>Drop off at</span><span>${esc(j.dropoffAddr)}</span></div>`);
   if(bought&&j.itemNote)rows.push(`<div><span>Note</span><span>${esc(j.itemNote)}</span></div>`);
-  return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>${bought&&j.itemNote&&/together with other orders/.test(j.itemNote)?'<div class="hint">Your waiter bought several orders at once, so this receipt also shows other people\'s items.</div>':''}`:''}</div>`}
+  return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>${bought&&mode==='customer'&&j.status!=='done'?'<div class="hint">Check the receipt photo before you share your code. If the item or price doesn\'t match, don\'t hand over the code; tap Report a problem.</div>':''}${bought&&j.itemNote&&/together with other orders/.test(j.itemNote)?'<div class="hint">Your waiter bought several orders at once, so this receipt also shows other people\'s items.</div>':''}`:''}</div>`}
 const MEET_TXT={45:'45 min',120:'2 hours',240:'4 hours'};
 const SPOT_RULE='Save my spot is only for places where saving a spot is normal, like a parade route or the lawn at an outdoor show. Wait For Me! does not condone or endorse line-cutting, so it can\'t be used to hold a place in a line.';
 const SPOT_RULE_SHORT='Saving a spot only, not a place in a line. Wait For Me! does not condone or endorse line-cutting.';
@@ -428,21 +428,21 @@ let clockSkew=0;
 const nowS=()=>Date.now()+clockSkew;
 function billOf(j){
   if(j.status==='done'&&j.bill){const s=j.bill;return{approved:s.approvedHours,waited:s.waitedHours,billed:s.billedHours,time:s.timePay??s.waiterPay,drop:s.dropoff||0,item:s.item||0,
-    saved:s.bundleSaving||0,pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
+    saved:s.bundleSaving||0,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
   const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
   const raw=r2(billed*j.rate),minApplied=billed>0&&raw<MIN_PAY,full=minApplied?MIN_PAY:raw,grp=!!j.bundled&&billed>0,time=grp?Math.max(BUNDLE_MIN_PAY,r2(raw*BUNDLE_RATE)):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
-  const rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(time+drop+rush),svc=v2(j)?(billed>0?svcV2(time,item):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),fee=r2(svc+book+ifee);
+  const size=Math.max(2,+j.bundleSize||2),cap=Math.max(MIN_PAY,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(wtime+drop+rush),svc=v2(j)?(billed>0?svcV2(time,item):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),fee=r2(svc+book+ifee+(time-wtime));
   const live=!!ci&&!bought;
-  return{approved,waited:w,billed,time,saved,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
+  return{approved,waited:w,billed,time,wtime,saved,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
 // One "Service fee" line, with the parts behind a tap for anyone who wants them.
 const FEE_NOTE=`<div class="feedet">$2.99 + 9% of your waiter's time and the item, never more than $12. It covers card processing, payouts and support.</div>`;
 function feeDetails(parts){const p=parts.filter(([,v])=>v>0);return`<details class="feedet"><summary>What's in the service fee</summary>${p.map(([k,v])=>`<div><span>${k}</span><span class="mono">${money(v)}</span></div>`).join('')}</details>`}
 function billRows(b,who){
-  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.saved?' (group run, 75%)':b.minApplied?` (${money(MIN_PAY)} minimum)`:''),money(b.time)]];
+  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.saved?(who==='customer'?' (group run, 75%)':' (group run)'):b.minApplied?` (${money(MIN_PAY)} minimum)`:''),money(who==='customer'?b.time:(b.wtime??b.time))]];
   if(b.saved&&who==='customer')rows.push(['You saved on the group run',`−${money(b.saved)}`]);
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
@@ -891,10 +891,10 @@ function bundleCards(open){
   const groups=standGroups(open.filter(j=>kindOf(j)==='pickup'));if(!groups.length)return'';
   return`<div class="section"><h2>One trip, several orders</h2>${groups.map(g=>{let room=WSTATS.floatMax-WSTATS.outOfPocket;const take=[];
     for(const j of g){if(take.length>=5)break;if(+j.itemBudget<=room){take.push(j);room-=+j.itemBudget}}
-    if(!take.length)take.push(g[0]);const upto=take.reduce((s,j)=>s+waiterUpTo(j)*(take.length>1?BUNDLE_RATE:1),0),capped=take.length<Math.min(g.length,5);
+    if(!take.length)take.push(g[0]);const hrs=Math.max(...take.map(j=>j.hours)),runCap=Math.max(MIN_PAY,Math.max(GROUP_MAX_HOURLY,...take.map(j=>j.rate))*hrs),upto=take.length>1?Math.min(take.reduce((s,j)=>s+waiterUpTo(j)*BUNDLE_RATE,0),runCap+take.filter(j=>j.rush).length*RUSH_FEE):waiterUpTo(take[0]),capped=take.length<Math.min(g.length,5);
     return`<article class="card bundle"><div class="row"><div><span class="kindtag">${g.length} orders</span><h3>${esc(g.reduce((x,y)=>x.id<y.id?x:y).place)}</h3>${g[0].event?`<div class="meta">${esc(g[0].event.name)}</div>`:''}</div><span class="pill open">Up to ${money(upto)}</span></div>
     <ul class="bitems">${take.map(j=>`<li>${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)} <span class="meta">· ${fmtRate(j.rate)}/hr · limit ${money(j.itemBudget)}</span></li>`).join('')}</ul>
-    <div class="hint">Wait once and get paid by each booker: on a group run each order pays 75% of its usual time rate, so ${take.length} orders earn you about ${(take.length*BUNDLE_RATE).toFixed(2).replace(/\.?0+$/,'')}× the pay for one wait. You pay up to ${money(take.reduce((s,j)=>s+ +j.itemBudget,0))} at the register and get it back with your pay.${capped?` You can have up to ${money(WSTATS.floatMax)} of items to buy at once, so this trip covers ${take.length}.`:take.length<g.length?' Claim up to 5 at once, then come back for the rest.':''} Some stands limit how many each customer can buy, so check before you claim.</div>
+    <div class="hint">Wait once, get paid for every order: a group run pays up to $${GROUP_MAX_HOURLY}/hr for the wait (or the highest listed rate, if more), plus any rush bonuses. You pay up to ${money(take.reduce((s,j)=>s+ +j.itemBudget,0))} at the register and get it back with your pay.${capped?` You can have up to ${money(WSTATS.floatMax)} of items to buy at once, so this trip covers ${take.length}.`:take.length<g.length?' Claim up to 5 at once, then come back for the rest.':''} Some stands limit how many each customer can buy, so check before you claim.</div>
     ${WSTATS.canBatch?`<div class="btns"><button class="btn small" data-act="claim-stand" data-ids="${take.map(j=>j.id).join(',')}">${take.length>1?`Claim all ${take.length}`:'Claim 1'}</button></div>`:`<div class="note">Claiming several at once opens up after you finish ${WSTATS.batchMinJobs} jobs (you've finished ${WSTATS.done}). You can still claim these one at a time below.</div>`}</article>`}).join('')}</div>`}
 function eventCards(){
   if(!EVENTS.length)return'';
@@ -1207,7 +1207,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='buy-all'){const ids=b.dataset.ids.split(',').map(Number),gd=groupBuy[b.dataset.key]||{};if(!gd.photo)throw new Error('Add a photo of the receipt.');
       const items=ids.map(n=>({n,total:parseFloat((document.getElementById('gbuy-'+n)||{}).value)}));
       if(items.some(x=>!(x.total>0)))throw new Error('Enter what each order cost. Leave none blank.');
-      let done=0,err='';for(const x of items){try{await api(`/lines/${x.n}/purchase`,{method:'POST',body:{total:x.total,receipt:gd.photo,note:'Bought together with other orders on one receipt.'}});done++}catch(e){err=e.message}}
+      const pos=await getPos();let done=0,err='';for(const x of items){try{await api(`/lines/${x.n}/purchase`,{method:'POST',body:{total:x.total,receipt:gd.photo,receiptHash:gd.hash,note:'Bought together with other orders on one receipt.',...(pos||{})}});done++}catch(e){err=e.message}}
       if(!err)delete groupBuy[b.dataset.key];toast(err?`Recorded ${done} of ${items.length}. ${err}`:`Recorded all ${done} purchases. Each booker can see the receipt.`)}
     if(a==='checkin-all'){const ids=b.dataset.ids.split(',').map(Number),pos=await getPos();let done=0,err='';
       for(const n of ids){try{const j=data.shifts.find(x=>x.id===n);if(j&&j.status==='claimed')await api(`/lines/${n}/advance`,{method:'POST'});await api(`/lines/${n}/advance`,{method:'POST',body:pos||{}});done++}catch(e){err=e.message}}
@@ -1224,7 +1224,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='soldout'){await api(`/lines/${id}/soldout`,{method:'POST',body:{photo:soldPhoto[id]}});soldOpen.delete(+id);delete soldPhoto[id];toast('Marked sold out. You\'re paid for the time you waited.')}
     if(a==='purchase'){const d=buyDraft[id]||{},total=parseFloat(document.getElementById('buy-'+id).value);
       if(!(total>0))throw new Error('Enter the receipt total.');if(!d.photo)throw new Error('Add a photo of the receipt.');
-      const r=await api(`/lines/${id}/purchase`,{method:'POST',body:{total,receipt:d.photo,note:document.getElementById('bnote-'+id).value}});
+      const pos=await getPos();const r=await api(`/lines/${id}/purchase`,{method:'POST',body:{total,receipt:d.photo,receiptHash:d.hash,note:document.getElementById('bnote-'+id).value,...(pos||{})}});
       delete buyDraft[id];toast(`Purchase recorded: ${money(r.line.itemTotal)}. ${r.line.ownerName} can see the receipt.`)}
     if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});if(lastData)lastData.shifts=lastData.shifts.filter(x=>x.id!==+id);toast('Line released. Other waiters can claim it now.')}
     if(a==='position'){const r=await api(`/lines/${id}/position`,{method:'POST',body:{pos:+document.getElementById('pos-'+id).value}});toast(`Place in line updated to ${r.line.pos}.`)}
@@ -1237,6 +1237,11 @@ $('#view').addEventListener('click',async e=>{
 });
 
 // Receipt photos: shrunk on the phone before upload so they send quickly.
+// A 64-bit fingerprint of a photo (difference hash), so the server can spot a receipt photo reused on another job.
+async function dhashOf(url){try{const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=url});
+  const c=document.createElement('canvas');c.width=9;c.height=8;const x=c.getContext('2d');x.drawImage(img,0,0,9,8);const d=x.getImageData(0,0,9,8).data;
+  const g=(cx,cy)=>{const k=(cy*9+cx)*4;return d[k]*.299+d[k+1]*.587+d[k+2]*.114};let bits='';for(let y=0;y<8;y++)for(let cx=0;cx<8;cx++)bits+=g(cx,y)>g(cx+1,y)?'1':'0';
+  let h='';for(let i=0;i<64;i+=4)h+=parseInt(bits.slice(i,i+4),2).toString(16);return h}catch{return null}}
 async function shrinkPhoto(file){const url=URL.createObjectURL(file);
   try{const img=await new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>rej(new Error('That photo couldn\'t be opened. Try taking it again.'));i.src=url});
     const k=Math.min(1,1400/Math.max(img.naturalWidth,img.naturalHeight)),c=document.createElement('canvas');c.width=Math.round(img.naturalWidth*k);c.height=Math.round(img.naturalHeight*k);
@@ -1247,11 +1252,11 @@ $('#view').addEventListener('change',async e=>{const t=e.target;
   if(t.dataset&&t.dataset.pick){const n=+t.dataset.pick;t.checked?picked.add(n):picked.delete(n);render();return}
   if(t.id&&t.id.startsWith('rr-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).reason=t.value;return}
   if(t.dataset&&t.dataset.gphoto&&t.files&&t.files[0]){const k=t.dataset.gphoto,gd=groupBuy[k]=groupBuy[k]||{};gd.totals=gd.totals||{};
-    document.querySelectorAll('[id^="gbuy-"]').forEach(x=>{if(x.value)gd.totals[+x.id.slice(5)]=x.value});try{gd.photo=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}return}
+    document.querySelectorAll('[id^="gbuy-"]').forEach(x=>{if(x.value)gd.totals[+x.id.slice(5)]=x.value});try{gd.photo=await shrinkPhoto(t.files[0]);gd.hash=await dhashOf(gd.photo);render()}catch(err){toast(err.message)}return}
   if(t.dataset&&t.dataset.soldphoto&&t.files&&t.files[0]){try{soldPhoto[+t.dataset.soldphoto]=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}return}
   if(!t.dataset||!t.dataset.photo||!t.files||!t.files[0])return;const id=+t.dataset.photo;
   try{const d=buyDraft[id]=buyDraft[id]||{};const tot=document.getElementById('buy-'+id),note=document.getElementById('bnote-'+id);if(tot)d.total=tot.value;if(note)d.note=note.value;
-    d.photo=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}});
+    d.photo=await shrinkPhoto(t.files[0]);d.hash=await dhashOf(d.photo);render()}catch(err){toast(err.message)}});
 $('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('rd-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).details=t.value}if(t.id&&t.id.startsWith('gbuy-')){const box=t.closest('.buybox'),btn=box&&box.querySelector('[data-act="buy-all"]');if(btn){const gd=groupBuy[btn.dataset.key]=groupBuy[btn.dataset.key]||{};(gd.totals=gd.totals||{})[+t.id.slice(5)]=t.value}}if(t.id&&t.id.startsWith('buy-')){(buyDraft[+t.id.slice(4)]=buyDraft[+t.id.slice(4)]||{}).total=t.value}
   if(t.id&&t.id.startsWith('bnote-')){(buyDraft[+t.id.slice(6)]=buyDraft[+t.id.slice(6)]||{}).note=t.value}if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}
   if(t.id&&t.id.startsWith('chat-'))chatDraft[+t.id.slice(5)]=t.value});

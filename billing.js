@@ -21,7 +21,7 @@
 // Fees (kept by Wait For Me!): 15% of the waiter's time pay, a booking fee ($4.99 for pickups,
 // $2.50 for saved spots), and 3% of
 // the item price to cover card processing. No fees on a late cancellation or a sold-out pickup.
-// ASAP requests add a $1.99 rush bonus that goes entirely to the waiter.
+// ASAP requests add a $4 rush bonus that goes entirely to the waiter.
 // Waiters earn at least $8 for their time on any job they're paid for.
 // Booker misses a pickup meetup: they pay the waiter's time (and any drop-off fee) and our fees, but
 // not the item. The waiter keeps the item.
@@ -34,7 +34,7 @@ const PICKUP_BOOKING_FEE = 4.99;
 const bookingFeeFor = (line) => (kindOf(line) === "pickup" ? PICKUP_BOOKING_FEE : BOOKING_FEE);
 const ITEM_FEE = 0.03;
 const MIN_PAY = 8; // least a waiter earns for their time on a paid job
-const RUSH_FEE = 1.99; // ASAP requests
+const RUSH_FEE = 4; // ASAP requests: a bonus paid to the waiter
 // Pricing v2 (requests posted from Nov 2026): one service fee of $2.99 + 9% of the waiter's time and the item, at most $12.
 const BASE_FEE = 2.99;
 const PCT_FEE = 0.09;
@@ -44,6 +44,9 @@ const v2 = (line) => Number(line.pricingV) >= 2;
 // of the usual time charge (at least $6). The waiter still earns more for that wait than for one order.
 const BUNDLE_RATE = 0.75;
 const BUNDLE_MIN_PAY = 6;
+// On a group run the waiter earns at most $35/hr for the shared wait (or the highest agreed rate, if higher,
+// and never less than the $8 job minimum). What bookers pay beyond that stays with Wait For Me!.
+const GROUP_MAX_HOURLY = 35;
 const serviceFeeV2 = (timePay, item) => roundCents(Math.min(FEE_CAP, BASE_FEE + PCT_FEE * (timePay + item)));
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
 const HOUR = 3600 * 1000;
@@ -95,16 +98,20 @@ function billing(line, now = Date.now()) {
   const grouped = !!line.bundled && billed > 0 && line.outcome !== "cancelled_late";
   const timePay = grouped ? Math.max(BUNDLE_MIN_PAY, roundCents(rawPay * BUNDLE_RATE)) : fullTimePay;
   const bundleSaving = grouped ? roundCents(fullTimePay - timePay) : 0;
+  const runSize = Math.max(2, Number(line.bundleSize) || 2);
+  const runCap = Math.max(MIN_PAY, Math.max(GROUP_MAX_HOURLY, Number(line.rate)) * billed);
+  const waiterTimePay = grouped ? Math.min(timePay, roundCents(runCap / runSize)) : timePay;
+  const groupMargin = roundCents(timePay - waiterTimePay);
   const item = itemCharged ? roundCents(Number(line.itemTotal) || 0) : 0;
   const dropoff = bought && line.handoff === "dropoff" ? roundCents(Number(line.dropoffFee) || 0) : 0;
   // ASAP requests: the rush fee goes to the waiter as a bonus (not on late cancellations).
   const rushFee = line.rush && billed > 0 && line.outcome !== "cancelled_late" ? RUSH_FEE : 0;
-  const waiterPay = roundCents(timePay + dropoff + rushFee);
+  const waiterPay = roundCents(waiterTimePay + dropoff + rushFee);
   const charged = feeRate > 0 && billed > 0;
   const serviceFee = v2(line) ? (charged ? serviceFeeV2(timePay, item) : 0) : roundCents(timePay * feeRate);
   const bookingFee = !v2(line) && charged ? bookingFeeFor(line) : 0;
   const itemFee = v2(line) ? 0 : roundCents(item * ITEM_FEE);
-  const fee = roundCents(serviceFee + bookingFee + itemFee);
+  const fee = roundCents(serviceFee + bookingFee + itemFee + groupMargin);
   return {
     approvedHours: approved,
     waitedHours: Math.round(waited * 100) / 100,
@@ -113,6 +120,8 @@ function billing(line, now = Date.now()) {
     minApplied,
     bundled: grouped,
     bundleSaving,
+    waiterTimePay,
+    groupMargin,
     dropoff,
     waiterPay,
     item,
@@ -144,4 +153,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
