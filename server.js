@@ -620,13 +620,27 @@ async function flagAdmins(title, body) {
 }
 // Orders at the same stand: same event (if any) and the same place name, ignoring case and extra spaces.
 const standKey = (l) => (l.eventId || "") + "|" + String(l.place || "").trim().toLowerCase().replace(/\s+/g, " ");
-const RUN_NEAR_M = 300;
-// Other runs a booker's open request could join: unbought orders at a different stand at the same event, or very close by.
+const RUN_NEAR_M = 150;
+// Words that describe any stand, so they don't count when deciding two names mean the same stand.
+const STAND_WORDS = new Set("the a an at by near in of and to sec section stand booth merch merchandise store shop team official stadium arena center centre kiosk cart concession concessions level floor".split(" "));
+const standTokens = (p) => new Set(String(p || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w && !STAND_WORDS.has(w)));
+// Two differently written names that look like the same stand: they share a distinctive word or number
+// (like "112" in "Team Store 112" and "team store section 112").
+function sameStandName(a, b) {
+  const A = standTokens(a), B = standTokens(b);
+  if (!A.size || !B.size) return false;
+  for (const w of A) if (B.has(w)) return true;
+  return false;
+}
+// Runs a booker's open request could join: unbought orders at what looks like the SAME stand, written
+// differently, at the same event (or, without an event, within about 150 m). Never a different stand,
+// so a waiter on a run stays in one line.
 function runsFor(l, active) {
   if (l.status !== "open" || l.kind !== "pickup") return [];
   const near = (x) =>
-    (l.eventId && x.eventId === l.eventId) ||
-    (!l.eventId && !x.eventId && l.lat != null && x.lat != null && metersBetween({ lat: l.lat, lng: l.lng }, { lat: x.lat, lng: x.lng }) <= RUN_NEAR_M);
+    sameStandName(l.place, x.place) &&
+    ((l.eventId && x.eventId === l.eventId) ||
+      (!l.eventId && !x.eventId && l.lat != null && x.lat != null && metersBetween({ lat: l.lat, lng: l.lng }, { lat: x.lat, lng: x.lng }) <= RUN_NEAR_M));
   const groups = new Map();
   for (const x of active) {
     if (x.id === l.id || standKey(x) === standKey(l) || !near(x)) continue;
