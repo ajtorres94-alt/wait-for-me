@@ -57,7 +57,7 @@ module.exports = {
   async createUser({ name, email, pwHash, birthDate = null }) {
     if (users.some((u) => u.email === email)) return null;
     const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date(), lastSeenAt: null,
-      stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, payoutsReady: false, birthDate };
+      stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, payoutsReady: false, birthDate, contractorVersion: null, contractorAcceptedAt: null, minRate: null };
     users.push(u);
     return u;
   },
@@ -69,7 +69,7 @@ module.exports = {
   },
   async updateUser(id, fields) {
     const u = users.find((x) => x.id === id);
-    if (u) for (const k of ["look", "avatar", "suspended", "pwHash", "stripeCustomer", "stripeAccount", "cardPm", "cardLabel", "payoutsReady", "birthDate"]) if (fields[k] !== undefined) u[k] = fields[k];
+    if (u) for (const k of ["look", "avatar", "suspended", "pwHash", "stripeCustomer", "stripeAccount", "cardPm", "cardLabel", "payoutsReady", "birthDate", "contractorVersion", "contractorAcceptedAt", "minRate"]) if (fields[k] !== undefined) u[k] = fields[k];
     return u || null;
   },
   async incNoShows(id) {

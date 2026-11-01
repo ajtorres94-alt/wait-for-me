@@ -314,6 +314,10 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .feedet summary{cursor:pointer;padding:2px 0;list-style:none;text-decoration:underline;text-underline-offset:2px}
 .feedet summary::-webkit-details-marker{display:none}
 .feedet>div{display:flex;justify-content:space-between;padding:2px 0 2px 12px}
+.agree{background:var(--bg);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.agree ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;color:var(--muted)}
+.minrate{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit;font-weight:700;color:var(--ink)}
+.linkbtn{background:none;border:0;padding:0;font:inherit;color:inherit;text-decoration:underline;cursor:pointer}
 .buybox{display:flex;flex-direction:column;gap:10px;background:var(--bg);border-radius:12px;padding:12px;width:100%}
 .buybox .row2{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .buybox input[type=number]{width:120px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-weight:700}
@@ -496,12 +500,26 @@ async function mountCard(){const host=$('#card-el');if(!host||host.dataset.mount
   catch(e){const x=$('#cardErr');if(x)x.textContent=e.message}}
 async function finishCard(id){const r=await api('/payments/card/finish',{method:'POST',body:{setupIntentId:id}});me=r.user;cardOpen=false;cardUI=null;toast(`Saved ${r.card}. You can post requests now.`)}
 function goAccount(msg,openCard){tab[role]='account';if(openCard)cardOpen=true;render();window.scrollTo(0,0);if(msg)toast(msg)}
-function payNeedsSetup(err){if(err&&err.code==='dob_required'){goAccount('Confirm your date of birth first.');return true}
+function payNeedsSetup(err){if(err&&err.code==='agreement_required'){goAccount('Accept the waiter agreement in Getting paid first.');return true}
+  if(err&&err.code==='dob_required'){goAccount('Confirm your date of birth first.');return true}
   if(err&&err.code==='card_required'){goAccount('Add a card to post requests.',true);return true}
   if(err&&err.code==='payouts_required'){goAccount('Set up payouts so we can pay you, then claim the job.');return true}return false}
 function dobCard(){return`<article class="card section"><h2>Confirm your age</h2><div class="note">Wait For Me! is for people 18 and older. Enter your date of birth once to keep posting, claiming and getting paid. It can't be changed in the app later.</div>
   <div class="field"><label for="dob-in">Date of birth</label><input id="dob-in" type="date" autocomplete="bday" min="1915-01-01" max="${new Date().toISOString().slice(0,10)}"></div>
   <div class="btns"><button class="btn small" data-act="dob-save">Save</button></div></article>`}
+// The waiter agreement: independent contractor terms, accepted once before payouts and claiming.
+function agreementBox(){return`<div class="agree"><b>Waiter agreement</b><ul>
+  <li>You're an independent contractor, not an employee of Wait For Me!.</li>
+  <li>You choose if, when and how often you take jobs, and can turn down any job without penalty.</li>
+  <li>You set your own minimum rate and can offer a different rate on any job.</li>
+  <li>You decide how to do each job and use your own phone and transportation.</li>
+  <li>You're free to work for other apps, competitors or your own customers.</li>
+  <li>You're responsible for your own taxes. Stripe sends you a 1099 if you earn enough to need one.</li></ul>
+  <label class="check" for="agree-cb"><input id="agree-cb" type="checkbox"> <span>I agree to the waiter agreement and the <a href="/terms#waiters" target="_blank" rel="noopener">Terms</a>.</span></label>
+  <div class="btns"><button class="btn small" data-act="agree">Agree and continue</button></div></div>`}
+const RATE_CHOICES=[null,15,20,25,30,40,50];
+function rateBox(){const cur=me.minRate??null;return`<div class="kv"><div>Your minimum rate<small>You'll only see jobs, and get event alerts, at this hourly rate or higher. Change it any time.</small></div>
+  <select id="minrate" class="minrate" aria-label="Your minimum rate">${RATE_CHOICES.map(r=>`<option value="${r??''}"${r===cur?' selected':''}>${r?`$${r}/hr+`:'Any rate'}</option>`).join('')}${cur!=null&&!RATE_CHOICES.includes(cur)?`<option value="${cur}" selected>$${cur}/hr+</option>`:''}</select></div>`}
 function paymentCard(){
   if(!PAY.enabled)return`<article class="card section"><h2>Payments</h2>
     <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other using the totals shown on each finished line.</div></article>`;
@@ -515,8 +533,10 @@ function paymentCard(){
     :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
   <article class="card section"><h2>Getting paid</h2>
     <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. If your Stripe payouts page shows Instant Payout, you can cash out the same night for a small fee. Your very first payout can take about 7 days while Stripe sets up your account, so start with small items. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
-    <div class="btns">${po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
+    ${me.contractorAgreed?`<div class="hint">You accepted the <a href="/terms#waiters" target="_blank" rel="noopener">waiter agreement</a> on ${new Date(me.contractorAcceptedAt).toLocaleDateString()}.</div>`:agreementBox()}
+    <div class="btns">${!me.contractorAgreed?'':po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
       :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
+    ${rateBox()}
     ${PAY.testMode&&po!=='ready'?'<div class="hint">Test mode: on Stripe\'s page, use test phone 000 000 0000, code 000000, SSN 000-00-0000 and their test bank account. No real money moves.</div>':''}</article>`}
 function payNote(j,who){
   if(!PAY.enabled||!j.waiterId)return'';const st=j.payStatus;
@@ -551,16 +571,16 @@ function checkinNote(j){
   return j.checkinVerified?`<div class="okline">✓ Check-in location verified</div>`:`<div class="hint">Check-in location couldn't be verified for this address.</div>`}
 const OUTCOME_TXT={
   customer:{
-    time_up:w=>`Your approved time ran out, so ${w} ended the shift.`,
-    customer_noshow:w=>`You didn't swap in within 30 minutes of ${w} reaching the front, so the shift ended. You pay for the time waited.`,
+    time_up:w=>`Your approved time ran out, so ${w} ended the job.`,
+    customer_noshow:w=>`You didn't swap in within 30 minutes of ${w} reaching the front, so the job ended. You pay for the time waited.`,
     cancelled_free:()=>`You cancelled more than 2 hours before the start, so there's no charge.`,
     cancelled_late:()=>`You cancelled within 2 hours of the start or after your waiter left for the line, so you pay 30 minutes of waiter time with no fees.`,
     cancelled_inline:w=>`You cancelled after ${w} checked in, so you pay for the time they waited.`,
     sold_out:w=>`It was sold out when ${w} got to the register, so nothing was bought. You pay only for the time they waited, with no fees.`,
     pickup_noshow:w=>`You didn't meet ${w} within the meetup window, so the job closed and you were charged for their time but not the item. They keep it.`},
   waiter:{
-    time_up:()=>`The approved time ran out and you ended the shift.`,
-    customer_noshow:o=>`${o} didn't swap in within 30 minutes, so you ended the shift and are paid for your time.`,
+    time_up:()=>`The approved time ran out and you ended the job.`,
+    customer_noshow:o=>`${o} didn't swap in within 30 minutes, so you ended the job and are paid for your time.`,
     cancelled_free:o=>`${o} cancelled more than 2 hours before the start.`,
     cancelled_late:o=>`${o} cancelled late, so you're paid for 30 minutes.`,
     cancelled_inline:o=>`${o} cancelled after you checked in, so you're paid for the time you waited.`,
@@ -643,10 +663,10 @@ const ICONS={
  account:svg('<circle cx="12" cy="8.5" r="3.5"/><path d="M5 19.5c1.3-3.4 3.9-5 7-5s5.7 1.6 7 5"/>'),
  find:svg('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>'),
  shifts:svg('<circle cx="12" cy="12" r="8"/><path d="M12 8v4.2l2.8 1.8"/>')};
-const TITLES={mine:'My requests',post:'New request',account:'Account',find:'Find jobs',shifts:'My shifts'};
+const TITLES={mine:'My requests',post:'New request',account:'Account',find:'Find jobs',shifts:'My jobs'};
 function renderTabs(){
   const mine=data.mine.filter(j=>j.status!=='done').length, open=data.open.length, shifts=data.shifts.filter(j=>j.status!=='done').length;
-  const t=role==='customer'?[['mine','Requests',mine],['post','Post',0],['account','Account',0]]:[['find','Find jobs',open],['shifts','My shifts',shifts],['account','Account',0]];
+  const t=role==='customer'?[['mine','Requests',mine],['post','Post',0],['account','Account',0]]:[['find','Find jobs',open],['shifts','My jobs',shifts],['account','Account',0]];
   $('#tabs').innerHTML=t.map(([k,l,c])=>`<button role="tab" id="tab-${k}" class="${k==='post'?'plus':''}" aria-selected="${tab[role]===k}" data-k="${k}"><span class="ic">${ICONS[k]}${c?`<span class="badge">${c}</span>`:''}</span>${l}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){if(tab[role]==='post')editing=null;tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
 }
@@ -691,7 +711,7 @@ function customerMine(){
     if(active&&j.codeResetAt&&nowS()-Date.parse(j.codeResetAt)<2*3600e3)extra+=`<div class="warnnote">Someone entered the wrong code 5 times, so we made a new one. Only give your code to your waiter in person.</div>`;
     if(active&&!j.checkinAt)extra+=`<div class="hint">The clock starts when ${W} checks in${pickup?' at the store':' at the spot'}. You only pay for time they actually spend${pickup?' in line':' there'}.</div>`;
     if(active&&j.noShowAt&&nowS()>=j.noShowAt)extra+=`<div class="warnnote">${W} hasn't checked in and it's past the start time. You can report a no-show and your request reopens for other waiters, at no charge.</div>`;
-    if(active&&b.nearUp)extra+=`<div class="warnnote">${b.timeUp?'Your approved time is up.':'Your approved time is almost up.'} Add time, or ${W} can end the shift when it runs out.</div>`;
+    if(active&&b.nearUp)extra+=`<div class="warnnote">${b.timeUp?'Your approved time is up.':'Your approved time is almost up.'} Add time, or ${W} can end the job when it runs out.</div>`;
     if(active&&bought&&j.graceEndsAt)extra+=nowS()>=j.graceEndsAt?`<div class="warnnote">Your meetup window has passed. ${W} can close the job now and keep the item; you'd pay for their time but not the item. Message them to meet up.</div>`
       :`<div class="hint">Meet ${W} by ${clockOf(j.graceEndsAt)}. After that they can close the job and keep the item, and you'd pay only for their time.</div>`;
     if(bought&&active)extra+=billRows(b,'customer');
@@ -867,7 +887,7 @@ function locate(){
     e=>{near.busy=false;near.on=false;render();toast(e.code===1?'Location is blocked. Allow location for this app in your phone\'s settings, then try again.':'Couldn\'t get your location. Try again in a moment.')},
     {enableHighAccuracy:false,timeout:10000,maximumAge:300000});
 }
-let eventFilter=null,selecting=false;const picked=new Set();let WSTATS={done:0,canBatch:false,batchMinJobs:10,floatMax:200,outOfPocket:0};
+let showAllRates=false,eventFilter=null,selecting=false;const picked=new Set();let WSTATS={done:0,canBatch:false,batchMinJobs:10,floatMax:200,outOfPocket:0};
 // Requests at the same stand (same event and place) can be done in one trip.
 const standKey=j=>(j.eventId||'')+'|'+String(j.place||'').trim().toLowerCase().replace(/\s+/g,' ');
 function standGroups(list){const g=new Map();for(const j of list){const k=standKey(j);if(!g.has(k))g.set(k,[]);g.get(k).push(j)}return[...g.values()].filter(x=>x.length>1)}
@@ -891,6 +911,8 @@ function waiterFind(){
   const cats=['All','Pickups','Spots'];
   let open=data.open.filter(j=>filter==='All'||(filter==='Pickups')===(kindOf(j)==='pickup'));
   if(eventFilter)open=open.filter(j=>j.eventId===eventFilter);
+  const belowRate=me.minRate?open.filter(j=>j.rate<me.minRate).length:0;
+  if(me.minRate&&!showAllRates)open=open.filter(j=>j.rate>=me.minRate);
   for(const id of [...picked])if(!open.some(j=>j.id===id))picked.delete(id);
   if(near.on){
     if(near.radius)open=open.filter(j=>{const d=distOf(j);return d!=null&&d<=near.radius});
@@ -900,7 +922,7 @@ function waiterFind(){
   const evName=eventFilter&&(EVENTS.find(e=>e.id===eventFilter)||{}).name;
   const selBar=open.length>1&&WSTATS.canBatch?(selecting?`<div class="selbar"><span><b>${picked.size}</b> selected${picked.size>=5?' (most at once)':''}</span><span class="btns"><button class="btn small" data-act="claim-batch"${picked.size?'':' disabled'}>Claim ${picked.size||''}</button><button class="btn ghost small" data-act="select-off">Cancel</button></span></div>`
     :`<div class="btns"><button class="btn ghost small" data-act="select-on">Claim several at once</button></div>`):'';
-  return`<div class="list">${eventCards()}${evName?`<div class="note">Showing requests for <b>${esc(evName)}</b>.</div>`:''}<div class="filters" role="group" aria-label="Filter by kind">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
+  return`<div class="list">${eventCards()}${evName?`<div class="note">Showing requests for <b>${esc(evName)}</b>.</div>`:''}${me.minRate&&(belowRate||showAllRates)?`<div class="note">${showAllRates?'Showing all rates.':`Showing jobs at $${me.minRate}/hr or more. ${belowRate} below your rate ${belowRate===1?'is':'are'} hidden.`} <button class="linkbtn" data-act="rates-all">${showAllRates?`Only $${me.minRate}/hr+`:'Show all'}</button></div>`:''}<div class="filters" role="group" aria-label="Filter by kind">${cats.map(c=>`<button class="chip" aria-pressed="${filter===c}" data-cat="${c}">${c}</button>`).join('')}</div>
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
      ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>${selBar}
@@ -928,7 +950,7 @@ function waiterShifts(){
     <div class="row2"><label class="photo-btn">${gd.photo?`<img class="thumb" src="${gd.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo'}<input type="file" accept="image/*" capture="environment" data-gphoto="${esc(k)}"></label></div>
     <div class="btns"><button class="btn small" data-act="buy-all" data-key="${esc(k)}" data-ids="${g.map(j=>j.id).join(',')}">Record all ${g.length} purchases</button></div></div>`}).join('');
   const allBtns=buyAll+Object.values(groups).filter(g=>g.length>1).map(g=>`<div class="note"><b>${g.length} jobs at ${esc(g[0].event?g[0].event.name:g[0].place)}</b><div class="btns" style="margin-top:8px"><button class="btn small" data-act="checkin-all" data-ids="${g.map(j=>j.id).join(',')}">I'm there for all ${g.length}</button></div></div>`).join('');
-  return`<div class="list">${alertsNudge(mine,'waiter')}${allBtns}<div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upToSum)} on active shifts</div></div>
+  return`<div class="list">${alertsNudge(mine,'waiter')}${allBtns}<div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upToSum)} on active jobs</div></div>
    ${mine.length?mine.map(j=>{
      const pickup=kindOf(j)==='pickup',bought=pickup&&!!j.purchasedAt,keys=keysFor(j),next=keys[keys.indexOf(j.status)+1],b=billOf(j),O=esc(j.ownerName);let ctl='',extra='';
      const secured=!PAY.enabled||j.payStatus==='held';
@@ -953,11 +975,11 @@ function waiterShifts(){
        if(j.graceEndsAt&&nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't met you within the meetup window. Message them in the chat below first. If they still don't reply, you can close the job: you're paid for your time, the booker isn't charged for the item, and you keep it.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">Close job (booker didn't meet)</button>`;
        else if(j.graceEndsAt)extra+=`<div class="hint">If ${O} hasn't met you by ${clockOf(j.graceEndsAt)}, you can close the job and be paid for your time, and keep the item (the booker won't be charged for it). Message them below.</div>`}
      else if(j.status==='handoff'&&j.graceEndsAt){
-       if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't swapped in within 30 minutes. You can end the shift and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (booker didn't show)</button>`;
-       else extra+=`<div class="hint">If ${O} doesn't swap in by ${clockOf(j.graceEndsAt)}, you can end the shift and be paid for your time. Message them below.</div>`}
+       if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't swapped in within 30 minutes. You can end the job and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End job (booker didn't show)</button>`;
+       else extra+=`<div class="hint">If ${O} doesn't swap in by ${clockOf(j.graceEndsAt)}, you can end the job and be paid for your time. Message them below.</div>`}
      const handReady=pickup?j.status==='handoff':['inline','nearfront','handoff'].includes(j.status);
      if(handReady)ctl+=`<div class="codebox" style="width:100%"><label class="meta" for="code-${j.id}" style="width:100%">${pickup?`When you meet ${O}, ask for their 4-digit handoff code and enter it to hand over the item.`:`When ${O} arrives, ask for their 4-digit spot code and enter it to hand over the spot.`}</label><input id="code-${j.id}" inputmode="numeric" maxlength="4" placeholder="0000" autocomplete="off"><button class="btn small" data-act="swap" data-id="${j.id}">${pickup?'Hand it over':'Hand over spot'}</button></div>`;
-     if(j.status!=='done'&&b.timeUp)extra+=`<div class="warnnote">The approved time is up. If ${O} doesn't add time, you can end the shift and be paid for the full ${fmtShort(b.approved)}.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (time's up)</button>`;
+     if(j.status!=='done'&&b.timeUp)extra+=`<div class="warnnote">The approved time is up. If ${O} doesn't add time, you can end the job and be paid for the full ${fmtShort(b.approved)}.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End job (time's up)</button>`;
      else if(j.status!=='done'&&b.nearUp)extra+=`<div class="warnnote">Approved time is almost up. Ask ${O} to add time if you still need it.</div>`;
      if(j.status==='done'){ctl='';const txt=OUTCOME_TXT.waiter[j.outcome];extra=`${billRows(b,'waiter')}${txt?`<div class="hint">${txt(O)}</div>`:''}${rateHTML(j,j.ownerName,'booker')}`}
      const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">Optional: what you're wearing, so ${O} can spot you.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
@@ -965,7 +987,7 @@ function waiterShifts(){
        ${steps(j)}<div class="stepnote"><span><b>${stShort(j)}</b></span>${j.pos&&j.status!=='done'&&pickup?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
        ${itemBox(j,'waiter')}
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
-       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'||j.chatOpen?chatHTML(j,j.ownerName):''}${reportHTML(j,'waiter')}</article>`}).join(''):`<div class="empty">No shifts yet. Claim a job from <b>Find jobs</b>.</div>`}</div>`}
+       ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'||j.chatOpen?chatHTML(j,j.ownerName):''}${reportHTML(j,'waiter')}</article>`}).join(''):`<div class="empty">No jobs yet. Claim a job from <b>Find jobs</b>.</div>`}</div>`}
 
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
@@ -1149,6 +1171,8 @@ $('#view').addEventListener('click',async e=>{
       if(r.error){$('#cardErr').textContent=r.error.message;b.disabled=false;return}
       await finishCard(r.setupIntent.id);await load(true);return}
     if(a==='payouts'){const r=await api('/payments/payouts/link',{method:'POST'});location.href=r.url;return}
+    if(a==='agree'){if(!$('#agree-cb').checked)throw new Error('Check the box to accept the waiter agreement.');const r=await api('/me/contractor-agreement',{method:'POST',body:{accept:true}});me=r.user;toast('Agreement accepted. You can set up payouts and claim jobs.');render();return}
+    if(a==='rates-all'){showAllRates=!showAllRates;b.disabled=false;render();return}
     if(a==='dob-save'){const v=$('#dob-in').value;if(!v)throw new Error('Enter your date of birth.');const r=await api('/me/birthdate',{method:'POST',body:{birthDate:v}});me=r.user;toast('Thanks, you\'re all set.');render();return}
     if(a==='payouts-check'){const r=await api('/payments/payouts/refresh',{method:'POST'});me=r.user;toast(r.status.ready?'Payouts are on. You can claim lines now.':r.status.needsInfo?'Stripe still needs a few details. Tap Finish payout setup.':'Stripe is still reviewing your details. Check again soon.');await load(true);return}
     if(a==='logout'){if(alertState==='on'){try{const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription();if(sub)await api('/push/unsubscribe',{method:'POST',body:{endpoint:sub.endpoint}})}catch{}}
@@ -1182,9 +1206,9 @@ $('#view').addEventListener('click',async e=>{
     if(a==='ev-filter'){eventFilter=eventFilter===+id?null:+id;b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='select-on'||a==='select-off'){selecting=a==='select-on';picked.clear();b.disabled=false;render();return}
     if(a==='claim-batch'){const r=await api('/lines/claim-batch',{method:'POST',body:{ids:[...picked]}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
-      selecting=false;picked.clear();toast(bad.length?`Claimed ${ok.length} of ${r.results.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My shifts.`);if(ok.length)tab.waiter='shifts'}
+      selecting=false;picked.clear();toast(bad.length?`Claimed ${ok.length} of ${r.results.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My jobs.`);if(ok.length)tab.waiter='shifts'}
     if(a==='claim-stand'){const ids=b.dataset.ids.split(',').map(Number);const r=await api('/lines/claim-batch',{method:'POST',body:{ids}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
-      toast(bad.length?`Claimed ${ok.length} of ${ids.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My shifts.`);if(ok.length)tab.waiter='shifts'}
+      toast(bad.length?`Claimed ${ok.length} of ${ids.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My jobs.`);if(ok.length)tab.waiter='shifts'}
     if(a==='buy-all'){const ids=b.dataset.ids.split(',').map(Number),gd=groupBuy[b.dataset.key]||{};if(!gd.photo)throw new Error('Add a photo of the receipt.');
       const items=ids.map(n=>({n,total:parseFloat((document.getElementById('gbuy-'+n)||{}).value)}));
       if(items.some(x=>!(x.total>0)))throw new Error('Enter what each order cost. Leave none blank.');
@@ -1224,6 +1248,7 @@ async function shrinkPhoto(file){const url=URL.createObjectURL(file);
     c.getContext('2d').drawImage(img,0,0,c.width,c.height);let q=.75,d=c.toDataURL('image/jpeg',q);while(d.length>1.4e6&&q>.3){q-=.15;d=c.toDataURL('image/jpeg',q)}return d}
   finally{URL.revokeObjectURL(url)}}
 $('#view').addEventListener('change',async e=>{const t=e.target;
+  if(t.id==='minrate'){try{const r=await api('/me/min-rate',{method:'POST',body:{rate:t.value===''?null:+t.value}});me=r.user;toast(me.minRate?`You'll see jobs at $${me.minRate}/hr or more.`:'You\'ll see jobs at any rate.');render()}catch(err){toast(err.message)}return}
   if(t.dataset&&t.dataset.pick){const n=+t.dataset.pick;t.checked?picked.add(n):picked.delete(n);render();return}
   if(t.id&&t.id.startsWith('rr-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).reason=t.value;return}
   if(t.dataset&&t.dataset.gphoto&&t.files&&t.files[0]){const k=t.dataset.gphoto,gd=groupBuy[k]=groupBuy[k]||{};gd.totals=gd.totals||{};

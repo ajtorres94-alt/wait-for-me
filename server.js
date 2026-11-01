@@ -124,10 +124,18 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
   .filter(Boolean);
 const isAdmin = (u) => !!u && ADMIN_EMAILS.includes(String(u.email).toLowerCase());
 
+// The waiter agreement (independent contractor terms). Bump the version when its terms change,
+// and every waiter is asked to accept again before claiming jobs.
+const CONTRACTOR_VERSION = "2026-11-01";
+function requireAgreement(u) {
+  if (u.contractorVersion !== CONTRACTOR_VERSION) fail(403, "Accept the waiter agreement in Account first.", "agreement_required");
+}
 const publicUser = (u) =>
   u && {
     id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "", isAdmin: isAdmin(u),
     card: u.cardPm ? u.cardLabel || "Card on file" : null, birthDateSet: !!u.birthDate,
+    contractorAgreed: u.contractorVersion === CONTRACTOR_VERSION, contractorAcceptedAt: u.contractorVersion === CONTRACTOR_VERSION ? u.contractorAcceptedAt : null,
+    minRate: u.minRate ?? null,
     payouts: u.payoutsReady ? "ready" : u.stripeAccount ? "started" : "none",
   };
 const paymentsInfo = () => ({ enabled: pay.enabled(), publishableKey: pay.publishableKey(), testMode: pay.testMode() });
@@ -181,7 +189,7 @@ function summarize(s) {
 // ---- timing rules ----
 const EXPIRE_MS = 2 * 3600 * 1000; // open lines leave Find lines 2 hours after their start time
 const NOSHOW_MS = 15 * 60 * 1000; // a booker can report a no-show 15 minutes after the start time
-const GRACE_MS = 30 * 60 * 1000; // waiter can end the shift 30 minutes after reaching the front
+const GRACE_MS = 30 * 60 * 1000; // waiter can end the job 30 minutes after reaching the front
 const FREE_CANCEL_MS = 2 * 3600 * 1000; // cancelling 2+ hours before the start is free
 const CHECKIN_RADIUS_M = 800; // a check-in within about half a mile of the line counts as verified
 const SWAP_TRIES = 5;
@@ -522,6 +530,7 @@ async function eventFor(eventId) {
 async function claimLine(me, l) {
   if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
   requireAdult(me);
+  requireAgreement(me);
   if (isExpired(l)) fail(409, "This request's start time has passed.");
   if (l.kind === "pickup") {
     const owed = outOfPocket(await store.listLines({ waiterId: me.id }));
@@ -750,6 +759,22 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { user: publicUser(u) });
   }
 
+  // Waiters accept the independent contractor agreement once (again if its terms change). The time is recorded.
+  if (urlPath === "/api/me/contractor-agreement" && method === "POST") {
+    const b = await readBody(req);
+    if (b.accept !== true) fail(400, "Check the box to accept the waiter agreement.");
+    requireAdult(me);
+    const u = await store.updateUser(me.id, { contractorVersion: CONTRACTOR_VERSION, contractorAcceptedAt: new Date() });
+    return send(res, 200, { user: publicUser(u) });
+  }
+  // The lowest hourly rate a waiter wants to see and be alerted about (null for any rate).
+  if (urlPath === "/api/me/min-rate" && method === "POST") {
+    const b = await readBody(req);
+    const rate = b.rate === null || b.rate === "" || b.rate === undefined ? null : num(b.rate, "Your minimum rate", MIN_RATE, 200);
+    const u = await store.updateUser(me.id, { minRate: rate === null ? null : Math.round(rate * 100) / 100 });
+    return send(res, 200, { user: publicUser(u) });
+  }
+
   // ---- payments (Stripe) ----
   if (urlPath.startsWith("/api/payments/")) {
     if (!pay.enabled()) fail(404, "Payments aren't switched on yet.");
@@ -768,6 +793,7 @@ async function api(req, res, urlPath, query) {
       return send(res, 200, { user: publicUser(await store.userById(me.id)), card: label });
     }
     if (urlPath === "/api/payments/payouts/link" && method === "POST") {
+      requireAgreement(me);
       limit(`payout:${me.id}`, 20, 60 * 60 * 1000, "Too many tries. Try again in an hour.");
       if (me.stripeAccount && !me.payoutsReady) await pay.refreshPayouts(store, me);
       return send(res, 200, await pay.payoutLink(store, me, appUrl(req)));
@@ -883,7 +909,11 @@ async function api(req, res, urlPath, query) {
       // Tell waiters who said they're at this event.
       const who = (await store.presentUserIds(event.id)).filter((id) => id !== me.id);
       const what = f.kind === "pickup" ? `${f.qty > 1 ? `${f.qty} × ` : ""}${f.item}` : f.what;
-      for (const id of who) ping(id, `New request at ${event.name}`, `${what} · $${f.rate.toFixed(2)}/hr`);
+      for (const id of who) {
+        const w = await store.userById(id);
+        if (w && w.minRate != null && f.rate < w.minRate) continue; // below the rate this waiter asked for
+        ping(id, `New request at ${event.name}`, `${what} · $${f.rate.toFixed(2)}/hr`);
+      }
     }
     // Look up map coordinates in the background so posting stays instant.
     geocode(line.place).then((g) => g && store.setLineGeo(line.id, g)).catch(() => {});
@@ -960,6 +990,7 @@ async function api(req, res, urlPath, query) {
     // ---- waiters can offer a different rate; the booker accepts or declines ----
     if (action === "offer") {
       requireAdult(me);
+      requireAgreement(me);
       if (l.ownerId === me.id) fail(400, "You can't make an offer on your own line.");
       if (l.status !== "open" || isExpired(l)) fail(409, "This line is no longer open.");
       if ((await store.countOffersSince(me.id, new Date(Date.now() - 3600 * 1000))) >= 30)
@@ -1174,13 +1205,13 @@ async function api(req, res, urlPath, query) {
         if (kept >= 2) flagAdmins(`Review waiter: ${kept} missed meetups`, `${me.name} (${me.email}) has kept the item on ${kept} pickups after the booker missed the meetup. Latest: request #${l.id} at ${l.place}.`);
       }
     } else if (action === "leave") {
-      if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a shift while you're in line.");
+      if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a job while you're in line.");
       const graceOver = l.status === "handoff" && l.handoffAt && Date.now() >= new Date(l.handoffAt).getTime() + GRACE_MS;
       if (graceOver) {
         updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "customer_noshow" });
       } else {
         if (!billing(l).timeUp)
-          fail(409, "You can end the shift once the approved time runs out, or 30 minutes after you reach the front if the booker doesn't show.");
+          fail(409, "You can end the job once the approved time runs out, or 30 minutes after you reach the front if the booker doesn't show.");
         updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "time_up" });
       }
     }

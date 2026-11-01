@@ -111,6 +111,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS card_pm TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_label TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS payouts_ready BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS contractor_version TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS contractor_accepted_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS min_rate NUMERIC(8,2);
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_intent TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_held INT NOT NULL DEFAULT 0;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_status TEXT;
@@ -196,6 +199,7 @@ function user(r) {
       suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at, lastSeenAt: r.last_seen_at || null,
       stripeCustomer: r.stripe_customer || null, stripeAccount: r.stripe_account || null, cardPm: r.card_pm || null,
       cardLabel: r.card_label || null, payoutsReady: !!r.payouts_ready, birthDate: r.birth_date || null,
+      contractorVersion: r.contractor_version || null, contractorAcceptedAt: r.contractor_accepted_at || null, minRate: r.min_rate == null ? null : Number(r.min_rate),
     }
   );
 }
@@ -336,6 +340,9 @@ const USER_COLS = {
   cardLabel: "card_label",
   payoutsReady: "payouts_ready",
   birthDate: "birth_date",
+  contractorVersion: "contractor_version",
+  contractorAcceptedAt: "contractor_accepted_at",
+  minRate: "min_rate",
 };
 
 module.exports = {

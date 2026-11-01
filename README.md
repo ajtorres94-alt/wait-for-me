@@ -37,7 +37,7 @@ The app creates its own tables on first start.
 
 ## How billing works
 
-The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up (waiters earn at least $8 per paid job), and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the shift and is paid for the full approved time.
+The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up (waiters earn at least $8 per paid job), and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the job and is paid for the full approved time.
 
 Fees (kept by the platform): 15% of the waiter's time, a booking fee ($4.99 pickups, $2.50 spots), 3% of the item price for pickups, and a $1.99 rush fee on ASAP requests. The booker also pays the item at the receipt price and any drop-off fee, which goes to the waiter. No fees on late cancellations or sold-out pickups. The logic lives in `billing.js`.
 
@@ -51,7 +51,7 @@ After a job, the booker rates the waiter and the waiter rates the booker (1–5 
 
 - Admins add events (name, venue, start, end) on `/admin`. Bookers can tag a request with a live or upcoming event; the place defaults to the venue.
 - Waiters tap **I'm here** on an event in Find jobs; each new request tagged with it sends them a phone alert. Requests can be filtered by event.
-- **Claim several at once** claims up to 5 open requests in one call (`POST /api/lines/claim-batch`), each with its own card hold. My shifts offers **I'm there for all N** for jobs at the same event or place.
+- **Claim several at once** claims up to 5 open requests in one call (`POST /api/lines/claim-batch`), each with its own card hold. My jobs offers **I'm there for all N** for jobs at the same event or place.
 - **Report a problem** on any job (up to 14 days after) creates a report, alerts admins and emails `SUPPORT_EMAIL`. On `/admin`, resolve it with a note and an optional Stripe refund, either paid by the platform or taken back from the waiter's share and the fee.
 - The restricted Stripe key needs write access to Refunds; **Check Stripe** on `/admin` tests it.
 
