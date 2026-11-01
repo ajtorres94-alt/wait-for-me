@@ -308,6 +308,8 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .seg button{border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:9px;font-weight:700;min-height:44px}
 .seg button[aria-checked="true"]{border-color:var(--ink);background:var(--ink);color:var(--bg)}
+.bitems{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;font-weight:600}
+.card.bundle{border-color:var(--ink)}
 .buybox{display:flex;flex-direction:column;gap:10px;background:var(--bg);border-radius:12px;padding:12px;width:100%}
 .buybox .row2{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .buybox input[type=number]{width:120px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-weight:700}
@@ -853,6 +855,17 @@ function locate(){
     {enableHighAccuracy:false,timeout:10000,maximumAge:300000});
 }
 let eventFilter=null,selecting=false;const picked=new Set();
+// Requests at the same stand (same event and place) can be done in one trip.
+const standKey=j=>(j.eventId||'')+'|'+String(j.place||'').trim().toLowerCase().replace(/\s+/g,' ');
+function standGroups(list){const g=new Map();for(const j of list){const k=standKey(j);if(!g.has(k))g.set(k,[]);g.get(k).push(j)}return[...g.values()].filter(x=>x.length>1)}
+function bundleCards(open){
+  if(selecting)return'';
+  const groups=standGroups(open.filter(j=>kindOf(j)==='pickup'));if(!groups.length)return'';
+  return`<div class="section"><h2>One trip, several orders</h2>${groups.map(g=>{const take=g.slice(0,5),upto=take.reduce((s,j)=>s+waiterUpTo(j),0);
+    return`<article class="card bundle"><div class="row"><div><span class="kindtag">${g.length} orders</span><h3>${esc(g.reduce((x,y)=>x.id<y.id?x:y).place)}</h3>${g[0].event?`<div class="meta">${esc(g[0].event.name)}</div>`:''}</div><span class="pill open">Up to ${money(upto)}</span></div>
+    <ul class="bitems">${take.map(j=>`<li>${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)} <span class="meta">· ${fmtRate(j.rate)}/hr · limit ${money(j.itemBudget)}</span></li>`).join('')}</ul>
+    <div class="hint">Wait once and get paid by each booker for your time${take.length<g.length?` (claim up to 5 at once, then come back for the rest)`:''}. Some stands limit how many each customer can buy, so check before you claim.</div>
+    <div class="btns"><button class="btn small" data-act="claim-stand" data-ids="${take.map(j=>j.id).join(',')}">Claim all ${take.length}</button></div></article>`}).join('')}</div>`}
 function eventCards(){
   if(!EVENTS.length)return'';
   return`<div class="section"><h2>Events</h2>${EVENTS.map(e=>`<article class="card evcard${eventFilter===e.id?' on':''}"><div class="row"><div><span class="kindtag ev">${e.live?'Happening now':esc(evWhen(e))}</span><h3>${esc(e.name)}</h3><div class="meta">${esc(e.venue)}</div></div></div>
@@ -876,7 +889,7 @@ function waiterFind(){
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
      ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>${selBar}
-   ${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup';return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
+   ${bundleCards(open)}${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup';return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
      <div class="hint">${pickup?`Paid for your time from check-in to purchase, at least $8 a job. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
@@ -887,14 +900,19 @@ function waiterFind(){
      :selecting?`<label class="check pick"><input type="checkbox" data-pick="${j.id}"${picked.has(j.id)?' checked':''}${!picked.has(j.id)&&picked.size>=5?' disabled':''}> Add to this trip</label>`
      :`<div class="btns"><button class="btn small" data-act="claim" data-id="${j.id}">Claim at ${fmtRate(j.rate)}/hr</button><button class="btn ghost small" data-act="offer-open" data-id="${j.id}">Offer a different rate</button></div>`}</article>`}).join(''):`<div class="empty">No open jobs${near.on&&near.radius?` within ${near.radius} miles`:''}${filter==='All'?'':' of this kind'} right now. New ones show up here automatically.</div>`}</div>`}
 
-const buyDraft={},soldOpen=new Set(),soldPhoto={};
+const buyDraft={},soldOpen=new Set(),soldPhoto={},groupBuy={};
 function waiterShifts(){
   const mine=data.shifts.slice().sort((a,b)=>(a.status==='done')-(b.status==='done'));
   const earned=mine.filter(j=>j.status==='done').reduce((s,j)=>s+billOf(j).pay,0);
   const upToSum=mine.filter(j=>j.status!=='done').reduce((s,j)=>s+waiterUpTo(j),0);
   const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the register',handoff:'I\'m at the front'};
-  const groups={};mine.filter(j=>['claimed','enroute'].includes(j.status)).forEach(j=>{const k=j.eventId?'e'+j.eventId:'p'+j.place.trim().toLowerCase();(groups[k]=groups[k]||[]).push(j)});
-  const allBtns=Object.values(groups).filter(g=>g.length>1).map(g=>`<div class="note"><b>${g.length} jobs at ${esc(g[0].event?g[0].event.name:g[0].place)}</b><div class="btns" style="margin-top:8px"><button class="btn small" data-act="checkin-all" data-ids="${g.map(j=>j.id).join(',')}">I'm there for all ${g.length}</button></div></div>`).join('');
+  const groups={};mine.filter(j=>['claimed','enroute'].includes(j.status)).forEach(j=>{const k=standKey(j);(groups[k]=groups[k]||[]).push(j)});
+  const buyGroups={};mine.filter(j=>kindOf(j)==='pickup'&&['inline','nearfront'].includes(j.status)&&!j.purchasedAt&&(!PAY.enabled||j.payStatus==='held')).forEach(j=>{const k=standKey(j);(buyGroups[k]=buyGroups[k]||[]).push(j)});
+  const buyAll=Object.entries(buyGroups).filter(([,g])=>g.length>1).map(([k,g])=>{const gd=groupBuy[k]||{};return`<div class="buybox"><b>Bought all ${g.length} on one receipt?</b><div class="hint">Enter what each order cost (its share of the total, tax included) and take one photo of the receipt. Every booker sees the receipt. Paying for each order separately also works; use the boxes on each job below.</div>
+    ${g.map(j=>`<div class="row2"><label class="meta" for="gbuy-${j.id}" style="flex:1">${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)} for ${esc(j.ownerName)} (limit ${money(j.itemBudget)})</label><input id="gbuy-${j.id}" type="number" inputmode="decimal" min="0.5" max="${j.itemBudget}" step="0.01" placeholder="$" value="${esc((gd.totals||{})[j.id]??'')}"></div>`).join('')}
+    <div class="row2"><label class="photo-btn">${gd.photo?`<img class="thumb" src="${gd.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo'}<input type="file" accept="image/*" capture="environment" data-gphoto="${esc(k)}"></label></div>
+    <div class="btns"><button class="btn small" data-act="buy-all" data-key="${esc(k)}" data-ids="${g.map(j=>j.id).join(',')}">Record all ${g.length} purchases</button></div></div>`}).join('');
+  const allBtns=buyAll+Object.values(groups).filter(g=>g.length>1).map(g=>`<div class="note"><b>${g.length} jobs at ${esc(g[0].event?g[0].event.name:g[0].place)}</b><div class="btns" style="margin-top:8px"><button class="btn small" data-act="checkin-all" data-ids="${g.map(j=>j.id).join(',')}">I'm there for all ${g.length}</button></div></div>`).join('');
   return`<div class="list">${alertsNudge(mine,'waiter')}${allBtns}<div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upToSum)} on active shifts</div></div>
    ${mine.length?mine.map(j=>{
      const pickup=kindOf(j)==='pickup',bought=pickup&&!!j.purchasedAt,keys=keysFor(j),next=keys[keys.indexOf(j.status)+1],b=billOf(j),O=esc(j.ownerName);let ctl='',extra='';
@@ -1149,6 +1167,13 @@ $('#view').addEventListener('click',async e=>{
     if(a==='select-on'||a==='select-off'){selecting=a==='select-on';picked.clear();b.disabled=false;render();return}
     if(a==='claim-batch'){const r=await api('/lines/claim-batch',{method:'POST',body:{ids:[...picked]}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
       selecting=false;picked.clear();toast(bad.length?`Claimed ${ok.length} of ${r.results.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My shifts.`);if(ok.length)tab.waiter='shifts'}
+    if(a==='claim-stand'){const ids=b.dataset.ids.split(',').map(Number);const r=await api('/lines/claim-batch',{method:'POST',body:{ids}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
+      toast(bad.length?`Claimed ${ok.length} of ${ids.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My shifts.`);if(ok.length)tab.waiter='shifts'}
+    if(a==='buy-all'){const ids=b.dataset.ids.split(',').map(Number),gd=groupBuy[b.dataset.key]||{};if(!gd.photo)throw new Error('Add a photo of the receipt.');
+      const items=ids.map(n=>({n,total:parseFloat((document.getElementById('gbuy-'+n)||{}).value)}));
+      if(items.some(x=>!(x.total>0)))throw new Error('Enter what each order cost. Leave none blank.');
+      let done=0,err='';for(const x of items){try{await api(`/lines/${x.n}/purchase`,{method:'POST',body:{total:x.total,receipt:gd.photo,note:'Bought together with other orders on one receipt.'}});done++}catch(e){err=e.message}}
+      if(!err)delete groupBuy[b.dataset.key];toast(err?`Recorded ${done} of ${items.length}. ${err}`:`Recorded all ${done} purchases. Each booker can see the receipt.`)}
     if(a==='checkin-all'){const ids=b.dataset.ids.split(',').map(Number),pos=await getPos();let done=0,err='';
       for(const n of ids){try{const j=data.shifts.find(x=>x.id===n);if(j&&j.status==='claimed')await api(`/lines/${n}/advance`,{method:'POST'});await api(`/lines/${n}/advance`,{method:'POST',body:pos||{}});done++}catch(e){err=e.message}}
       toast(err?`Checked in to ${done} of ${ids.length}. ${err}`:`Checked in to all ${done}. Your paid time has started on each.`)}
@@ -1185,11 +1210,13 @@ async function shrinkPhoto(file){const url=URL.createObjectURL(file);
 $('#view').addEventListener('change',async e=>{const t=e.target;
   if(t.dataset&&t.dataset.pick){const n=+t.dataset.pick;t.checked?picked.add(n):picked.delete(n);render();return}
   if(t.id&&t.id.startsWith('rr-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).reason=t.value;return}
+  if(t.dataset&&t.dataset.gphoto&&t.files&&t.files[0]){const k=t.dataset.gphoto,gd=groupBuy[k]=groupBuy[k]||{};gd.totals=gd.totals||{};
+    document.querySelectorAll('[id^="gbuy-"]').forEach(x=>{if(x.value)gd.totals[+x.id.slice(5)]=x.value});try{gd.photo=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}return}
   if(t.dataset&&t.dataset.soldphoto&&t.files&&t.files[0]){try{soldPhoto[+t.dataset.soldphoto]=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}return}
   if(!t.dataset||!t.dataset.photo||!t.files||!t.files[0])return;const id=+t.dataset.photo;
   try{const d=buyDraft[id]=buyDraft[id]||{};const tot=document.getElementById('buy-'+id),note=document.getElementById('bnote-'+id);if(tot)d.total=tot.value;if(note)d.note=note.value;
     d.photo=await shrinkPhoto(t.files[0]);render()}catch(err){toast(err.message)}});
-$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('rd-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).details=t.value}if(t.id&&t.id.startsWith('buy-')){(buyDraft[+t.id.slice(4)]=buyDraft[+t.id.slice(4)]||{}).total=t.value}
+$('#view').addEventListener('input',e=>{const t=e.target;if(t.id&&t.id.startsWith('rd-')){(reportDraft[+t.id.slice(3)]=reportDraft[+t.id.slice(3)]||{}).details=t.value}if(t.id&&t.id.startsWith('gbuy-')){const box=t.closest('.buybox'),btn=box&&box.querySelector('[data-act="buy-all"]');if(btn){const gd=groupBuy[btn.dataset.key]=groupBuy[btn.dataset.key]||{};(gd.totals=gd.totals||{})[+t.id.slice(5)]=t.value}}if(t.id&&t.id.startsWith('buy-')){(buyDraft[+t.id.slice(4)]=buyDraft[+t.id.slice(4)]||{}).total=t.value}
   if(t.id&&t.id.startsWith('bnote-')){(buyDraft[+t.id.slice(6)]=buyDraft[+t.id.slice(6)]||{}).note=t.value}if(t.id&&t.id.startsWith('offer-')){const v=parseFloat(t.value);if(!isNaN(v))offerDraft[+t.id.slice(6)]=v}
   if(t.id&&t.id.startsWith('chat-'))chatDraft[+t.id.slice(5)]=t.value});
 $('#view').addEventListener('keydown',e=>{const t=e.target;if(e.key==='Enter'&&t.id&&t.id.startsWith('chat-')){e.preventDefault();const btn=t.parentElement.querySelector('[data-act=chat-send]');if(btn)btn.click()}});
