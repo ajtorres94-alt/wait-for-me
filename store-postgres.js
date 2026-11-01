@@ -628,7 +628,7 @@ module.exports = {
   },
   // Lines that still need map coordinates or a city name (newest first, so recent activity fills in first).
   async linesMissingGeo() {
-    const r = await pool.query("SELECT id, place FROM lines WHERE lat IS NULL OR area IS NULL ORDER BY id DESC LIMIT 500");
+    const r = await pool.query("SELECT id, place, event_id AS \"eventId\" FROM lines WHERE lat IS NULL OR (area IS NULL AND event_id IS NULL) ORDER BY id DESC LIMIT 500");
     return r.rows;
   },
   // ---- password reset links (only a hash of each link's token is stored) ----

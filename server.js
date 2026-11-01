@@ -695,6 +695,17 @@ function runsFor(l, active) {
   }
   return [...groups.values()].sort((a, b) => b.orders - a.orders || b.waiterOn - a.waiterOn).slice(0, 3);
 }
+// Map coordinates for a request. At an event, the stand name ("Team Store 112") would geocode to some
+// other place with that name, so event requests use the venue's location (a stadium fits in the
+// check-in radius). Elsewhere, the place text is looked up.
+async function locateLine(id, place, event) {
+  if (event) {
+    if (event.lat != null && event.lng != null) await store.setLineGeo(id, { lat: Number(event.lat), lng: Number(event.lng), approx: false, area: null });
+    return; // venue not located yet: no location check rather than a wrong one
+  }
+  const g = await geocode(place);
+  if (g) await store.setLineGeo(id, g);
+}
 const firstName = (n) => String(n || "Someone").split(" ")[0];
 // Every 5 minutes: remind bookers 20 minutes before their pickup meetup window ends.
 async function meetupSweep() {
@@ -1058,7 +1069,7 @@ async function api(req, res, urlPath, query) {
       }
     }
     // Look up map coordinates in the background so posting stays instant.
-    geocode(line.place).then((g) => g && store.setLineGeo(line.id, g)).catch(() => {});
+    locateLine(line.id, line.place, event).catch(() => {});
     return send(res, 201, { line: await one(me, line) });
   }
 
@@ -1117,10 +1128,12 @@ async function api(req, res, urlPath, query) {
       if (l.status !== "open") fail(409, "A waiter already claimed this line, so it can't be edited.");
       const f = lineFields(b, await eventFor(b.eventId));
       const fields = { ...f, approvedHours: f.hours };
-      if (f.place !== l.place) Object.assign(fields, { lat: null, lng: null, geoApprox: null });
+      const ev = f.eventId ? await store.eventById(f.eventId) : null;
+      const moved = f.place !== l.place || f.eventId !== l.eventId;
+      if (moved) Object.assign(fields, { lat: null, lng: null, geoApprox: null });
       updated = await store.updateLine(id, "open", fields);
       if (!updated) fail(409, "A waiter just claimed this line.");
-      if (f.place !== l.place) geocode(f.place).then((g) => g && store.setLineGeo(id, g)).catch(() => {});
+      if (moved) locateLine(id, f.place, ev).catch(() => {});
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -1642,10 +1655,13 @@ store
     push.initPush(store).catch((e) => console.error("Couldn't set up notifications:", e.message));
     setInterval(meetupSweep, 5 * 60 * 1000);
     // Fill in map coordinates and city names for lines posted before those existed.
+    // Event requests in progress get the venue's location (earlier versions geocoded the stand name).
+    store.activePickups().then(async (rows) => {
+      for (const r of rows) if (r.eventId) await locateLine(r.id, r.place, await store.eventById(r.eventId));
+    }).catch(() => {});
     store.linesMissingGeo().then(async (rows) => {
       for (const r of rows) {
-        const g = await geocode(r.place);
-        if (g) await store.setLineGeo(r.id, g);
+        await locateLine(r.id, r.place, r.eventId ? await store.eventById(r.eventId) : null);
       }
     }).catch(() => {});
   })

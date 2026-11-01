@@ -261,7 +261,7 @@ module.exports = {
     if (l) Object.assign(l, { lat: geo.lat, lng: geo.lng, geoApprox: geo.approx, area: geo.area || l.area || null });
   },
   async linesMissingGeo() {
-    return lines.filter((l) => l.lat == null || l.area == null).map((l) => ({ id: l.id, place: l.place })).reverse().slice(0, 500);
+    return lines.filter((l) => l.lat == null || (l.area == null && !l.eventId)).map((l) => ({ id: l.id, place: l.place, eventId: l.eventId || null })).reverse().slice(0, 500);
   },
   async createReset(tokenHash, userId, expiresAt) {
     resets.set(tokenHash, { userId, expiresAt: new Date(expiresAt), usedAt: null, createdAt: new Date() });
