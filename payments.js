@@ -138,7 +138,8 @@ async function ensureAccount(store, user) {
         stripe_dashboard: { type: "express" },
         requirement_collection: "stripe",
       },
-      capabilities: { transfers: { requested: true } },
+      // Stripe needs approval for transfers-only accounts, so US waiters also get card_payments (the usual setup for destination charges).
+      capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
       business_profile: {
         mcc: "7299",
         url: "https://waitforme.io",
