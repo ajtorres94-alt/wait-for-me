@@ -35,6 +35,12 @@ const bookingFeeFor = (line) => (kindOf(line) === "pickup" ? PICKUP_BOOKING_FEE 
 const ITEM_FEE = 0.03;
 const MIN_PAY = 8; // least a waiter earns for their time on a paid job
 const RUSH_FEE = 1.99; // ASAP requests
+// Pricing v2 (requests posted from Nov 2026): one service fee of $2.99 + 9% of the waiter's time and the item, at most $12.
+const BASE_FEE = 2.99;
+const PCT_FEE = 0.09;
+const FEE_CAP = 12;
+const v2 = (line) => Number(line.pricingV) >= 2;
+const serviceFeeV2 = (timePay, item) => roundCents(Math.min(FEE_CAP, BASE_FEE + PCT_FEE * (timePay + item)));
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
 const HOUR = 3600 * 1000;
 
@@ -87,9 +93,10 @@ function billing(line, now = Date.now()) {
   // ASAP requests: the rush fee goes to the waiter as a bonus (not on late cancellations).
   const rushFee = line.rush && billed > 0 && line.outcome !== "cancelled_late" ? RUSH_FEE : 0;
   const waiterPay = roundCents(timePay + dropoff + rushFee);
-  const serviceFee = roundCents(timePay * feeRate);
-  const bookingFee = feeRate > 0 && billed > 0 ? bookingFeeFor(line) : 0;
-  const itemFee = roundCents(item * ITEM_FEE);
+  const charged = feeRate > 0 && billed > 0;
+  const serviceFee = v2(line) ? (charged ? serviceFeeV2(timePay, item) : 0) : roundCents(timePay * feeRate);
+  const bookingFee = !v2(line) && charged ? bookingFeeFor(line) : 0;
+  const itemFee = v2(line) ? 0 : roundCents(item * ITEM_FEE);
   const fee = roundCents(serviceFee + bookingFee + itemFee);
   return {
     approvedHours: approved,
@@ -115,6 +122,10 @@ function billing(line, now = Date.now()) {
 function maxTotal(line) {
   const hours = Number(line.approvedHours ?? line.hours) + 0.5;
   const time = Math.max(MIN_PAY, hours * Number(line.rate));
+  if (v2(line)) {
+    const budget = kindOf(line) === "pickup" ? Number(line.itemBudget) || 0 : 0;
+    return time + budget + serviceFeeV2(time, budget) + (line.rush ? RUSH_FEE : 0);
+  }
   let total = time * (1 + FEE) + bookingFeeFor(line) + (line.rush ? RUSH_FEE : 0);
   if (kindOf(line) === "pickup") {
     const budget = Number(line.itemBudget) || 0;
@@ -124,4 +135,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };

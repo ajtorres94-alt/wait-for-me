@@ -355,8 +355,9 @@ const RESTRICTED =
   /\b(alcohol|alcoholic|liquor|vodka|tequila|whiske?y|bourbon|wine|champagne|six[- ]?pack|tobacco|cigars?|cigarettes?|vapes?|vaping|nicotine|juul|cannabis|marijuana|thc|edibles|dispensary|prescriptions?|rx|firearms?|handguns?|rifles?|shotguns?|ammo|ammunition|lottery|scratchers?|gift ?cards?|prepaid (debit |visa |credit )?cards?|money orders?|tickets?|wristbands?|parking (pass(es)?|permits?)|admission)\b|(?<!root )\bbeers?\b/i;
 
 function lineFields(b, event = null) {
-  const kind = b.kind === "pickup" || b.kind === "spot" ? b.kind : null;
-  if (!kind) fail(400, "Choose Pick it up for me or Save my spot.");
+  // Save my spot was retired in Nov 2026; existing spot requests still finish normally.
+  if (b.kind === "spot") fail(400, "Save my spot is no longer offered. Post a pickup instead.", "spot_retired");
+  const kind = "pickup";
   const pickup = kind === "pickup";
   const place = text(b.place || (event ? event.venue : ""), pickup ? "the store or place to buy it" : "where the spot is", 120);
   const notes = text(b.notes, "notes", 500, { required: false });
@@ -370,7 +371,8 @@ function lineFields(b, event = null) {
     rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
-    rush: b.asap === true, // ASAP requests carry a rush fee
+    rush: b.asap === true, // ASAP requests carry a rush bonus for the waiter
+    pricingV: 2,
   };
   if (!pickup) {
     if (b.spotAgree !== true)
@@ -385,11 +387,7 @@ function lineFields(b, event = null) {
   f.qty = b.qty === undefined ? 1 : Number(b.qty);
   if (!Number.isInteger(f.qty) || f.qty < 1 || f.qty > MAX_QTY) fail(400, `Pick a quantity from 1 to ${MAX_QTY}.`);
   f.itemBudget = num(b.itemBudget, "The most you'll pay for the item", 1, MAX_ITEM);
-  f.handoff = b.handoff === "dropoff" ? "dropoff" : "meet";
-  if (f.handoff === "dropoff") {
-    f.dropoffFee = Math.round(num(b.dropoffFee, "The drop-off fee", 5, 50));
-    f.dropoffAddr = text(b.dropoffAddr, "the drop-off address", 200);
-  }
+  f.handoff = "meet"; // drop-off was retired in Nov 2026: the booker meets the waiter
   // The waiter holds the item for 4 hours after buying it, so meeting after a show works.
   // (Bookers are asked to meet within 30 minutes for food; the app can't tell what's food.)
   f.meetWithin = b.meetWithin === undefined ? 240 : Number(b.meetWithin);
