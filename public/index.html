@@ -489,8 +489,12 @@ async function mountCard(){const host=$('#card-el');if(!host||host.dataset.mount
   catch(e){const x=$('#cardErr');if(x)x.textContent=e.message}}
 async function finishCard(id){const r=await api('/payments/card/finish',{method:'POST',body:{setupIntentId:id}});me=r.user;cardOpen=false;cardUI=null;toast(`Saved ${r.card}. You can post requests now.`)}
 function goAccount(msg,openCard){tab[role]='account';if(openCard)cardOpen=true;render();window.scrollTo(0,0);if(msg)toast(msg)}
-function payNeedsSetup(err){if(err&&err.code==='card_required'){goAccount('Add a card to post requests.',true);return true}
+function payNeedsSetup(err){if(err&&err.code==='dob_required'){goAccount('Confirm your date of birth first.');return true}
+  if(err&&err.code==='card_required'){goAccount('Add a card to post requests.',true);return true}
   if(err&&err.code==='payouts_required'){goAccount('Set up payouts so we can pay you, then claim the job.');return true}return false}
+function dobCard(){return`<article class="card section"><h2>Confirm your age</h2><div class="note">Wait For Me! is for people 18 and older. Enter your date of birth once to keep posting, claiming and getting paid. It can't be changed in the app later.</div>
+  <div class="field"><label for="dob-in">Date of birth</label><input id="dob-in" type="date" autocomplete="bday" min="1915-01-01" max="${new Date().toISOString().slice(0,10)}"></div>
+  <div class="btns"><button class="btn small" data-act="dob-save">Save</button></div></article>`}
 function paymentCard(){
   if(!PAY.enabled)return`<article class="card section"><h2>Payments</h2>
     <div class="note">Card payments and waiter payouts aren't switched on yet. For now, settle up directly with each other using the totals shown on each finished line.</div></article>`;
@@ -659,7 +663,7 @@ function authScreen(){
     ${up?`<div class="field"><label for="a-name">Your name</label><input id="a-name" autocomplete="name" placeholder="First name and last initial"></div>`:''}
     <div class="field"><label for="a-email">Email</label><input id="a-email" type="email" autocomplete="email" inputmode="email"></div>
     <div class="field"><label for="a-pass">Password</label><input id="a-pass" type="password" autocomplete="${up?'new-password':'current-password'}" placeholder="${up?'At least 8 characters':''}"></div>
-    ${up?`<label class="check" for="a-adult"><input id="a-adult" type="checkbox"> I'm 18 or older</label>`:''}
+    ${up?`<div class="field"><label for="a-dob">Date of birth</label><input id="a-dob" type="date" autocomplete="bday" min="1915-01-01" max="${new Date().toISOString().slice(0,10)}"><span class="hint">You must be 18 or older. It can't be changed later.</span></div>`:''}
     <button class="btn block" type="submit">${up?'Create account':'Sign in'}</button>
     <span class="meta" id="authErr" role="alert"></span>
    </form>
@@ -962,7 +966,7 @@ function account(){
     <div class="kv"><div>As a waiter</div><b>${myRatings?ratingTxt(myRatings.waiter):'—'}</b></div>
     <div class="kv"><div>As a booker</div><b>${myRatings?ratingTxt(myRatings.booker):'—'}</b></div>
     <div class="hint">Ratings count 3 days after each job, and your average shows once you have 3.</div></article>
-  ${paymentCard()}
+  ${me.birthDateSet?'':dobCard()}${paymentCard()}
   ${alertsCard()}
   <article class="card section"><h2>Your avatar</h2>
     <div class="avgrid" role="group" aria-label="Choose an avatar">${AVATARS.map((A,i)=>`<button type="button" class="avpick" data-act="avatar" data-av="a${i}" aria-pressed="${me.avatar==='a'+i}">${avatarSVG('a'+i)}</button>`).join('')}</div>
@@ -1083,7 +1087,7 @@ function render(){
           $('#authErr').textContent='If that email has an account, a reset link is on its way. Check your inbox and spam folder; the link expires in 1 hour.';}
         catch(err){$('#authErr').textContent=err.message}
         btn.disabled=false;return}
-      try{const body={email:$('#a-email').value,password:$('#a-pass').value};if(authMode==='signup'){body.name=$('#a-name').value;body.adult=$('#a-adult').checked}
+      try{const body={email:$('#a-email').value,password:$('#a-pass').value};if(authMode==='signup'){body.name=$('#a-name').value;body.birthDate=$('#a-dob').value}
         me=(await api(authMode==='signup'?'/signup':'/login',{method:'POST',body})).user;await load(true);checkAlerts().then(()=>{if(me)render()});toast(authMode==='signup'?`Welcome, ${me.name.split(' ')[0]}.`:'Signed in.')}
       catch(err){$('#authErr').textContent=err.message;btn.disabled=false}});
     return}
@@ -1137,6 +1141,7 @@ $('#view').addEventListener('click',async e=>{
       if(r.error){$('#cardErr').textContent=r.error.message;b.disabled=false;return}
       await finishCard(r.setupIntent.id);await load(true);return}
     if(a==='payouts'){const r=await api('/payments/payouts/link',{method:'POST'});location.href=r.url;return}
+    if(a==='dob-save'){const v=$('#dob-in').value;if(!v)throw new Error('Enter your date of birth.');const r=await api('/me/birthdate',{method:'POST',body:{birthDate:v}});me=r.user;toast('Thanks, you\'re all set.');render();return}
     if(a==='payouts-check'){const r=await api('/payments/payouts/refresh',{method:'POST'});me=r.user;toast(r.status.ready?'Payouts are on. You can claim lines now.':r.status.needsInfo?'Stripe still needs a few details. Tap Finish payout setup.':'Stripe is still reviewing your details. Check again soon.');await load(true);return}
     if(a==='logout'){if(alertState==='on'){try{const reg=await navigator.serviceWorker.ready;const sub=await reg.pushManager.getSubscription();if(sub)await api('/push/unsubscribe',{method:'POST',body:{endpoint:sub.endpoint}})}catch{}}
       await api('/logout',{method:'POST'});me=null;data={mine:[],open:[],shifts:[]};lastJSON='';lastData=null;authMode='login';render();return}

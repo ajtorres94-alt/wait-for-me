@@ -110,6 +110,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_account TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_pm TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_label TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS payouts_ready BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_intent TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_held INT NOT NULL DEFAULT 0;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS pay_status TEXT;
@@ -194,7 +195,7 @@ function user(r) {
       id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "",
       suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at, lastSeenAt: r.last_seen_at || null,
       stripeCustomer: r.stripe_customer || null, stripeAccount: r.stripe_account || null, cardPm: r.card_pm || null,
-      cardLabel: r.card_label || null, payoutsReady: !!r.payouts_ready,
+      cardLabel: r.card_label || null, payoutsReady: !!r.payouts_ready, birthDate: r.birth_date || null,
     }
   );
 }
@@ -334,6 +335,7 @@ const USER_COLS = {
   cardPm: "card_pm",
   cardLabel: "card_label",
   payoutsReady: "payouts_ready",
+  birthDate: "birth_date",
 };
 
 module.exports = {
@@ -363,10 +365,10 @@ module.exports = {
     return { previous: prev, changed: !!prev && prev !== mode };
   },
 
-  async createUser({ name, email, pwHash }) {
+  async createUser({ name, email, pwHash, birthDate = null }) {
     const r = await pool.query(
-      "INSERT INTO users (name, email, pw_hash) VALUES ($1, $2, $3) ON CONFLICT (email) DO NOTHING RETURNING *",
-      [name, email, pwHash]
+      "INSERT INTO users (name, email, pw_hash, birth_date) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO NOTHING RETURNING *",
+      [name, email, pwHash, birthDate]
     );
     return user(r.rows[0]) || null;
   },

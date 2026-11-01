@@ -171,14 +171,22 @@ async function payoutLink(store, user, baseUrl) {
 }
 
 // Asks Stripe whether this waiter can receive money yet, and saves the answer.
+function ageOn(y, m, d, now = new Date()) {
+  let age = now.getFullYear() - y;
+  if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age--;
+  return age;
+}
 async function refreshPayouts(store, user) {
   if (!user.stripeAccount) return { ready: false, started: false };
   const a = await stripe("GET", `/v1/accounts/${user.stripeAccount}`);
-  const ready = !!(a.capabilities && a.capabilities.transfers === "active");
+  // Stripe verifies the waiter's date of birth during sign-up; if it shows they're under 18, don't pay them through the app.
+  const dob = a.individual && a.individual.dob;
+  const minor = !!(dob && dob.year && ageOn(dob.year, dob.month || 1, dob.day || 1) < 18);
+  const ready = !minor && !!(a.capabilities && a.capabilities.transfers === "active");
   const due = (a.requirements && a.requirements.currently_due) || [];
   if (ready !== !!user.payoutsReady) await store.updateUser(user.id, { payoutsReady: ready });
   user.payoutsReady = ready;
-  return { ready, started: true, needsInfo: due.length > 0, detailsSubmitted: !!a.details_submitted };
+  return { ready, started: true, needsInfo: due.length > 0, detailsSubmitted: !!a.details_submitted, minor };
 }
 
 // ---------- holds and charges on a line ----------

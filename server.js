@@ -127,7 +127,7 @@ const isAdmin = (u) => !!u && ADMIN_EMAILS.includes(String(u.email).toLowerCase(
 const publicUser = (u) =>
   u && {
     id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "", isAdmin: isAdmin(u),
-    card: u.cardPm ? u.cardLabel || "Card on file" : null,
+    card: u.cardPm ? u.cardLabel || "Card on file" : null, birthDateSet: !!u.birthDate,
     payouts: u.payoutsReady ? "ready" : u.stripeAccount ? "started" : "none",
   };
 const paymentsInfo = () => ({ enabled: pay.enabled(), publishableKey: pay.publishableKey(), testMode: pay.testMode() });
@@ -447,6 +447,27 @@ setInterval(() => {
 const newCode = () => String(crypto.randomInt(1000, 10000));
 
 // ---------- payment checks used by line actions ----------
+// Date of birth: entered at sign-up (once), and must show 18 or older.
+function ageFrom(iso, now = new Date()) {
+  const [y, m, d] = iso.split("-").map(Number);
+  let age = now.getFullYear() - y;
+  if (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d)) age--;
+  return age;
+}
+function checkBirthDate(v) {
+  const s = String(v || "").trim();
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const dt = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  if (!m || !dt || dt.getUTCMonth() !== +m[2] - 1 || dt.getUTCDate() !== +m[3]) fail(400, "Enter your date of birth.", "dob_required");
+  const age = ageFrom(s);
+  if (age > 110 || age < 0) fail(400, "Check your date of birth.", "dob_required");
+  if (age < 18) fail(400, "You must be 18 or older to use Wait For Me!.", "under_18");
+  return s;
+}
+function requireAdult(u) {
+  if (!u.birthDate) fail(403, "Confirm your date of birth in Account first.", "dob_required");
+  if (ageFrom(u.birthDate) < 18) fail(403, "You must be 18 or older to use Wait For Me!.", "under_18");
+}
 async function requireCard(u) {
   if (pay.enabled() && !u.cardPm) fail(402, "Add a card in Account before posting. You're only charged after the job, for the actual time and the receipt price.", "card_required");
 }
@@ -500,6 +521,7 @@ async function eventFor(eventId) {
 // Claims one open request for this waiter (used by Claim and by claiming several at once).
 async function claimLine(me, l) {
   if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
+  requireAdult(me);
   if (isExpired(l)) fail(409, "This request's start time has passed.");
   if (l.kind === "pickup") {
     const owed = outOfPocket(await store.listLines({ waiterId: me.id }));
@@ -605,18 +627,27 @@ function resetEmail(name, link) {
 async function api(req, res, urlPath, query) {
   const method = req.method;
 
-  if (urlPath === "/api/health") return send(res, 200, { ok: true, storage: store.kind });
+  // For an uptime monitor: checks the database too, so a broken connection shows up as down.
+  if (urlPath === "/api/health") {
+    try {
+      await Promise.race([store.getSetting("health"), new Promise((_, rej) => setTimeout(() => rej(new Error("Database timed out")), 5000))]);
+      return send(res, 200, { ok: true, storage: store.kind });
+    } catch (e) {
+      alertCrash("Health check failed", e);
+      return send(res, 503, { ok: false });
+    }
+  }
 
   if (method === "POST" && urlPath === "/api/signup") {
     limitAuth(req);
     const b = await readBody(req);
-    if (b.adult !== true) fail(400, "You must be 18 or older to use Wait For Me!.");
+    const birthDate = checkBirthDate(b.birthDate);
     const name = text(b.name, "your name", 60);
     const email = text(b.email, "your email", 120).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "Enter a valid email address.");
     const password = typeof b.password === "string" ? b.password : "";
     if (password.length < 8) fail(400, "Use a password with at least 8 characters.");
-    const u = await store.createUser({ name, email, pwHash: hashPassword(password) });
+    const u = await store.createUser({ name, email, pwHash: hashPassword(password), birthDate });
     if (!u) fail(409, "An account with that email already exists. Sign in instead.");
     return send(res, 201, { user: publicUser(u) }, { "Set-Cookie": await startSession(req, u.id) });
   }
@@ -703,9 +734,26 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { ok: true }, { "Set-Cookie": sessionCookie(req, "", 0) });
   }
 
+  // Existing accounts confirm their date of birth once; it can't be changed in the app afterwards.
+  if (urlPath === "/api/me/birthdate" && method === "POST") {
+    if (me.birthDate) fail(409, "Your date of birth is already on file. Contact support to correct it.");
+    const b = await readBody(req);
+    let dob;
+    try {
+      dob = checkBirthDate(b.birthDate);
+    } catch (e) {
+      if (e.code !== "under_18") throw e;
+      await store.updateUser(me.id, { birthDate: String(b.birthDate).trim() }); // saved so it can't be retried with a different date
+      throw e;
+    }
+    const u = await store.updateUser(me.id, { birthDate: dob });
+    return send(res, 200, { user: publicUser(u) });
+  }
+
   // ---- payments (Stripe) ----
   if (urlPath.startsWith("/api/payments/")) {
     if (!pay.enabled()) fail(404, "Payments aren't switched on yet.");
+    requireAdult(me);
     if (urlPath === "/api/payments/card/start" && method === "POST") {
       limit(`card:${me.id}`, 10, 60 * 60 * 1000, "Too many card attempts. Try again in an hour.");
       return send(res, 200, await pay.startCardSetup(store, me));
@@ -826,6 +874,7 @@ async function api(req, res, urlPath, query) {
     limit(`post:${me.id}`, 20, 86400 * 1000, "You've posted a lot of lines today. Try again tomorrow.");
     if ((await store.countLines(me.id, { openOnly: true })) >= 10)
       fail(429, "You have 10 open lines already. Cancel or wait for one to be claimed before posting more.");
+    requireAdult(me);
     const event = await eventFor(b.eventId);
     const f = lineFields(b, event);
     await requireCard(me);
@@ -910,6 +959,7 @@ async function api(req, res, urlPath, query) {
 
     // ---- waiters can offer a different rate; the booker accepts or declines ----
     if (action === "offer") {
+      requireAdult(me);
       if (l.ownerId === me.id) fail(400, "You can't make an offer on your own line.");
       if (l.status !== "open" || isExpired(l)) fail(409, "This line is no longer open.");
       if ((await store.countOffersSince(me.id, new Date(Date.now() - 3600 * 1000))) >= 30)
@@ -1337,8 +1387,28 @@ const server = http.createServer(async (req, res) => {
     if (e instanceof HttpError) return send(res, e.status, { error: e.message, ...(e.code ? { code: e.code } : {}) });
     if (e instanceof pay.PaymentError) return send(res, e.status, { error: e.message, code: e.code });
     console.error(e);
+    alertCrash(`Error on ${req.method} ${urlPath}`, e);
     send(res, 500, { error: "Something went wrong on our end. Try again in a moment." });
   }
+});
+
+// Emails support (and alerts admins' phones) when the server hits an unexpected error, at most
+// once every 30 minutes so a bad night doesn't flood the inbox.
+let lastCrashAlert = 0;
+function alertCrash(title, e) {
+  if (Date.now() - lastCrashAlert < 30 * 60 * 1000) return;
+  lastCrashAlert = Date.now();
+  const detail = String((e && (e.stack || e.message)) || e).slice(0, 1500);
+  flagAdmins(`Wait For Me! problem: ${title}`, `${title} at ${new Date().toISOString()}.\n\n${detail}\n\nCheck the Railway logs for more.`).catch(() => {});
+}
+process.on("unhandledRejection", (e) => {
+  console.error("Unhandled rejection:", e);
+  alertCrash("Unhandled error in the background", e);
+});
+process.on("uncaughtException", (e) => {
+  console.error("Uncaught exception:", e);
+  alertCrash("Server crashed and is restarting", e);
+  setTimeout(() => process.exit(1), 3000); // give the alert a moment to send; Railway restarts the app
 });
 
 store
