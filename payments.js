@@ -78,7 +78,7 @@ async function stripe(method, path, params, { idempotencyKey } = {}) {
 // ---------- bookers: saved card ----------
 async function ensureCustomer(store, user) {
   if (user.stripeCustomer) return user.stripeCustomer;
-  const c = await stripe("POST", "/v1/customers", { email: user.email, name: user.name, metadata: { wfm_user: user.id } }, { idempotencyKey: `cust-${user.id}` });
+  const c = await stripe("POST", "/v1/customers", { email: user.email, name: user.name, metadata: { wfm_user: user.id } }, { idempotencyKey: `cust-${user.id}-${minute()}` });
   await store.updateUser(user.id, { stripeCustomer: c.id });
   user.stripeCustomer = c.id;
   return c.id;
@@ -122,6 +122,7 @@ async function finishCardSetup(store, user, setupIntentId) {
 }
 
 // ---------- waiters: Express accounts for payouts ----------
+const minute = () => Math.floor(Date.now() / 60000);
 async function ensureAccount(store, user) {
   if (user.stripeAccount) return user.stripeAccount;
   const a = await stripe(
@@ -145,7 +146,7 @@ async function ensureAccount(store, user) {
       },
       metadata: { wfm_user: user.id },
     },
-    { idempotencyKey: `acct-${user.id}` }
+    { idempotencyKey: `acct-${user.id}-${minute()}` } // Stripe replays a key's saved answer, even an error, for 24 hours; a fresh key each minute lets a retry work
   );
   await store.updateUser(user.id, { stripeAccount: a.id });
   user.stripeAccount = a.id;
@@ -288,7 +289,7 @@ async function settle(store, line) {
         description: `Wait For Me! #${line.id}: ${String(line.place).slice(0, 80)}`,
         metadata: { wfm_line: line.id, wfm_waiter: waiter.id, wfm_booker: owner.id },
       },
-      { idempotencyKey: `charge-${line.id}` }
+      { idempotencyKey: `charge-${line.id}-${owner.cardPm}-${total}` } // a new card gets a fresh try
     );
     if (pi.status !== "succeeded") throw new PaymentError("The charge didn't go through.", "charge_failed");
     return store.updateLineAny(line.id, { payIntent: pi.id, payStatus: "captured", payCaptured: total, payError: null });

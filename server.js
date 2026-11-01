@@ -530,6 +530,19 @@ async function notifyAdmins(title, body, reporter, l, rp) {
     console.error("Report alert failed:", e.message);
   }
 }
+// A heads-up to admins (phone alert and support email) about something to review.
+async function flagAdmins(title, body) {
+  try {
+    for (const email of ADMIN_EMAILS) {
+      const u = await store.userByEmail(email);
+      if (u) ping(u.id, title, body);
+    }
+    const to = process.env.SUPPORT_EMAIL;
+    if (to && mailEnabled()) await sendMail({ to, subject: title, text: body, html: `<p>${escHtml(body)}</p>` });
+  } catch (e) {
+    console.error("Admin alert failed:", e.message);
+  }
+}
 const firstName = (n) => String(n || "Someone").split(" ")[0];
 // Every 5 minutes: remind bookers 20 minutes before their pickup meetup window ends.
 async function meetupSweep() {
@@ -1101,7 +1114,15 @@ async function api(req, res, urlPath, query) {
     } else if (action === "leave" && pickup && l.purchasedAt) {
       if (Date.now() < new Date(l.purchasedAt).getTime() + meetMs(l))
         fail(409, `If the booker hasn't met you, you can close the job ${meetTxt(l)} after the purchase.`);
+      // The waiter keeps the item, so they must have tried to reach the booker first.
+      const bought = new Date(l.purchasedAt).getTime();
+      const tried = (await store.listMessages(l.id)).some((m) => m.senderId === me.id && new Date(m.createdAt).getTime() >= bought);
+      if (!tried) fail(409, `Message ${l.ownerName || "the booker"} about where to meet before closing the job. If they still don't reply, you can close it.`, "message_first");
       updated = await store.updateLine(id, l.status, { status: "done", doneAt: new Date(), outcome: "pickup_noshow" });
+      if (updated) {
+        const kept = (await store.listLines({ waiterId: me.id })).filter((x) => x.outcome === "pickup_noshow").length;
+        if (kept >= 2) flagAdmins(`Review waiter: ${kept} missed meetups`, `${me.name} (${me.email}) has kept the item on ${kept} pickups after the booker missed the meetup. Latest: request #${l.id} at ${l.place}.`);
+      }
     } else if (action === "leave") {
       if (!["inline", "nearfront", "handoff"].includes(l.status)) fail(409, "You can only end a shift while you're in line.");
       const graceOver = l.status === "handoff" && l.handoffAt && Date.now() >= new Date(l.handoffAt).getTime() + GRACE_MS;

@@ -839,7 +839,8 @@ function updateQuote(){
     +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
     +row('Service fee (15% of time)',money(svc))+row('Booking fee',money(pk?PICKUP_BOOKING_FEE:BOOKING_FEE))+(pk&&budget?row('Card processing (3% of item)',money(ifee)):'')+(rush?row('Rush fee (ASAP)',money(rush)):'')
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (waiters earn at least $8)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`}
+    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (waiters earn at least $8)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`
+    +`<div class="hint" style="display:block"><b>About the card hold:</b> when a waiter claims your request, your bank shows a temporary hold of up to about ${money(total+r*0.5*(1+FEE))}. It isn't a charge. When the job ends, you're charged only what was used and the rest of the hold drops off, usually within a few days depending on your bank.</div>`}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -937,7 +938,7 @@ function waiterShifts(){
          <div class="btns"><button class="btn danger-btn small" data-act="soldout" data-id="${j.id}"${sp?'':' disabled'}>Yes, it's sold out</button><button class="btn ghost small" data-act="sold-close" data-id="${j.id}">Not yet</button></div></div>`}}
      if(bought&&j.status==='handoff'){
        extra+=billRows(b,'waiter');
-       if(j.graceEndsAt&&nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't met you within the meetup window. You can close the job: you're paid for your time, the booker isn't charged for the item, and you keep it. Message them first in case they're on the way.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">Close job (booker didn't meet)</button>`;
+       if(j.graceEndsAt&&nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't met you within the meetup window. Message them in the chat below first. If they still don't reply, you can close the job: you're paid for your time, the booker isn't charged for the item, and you keep it.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">Close job (booker didn't meet)</button>`;
        else if(j.graceEndsAt)extra+=`<div class="hint">If ${O} hasn't met you by ${clockOf(j.graceEndsAt)}, you can close the job and be paid for your time, and keep the item (the booker won't be charged for it). Message them below.</div>`}
      else if(j.status==='handoff'&&j.graceEndsAt){
        if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't swapped in within 30 minutes. You can end the shift and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End shift (booker didn't show)</button>`;
