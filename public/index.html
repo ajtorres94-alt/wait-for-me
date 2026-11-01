@@ -874,7 +874,7 @@ function updateQuote(){
     +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
     +(rush?row('Rush bonus (goes to your waiter)',money(rush)):'')+row('Service fee',money(svc+book+ifee))+feeDetails([['15% of waiter time',svc],['Booking',book],['Card processing (3% of item)',ifee]])
     +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">You only pay for the time your waiter actually spends (waiters earn at least $8)${pk?' and the receipt price':''}. Covers up to ${h} hours; if it takes longer, we'll ask you to add time.</div>`
+    +`<div class="hint" style="display:block">This is the most it could cost. You're charged only for the time your waiter actually spends, in 15-minute steps${pk?', plus the receipt price':''}. Short jobs have an $8 minimum for your waiter's time. If it takes longer than ${h} hours, we'll ask before adding time.</div>`
     +`<div class="hint" style="display:block"><b>About the card hold:</b> when a waiter claims your request, your bank shows a temporary hold of up to about ${money(total+r*0.5*(1+FEE))}. It isn't a charge. When the job ends, you're charged only what was used and the rest of the hold drops off, usually within a few days depending on your bank.</div>`}
 
 // ---------- Near me (waiters) ----------
