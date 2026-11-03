@@ -424,7 +424,7 @@ function itemBox(j,mode){
   if(bought&&j.itemNote)rows.push(`<div><span>Note</span><span>${esc(j.itemNote)}</span></div>`);
   const sx=evStands(j.eventId).find(x=>x.id===j.standId);
   if(sx&&(sx.location||sx.notes))rows.push(`<div><span>Stand</span><span>${esc([sx.location,sx.notes].filter(Boolean).join(' · '))}</span></div>`);
-  if((mode==='waiter'||mode==='customer')&&(j.seatSection||j.seatRow||j.seatNumber))rows.push(`<div><span>${mode==='waiter'?'Booker\'s seat':'Your seat'}</span><span>${esc([j.seatSection&&'Sec '+j.seatSection,j.seatRow&&'Row '+j.seatRow,j.seatNumber&&'Seat '+j.seatNumber].filter(Boolean).join(' · '))}</span></div>`);
+  if((mode==='waiter'||mode==='customer')&&(j.seatSection||j.seatRow))rows.push(`<div><span>${mode==='waiter'?'Booker sits at':'You sit at'}</span><span>${esc([j.seatSection&&'Section '+j.seatSection,j.seatRow&&'Row '+j.seatRow].filter(Boolean).join(' · '))}</span></div>`);
   if(j.meetSpot&&(mode==='waiter'||mode==='customer'))rows.push(`<div><span>Meet at</span><b>${esc(j.meetSpot)}</b></div>`);
   return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>${bought&&mode==='customer'&&j.status!=='done'?'<div class="hint">Check the receipt photo before you share your code. If the item or price doesn\'t match, don\'t hand over the code; tap Report a problem.</div>':''}${bought&&j.itemNote&&/together with other orders/.test(j.itemNote)?'<div class="hint">Your waiter bought several orders at once, so this receipt also shows other people\'s items.</div>':''}`:''}</div>`}
 const MEET_TXT={45:'45 min',120:'2 hours',240:'4 hours'};
@@ -796,8 +796,8 @@ function customerPost(){
      <div class="qtyrow"><div class="wheels one">${wheelHTML('qty','How many?',QTYS,String,wheel.qty)}</div>
        <div class="field"><label for="f-price" id="l-price">${QTYS[wheel.qty]>1?'About how much each?':'About how much is it?'}</label><input id="f-price" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="1" placeholder="e.g. 40" value="${price}"><small id="h-price">Your waiter pays and is paid back from your card. You're charged the receipt price.</small></div></div>
      <div class="field"><span class="wlabel">Handover</span><small id="h-meet"></small></div>
-     <div class="field"><span class="wlabel">Your seat <span class="meta">(optional)</span></span>
-       <div class="seatrow"><label class="sr" for="f-sec">Section</label><input id="f-sec" maxlength="12" placeholder="Section" value="${v('seatSection')}"><label class="sr" for="f-row">Row</label><input id="f-row" maxlength="8" placeholder="Row" value="${v('seatRow')}"><label class="sr" for="f-seat">Seat</label><input id="f-seat" maxlength="8" placeholder="Seat" value="${v('seatNumber')}"></div>
+     <div class="field"><span class="wlabel">Where you're sitting <span class="meta">(optional)</span></span>
+       <div class="seatrow"><label class="sr" for="f-sec">Section</label><input id="f-sec" maxlength="12" placeholder="Section" value="${v('seatSection')}"><label class="sr" for="f-row">Row</label><input id="f-row" maxlength="8" placeholder="Row" value="${v('seatRow')}"></div>
        <small>Only your waiter sees it, so they can find you or meet you near your section.</small></div>
    </div>
    <div class="field"><span class="wlabel" id="l-when">When should they get there?</span>
@@ -1001,7 +1001,7 @@ function waiterShifts(){
        if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't swapped in within 30 minutes. You can end the job and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End job (booker didn't show)</button>`;
        else extra+=`<div class="hint">If ${O} doesn't swap in by ${clockOf(j.graceEndsAt)}, you can end the job and be paid for your time. Message them below.</div>`}
      if(pickup&&['claimed','enroute','inline','nearfront','handoff'].includes(j.status)){const sx=evStands(j.eventId).find(x=>x.id===j.standId),seat=[j.seatSection&&'Section '+j.seatSection,j.seatRow&&'Row '+j.seatRow].filter(Boolean).join(', ');
-       const quick=[sx&&`At ${sx.name}${sx.location?' ('+sx.location+')':''}`,seat&&`Your seat: ${seat}`,j.seatSection&&`Concourse behind Section ${j.seatSection}`].filter(Boolean);
+       const quick=[sx&&`At ${sx.name}${sx.location?' ('+sx.location+')':''}`,seat&&`By your seats: ${seat}`,j.seatSection&&`Concourse behind Section ${j.seatSection}`].filter(Boolean);
        extra+=`<div class="meetbox"><b>${j.meetSpot?'Meetup spot':'Where will you meet?'}</b><div class="hint">${j.meetSpot?`${O} sees: <b>${esc(j.meetSpot)}</b>. Change it if plans move.`:`Tell ${O} where you'll hand it over. They get an alert.`}</div>
          ${quick.length?`<div class="filters">${quick.map(q=>`<button type="button" class="chip" data-act="ms-fill" data-id="${j.id}" data-text="${esc(q)}">${esc(q)}</button>`).join('')}</div>`:''}
          <div class="row2" style="display:flex;gap:8px"><label class="sr" for="ms-${j.id}">Meetup spot</label><input id="ms-${j.id}" maxlength="100" style="flex:1;min-width:0" placeholder="e.g. Section 112 concourse, by the big TV" value="${esc(j.meetSpot||'')}"><button class="btn small" data-act="meet-spot" data-id="${j.id}">Save</button></div></div>`}
@@ -1167,7 +1167,7 @@ function render(){
         const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:postDay==='asap',startAt:d.toISOString(),startText:text,hours:editing?editing.hours:APPROVED_HOURS,rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
         if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add about how much it costs.');const q=QTYS[wheel.qty];if(p*q>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
           Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:limitFor(p,q),
-          handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value,seatNumber:$('#f-seat').value})}
+          handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value})}
         if(evStands(postEvent).length){if(!postStand)throw new Error('Choose a stand, or pick Other / not listed.');if(postStandChosen())body.standId=postStand}
         await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
         const was=editing;editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.')}

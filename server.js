@@ -380,7 +380,6 @@ function lineFields(b, event = null) {
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
     seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,
-    seatNumber: text(b.seatNumber, "your seat", 8, { required: false }) || null,
   };
   if (!pickup) {
     if (b.spotAgree !== true)
