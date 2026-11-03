@@ -376,7 +376,7 @@ function lineFields(b, event = null) {
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
     rush: b.asap === true && !event, // ASAP requests carry a rush bonus for the waiter, except at events (where nearly everything is ASAP)
-    pricingV: 3,
+    pricingV: 4,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
     seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,
@@ -394,6 +394,14 @@ function lineFields(b, event = null) {
   f.qty = b.qty === undefined ? 1 : Number(b.qty);
   if (!Number.isInteger(f.qty) || f.qty < 1 || f.qty > MAX_QTY) fail(400, `Pick a quantity from 1 to ${MAX_QTY}.`);
   f.itemBudget = num(b.itemBudget, "The most you'll pay for the item", 1, MAX_ITEM);
+  // Up to 4 more items from the same stand in one request: one waiter fee, one service fee, one charge.
+  const extras = Array.isArray(b.extraItems) ? b.extraItems.filter((x) => x && String(x.item || "").trim()) : [];
+  if (extras.length > 4) fail(400, "Add up to 5 items in one request.");
+  f.extraItems = extras.map((x, i) => {
+    const qty = x.qty === undefined ? 1 : Number(x.qty);
+    if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) fail(400, `Pick a quantity from 1 to ${MAX_QTY} for item ${i + 2}.`);
+    return { item: text(x.item, `item ${i + 2}`, 80), details: text(x.details, `item ${i + 2}'s details`, 80, { required: false }), qty };
+  });
   f.handoff = "meet"; // drop-off was retired in Nov 2026: the booker meets the waiter
   // The waiter holds the item for 4 hours after buying it, so meeting after a show works.
   // (Bookers are asked to meet within 30 minutes for food; the app can't tell what's food.)
@@ -401,7 +409,7 @@ function lineFields(b, event = null) {
   if (!MEET_CHOICES.includes(f.meetWithin)) fail(400, "Pick when you'll meet your waiter.");
   f.what = f.item;
   checkVenue(place, f.item, notes);
-  if ([f.item, f.itemDetails, f.itemBackup, notes].some((t) => RESTRICTED.test(t || "")))
+  if ([f.item, f.itemDetails, f.itemBackup, notes, ...f.extraItems.flatMap((x) => [x.item, x.details])].some((t) => RESTRICTED.test(t || "")))
     fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, tickets or admission (including wristbands and parking passes), lottery tickets, gift cards, or money orders.");
   return f;
 }
@@ -1067,14 +1075,15 @@ async function api(req, res, urlPath, query) {
       for (const x of await store.activePickups()) {
         if (!x.eventId || !evIds.has(x.eventId)) continue;
         const k = standKey(x);
-        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id, waiterInLine: false, waiterHeading: false };
+        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id, waiterInLine: false, waiterHeading: false, leavesAt: null };
+        if (x.runLeavesAt && new Date(x.runLeavesAt).getTime() > Date.now() && ["claimed", "enroute"].includes(x.status) && (!r.leavesAt || new Date(x.runLeavesAt) > new Date(r.leavesAt))) r.leavesAt = x.runLeavesAt;
         r.orders++;
         if (x.waiterId && ["inline", "nearfront"].includes(x.status)) r.waiterInLine = true;
         if (x.waiterId && ["claimed", "enroute"].includes(x.status)) r.waiterHeading = true;
         if (x.id < r.firstId) [r.firstId, r.place] = [x.id, x.place];
         g.set(k, r);
       }
-      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders, waiterInLine, waiterHeading }) => ({ eventId, place, orders, waiterInLine, waiterHeading }));
+      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders, waiterInLine, waiterHeading, leavesAt }) => ({ eventId, place, orders, waiterInLine, waiterHeading, leavesAt }));
     }
     if (mineL.some((l) => l.status === "open" && l.kind === "pickup")) {
       const active = await store.activePickups();
@@ -1121,8 +1130,27 @@ async function api(req, res, urlPath, query) {
     }
     // Look up map coordinates in the background so posting stays instant.
     locateLine(line.id, line.place, event).catch(() => {});
-    // Waiters already in line at this stand can add it on for a flat $3.
+    // A waiter holding a run open at this stand takes the new order automatically (it joins their group run).
+    let joinedRun = null;
     if (line.kind === "pickup") {
+      const open = (await store.activePickups()).filter((x) => x.waiterId && x.waiterId !== me.id && ["claimed", "enroute"].includes(x.status) && x.runLeavesAt && new Date(x.runLeavesAt).getTime() > Date.now() && standKey(x) === standKey(line));
+      const byWaiter = new Map();
+      for (const x of open) byWaiter.set(x.waiterId, (byWaiter.get(x.waiterId) || []).concat(x));
+      for (const [wid, xs] of byWaiter) {
+        if (xs.length >= BATCH_MAX) continue;
+        const w = await store.userById(wid);
+        if (!w || w.suspended || !w.payoutsReady || (w.minRate != null && line.rate < w.minRate)) continue;
+        try {
+          const claimed = await claimLine(w, line);
+          await store.updateLineAny(line.id, { runLeavesAt: xs[0].runLeavesAt });
+          ping(wid, "Added to your run", `${line.item} at ${line.place} joined your group run.`);
+          joinedRun = { waiterName: firstName(w.name), leavesAt: xs[0].runLeavesAt, line: claimed };
+          break;
+        } catch {}
+      }
+    }
+    // Waiters already in line at this stand can add it on for a flat $5.
+    if (line.kind === "pickup" && !joinedRun) {
       const told = new Set();
       for (const x of await store.activePickups())
         if (x.waiterId && x.waiterId !== me.id && !told.has(x.waiterId) && standKey(x) === standKey(line)) {
@@ -1135,7 +1163,7 @@ async function api(req, res, urlPath, query) {
           }
         }
     }
-    return send(res, 201, { line: await one(me, line) });
+    return send(res, 201, { line: await one(me, joinedRun ? joinedRun.line : line), joinedRun: joinedRun ? { waiterName: joinedRun.waiterName, leavesAt: joinedRun.leavesAt } : null });
   }
 
   const mm = urlPath.match(/^\/api\/lines\/(\d+)\/messages$/);
@@ -1171,7 +1199,7 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot|run-window)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
@@ -1310,6 +1338,18 @@ async function api(req, res, urlPath, query) {
       if (!moved) fail(409, "This job just changed. Try again.");
       ping(l.ownerId, "Meetup spot", `${firstName(me.name)} will meet you at: ${spot}`);
       return send(res, 200, { line: await one(me, moved) });
+    }
+
+    // The waiter holds their trip open for a few minutes so more orders at this stand can join the run.
+    if (action === "run-window") {
+      if (l.waiterId !== me.id) fail(403, "Only your waiter can do that.");
+      if (!["claimed", "enroute"].includes(l.status) || l.purchasedAt) fail(409, "Hold the run open before you get in line.");
+      if (!waiterStats(me, await store.listLines({ waiterId: me.id })).canBatch) fail(403, `Group runs open up after you finish ${BATCH_MIN_JOBS} jobs.`, "batch_locked");
+      const mins = [3, 5].includes(Number(b.minutes)) ? Number(b.minutes) : 3;
+      const until = new Date(Date.now() + mins * 60000);
+      for (const x of await store.listLines({ waiterId: me.id }))
+        if (x.kind === "pickup" && ["claimed", "enroute"].includes(x.status) && !x.purchasedAt && standKey(x) === standKey(l)) await store.updateLineAny(x.id, { runLeavesAt: until });
+      return send(res, 200, { line: await one(me, await store.getLine(id)), until });
     }
 
     if (action === "join-run") {

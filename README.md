@@ -148,3 +148,5 @@ Pricing for small orders and add-ons (billing.js): item limit up to $25 = small 
 
 
 Pricing v3 (requests posted from Nov 3, 2026, `pricing_v = 3`): base service fee $3.49 (regular) / $1.99 (small orders), still + 9% and capped at $12; add-ons stay $1.49. Group-run waiter pay is capped at $32/hr.
+
+Pricing v4 (`pricing_v = 4`, Nov 2026): solo orders with item limit ≤ $12.50 add TINY_FEE $0.99 (not add-ons, group runs or multi-item requests). Requests can carry `extraItems` (up to 4 more items from the same stand: item, details, qty; stored as JSON in `extra_items`); `itemBudget` is the combined limit. Run window: `POST /api/lines/:id/run-window {minutes: 3|5}` (waiter, batch-eligible, claimed/enroute, not yet bought) sets `run_leaves_at` on all their same-stand orders; `/api/sync` standRuns carries `leavesAt` for the booker countdown; a new request at that stand while the window is open is auto-claimed by that waiter (if under 5 orders, payouts ready, rate ≥ their minimum) and the create response includes `joinedRun`. Find sorts stands where the waiter is in line or heading, then stands with 2+ open orders, first.

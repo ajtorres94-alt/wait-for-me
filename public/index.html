@@ -322,7 +322,8 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .seatrow{display:flex;gap:8px}.seatrow input{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit}
 .standsel{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;color:var(--ink)}
 .meetbox{display:flex;flex-direction:column;gap:8px;background:var(--bg);border-radius:12px;padding:12px;width:100%}.meetbox input{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:inherit}
-.money-in{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 12px}.money-in span{font-weight:800;color:var(--muted)}.money-in input{flex:1;min-width:0;border:0;background:transparent;padding:10px 0;font:inherit;outline:none}
+.money-in{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0 12px}.money-in span{font-weight:800;color:var(--muted)}
+.extra{border-top:1px dashed var(--line);padding-top:10px;margin-top:4px}.extra .xh{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:14px}.extra .money-in input{border:0;background:transparent;padding:10px 0}.extra select{width:auto}.money-in input{flex:1;min-width:0;border:0;background:transparent;padding:10px 0;font:inherit;outline:none}
 .buybox{display:flex;flex-direction:column;gap:10px;background:var(--bg);border-radius:12px;padding:12px;width:100%}
 .buybox .row2{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .buybox input[type=number]{width:120px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:var(--f-mono);font-weight:700}
@@ -418,6 +419,7 @@ function itemBox(j,mode){
   if(kindOf(j)!=='pickup')return'';
   const bought=!!j.purchasedAt&&j.outcome!=='sold_out';
   const rows=[`<div><span>Buy</span><b>${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)}</b></div>`];
+  (j.extraItems||[]).forEach(x=>rows.push(`<div><span>Also buy</span><b>${x.qty>1?`${x.qty} × `:''}${esc(x.item)}${x.details?` <span class="meta">(${esc(x.details)})</span>`:''}</b></div>`));
   if(j.itemDetails)rows.push(`<div><span>Details</span><span>${esc(j.itemDetails)}</span></div>`);
   if(j.itemBackup)rows.push(`<div><span>If sold out</span><span>${esc(j.itemBackup)}</span></div>`);
   rows.push(bought?`<div><span>Bought for</span><b class="mono">${money(j.itemTotal)}</b></div>`:`<div><span>Item limit</span><b class="mono">${money(j.itemBudget)}</b></div>`);
@@ -437,7 +439,7 @@ let clockSkew=0;
 const nowS=()=>Date.now()+clockSkew;
 function billOf(j){
   if(j.status==='done'&&j.bill){const s=j.bill;return{approved:s.approvedHours,waited:s.waitedHours,billed:s.billedHours,time:s.timePay??s.waiterPay,drop:s.dropoff||0,item:s.item||0,
-    saved:s.bundleSaving||0,disc:s.groupDiscount||0,addOn:!!s.addOn,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
+    saved:s.bundleSaving||0,disc:s.groupDiscount||0,addOn:!!s.addOn,tiny:s.tinyFee||0,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
   const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
@@ -456,6 +458,7 @@ function billRows(b,who){
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
   if(b.rush)rows.push([who==='customer'?'Rush bonus (goes to your waiter)':'Rush bonus',money(b.rush)]);
+  if(who==='customer'&&b.tiny)rows.push(['Small-order fee',money(b.tiny)]);
   const fee=b.svc+b.book+b.ifee;
   if(who==='customer'&&fee>0)rows.push(['Service fee',money(fee)]);
   return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}${who==='customer'&&b.addOn&&fee>0?'<div class="feedet">A flat $1.49 for add-on orders.</div>':who==='customer'&&fee>0?(b.book||b.ifee?feeDetails([['15% of waiter time',b.svc],['Booking',b.book],['Card processing (3% of item)',b.ifee]]):FEE_NOTE):''}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
@@ -466,6 +469,8 @@ function meterInner(j,mode){
    <div class="bar${b.nearUp?' warn':''}"><i style="width:${pct}%"></i></div>
    <div class="meter-bot"><span>${mode==='customer'?'Cost so far ($8 minimum)':'Earned so far ($8 minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'&&!(kindOf(j)==='pickup'&&j.purchasedAt)?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
+const leftTxt=t=>{const ms=new Date(t).getTime()-Date.now();if(!(ms>0))return'now';const m=Math.floor(ms/60000),sec=Math.floor(ms/1000)%60;return`${m}:${String(sec).padStart(2,'0')}`};
+setInterval(()=>document.querySelectorAll('[data-leaves]').forEach(el=>{el.textContent=leftTxt(el.dataset.leaves)}),1000);
 setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
 let myRatings=null,TAGS={waiter:[],booker:[]};
 // ---------- phone alerts (Web Push) ----------
@@ -773,6 +778,15 @@ const APPROVED_HOURS=2; // time approved up front; bookers are asked to add more
 const approvedFor=()=>postEvent?1:APPROVED_HOURS; // at events, lines are short and the game is the clock: 1 hour
 const PRICE_BUFFER=1.25; // the item limit is the booker's rough price plus room for tax and price changes
 const limitFor=(p,q=1)=>Math.min(MAX_ITEM,Math.ceil(p*q*PRICE_BUFFER));
+// More items from the same stand in one request (one waiter fee, one service fee, one charge).
+let postExtras=[];
+const extrasEst=()=>postExtras.reduce((s,x)=>s+(+x.price||0)*(+x.qty||1),0);
+function extrasHTML(){return`${postExtras.map((x,i)=>`<div class="field extra"><div class="xh"><span>Item ${i+2}</span><button type="button" class="linkbtn" data-xrm="${i}" aria-label="Remove item ${i+2}">Remove</button></div><div class="row2" style="display:flex;gap:8px"><label class="sr" for="x-item-${i}">Item ${i+2}</label><input id="x-item-${i}" data-x="${i}" data-k="item" maxlength="80" placeholder="e.g. Team hat" value="${esc(x.item||'')}" style="flex:2;min-width:0">
+  <label class="sr" for="x-qty-${i}">How many</label><select id="x-qty-${i}" data-x="${i}" data-k="qty" class="minrate">${[1,2,3,4,5].map(n=>`<option${+x.qty===n?' selected':''}>${n}</option>`).join('')}</select></div>
+  <div class="row2" style="display:flex;gap:8px;margin-top:6px"><label class="sr" for="x-det-${i}">Details</label><input id="x-det-${i}" data-x="${i}" data-k="details" maxlength="80" placeholder="Details (optional)" value="${esc(x.details||'')}" style="flex:2;min-width:0">
+  <div class="money-in" style="flex:1"><span aria-hidden="true">$</span><label class="sr" for="x-price-${i}">Estimated price each</label><input id="x-price-${i}" data-x="${i}" data-k="price" type="number" inputmode="decimal" min="1" step="1" placeholder="Each" value="${x.price??''}"></div>
+</div></div>`).join('')}
+  ${postExtras.length<4?`<div class="field"><button type="button" class="btn ghost small" data-xadd="1">+ Add another item from this stand</button><small style="display:block">One waiter fee and one service fee for everything, so it costs less than separate orders.</small></div>`:''}`}
 // Puts the time wheels on a date and picks the matching day chip.
 function setWhen(d){const now=new Date(),day=x=>new Date(x.getFullYear(),x.getMonth(),x.getDate()).getTime(),diff=(day(d)-day(now))/864e5;
   postDay=diff<=0?'today':diff===1?'tomorrow':'date';postDate=diff>1?`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`:'';
@@ -799,6 +813,7 @@ function customerPost(){
      <div class="field"><label for="f-backup">If it's sold out, buy this instead <span class="meta">(optional)</span></label><input id="f-backup" maxlength="120" placeholder="e.g. The tour tee in L" value="${v('itemBackup')}"></div>
      <div class="qtyrow"><div class="wheels one">${wheelHTML('qty','How many?',QTYS,String,wheel.qty)}</div>
        <div class="field"><label for="f-price" id="l-price">${QTYS[wheel.qty]>1?'Estimated price each':'Estimated price'}</label><div class="money-in"><span aria-hidden="true">$</span><input id="f-price" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="1" placeholder="40" value="${price}"></div><small id="h-price">Your waiter pays and is paid back from your card. You're charged the receipt price.</small></div></div>
+     <div id="extras">${extrasHTML()}</div>
      <div class="field"><span class="wlabel">Handover</span><small id="h-meet"></small></div>
      <div class="field"><span class="wlabel">Where you're sitting <span class="meta">(optional)</span></span>
        <div class="seatrow"><label class="sr" for="f-sec">Section</label><input id="f-sec" maxlength="12" placeholder="Section" value="${v('seatSection')}"><label class="sr" for="f-row">Row</label><input id="f-row" maxlength="8" placeholder="Row" value="${v('seatRow')}"></div>
@@ -825,9 +840,9 @@ function standPicker(){const st=evStands(postEvent);if(!st.length)return'';
   <small id="h-stand">${standHint()}</small></div>`}
 function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x)return'Pick where to buy it. Orders at the same stand can be bought together, and everyone saves on waiter time.';
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
-function runTag(r,n){return r.waiterInLine?'waiter in line now: add-on, $5 + $1.49 fee':r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
+function runTag(r,n){if(r.leavesAt&&new Date(r.leavesAt)>Date.now()&&!r.waiterInLine)return`waiter leaving in ${leftTxt(r.leavesAt)}: join, save ${Math.round(groupDisc(n+1)*100)}%`;return r.waiterInLine?'waiter in line now: add-on, $5 + $1.49 fee':r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
 function runChips(){const rs=STAND_RUNS.filter(r=>r.eventId===postEvent).sort((a,b)=>(b.waiterInLine-a.waiterInLine)||(b.waiterHeading-a.waiterHeading)||(b.orders-a.orders));if(!rs.length)return'';
-  return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–25% on waiter time, or pay just $5 + a $1.49 fee if a waiter is already in line.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${runTag(r,r.orders)}</button>`).join('')}</div></div>`}
+  return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–25% on waiter time, or pay just $5 + a $1.49 fee if a waiter is already in line.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
 function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
   return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
 function setEvent(id){postEvent=id||null;const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
@@ -892,12 +907,13 @@ function initWheel(key){
 function updateQuote(){
   const q=$('#quote');if(!q)return;
   const h=approvedFor(),r=RATES[wheel.rate],pk=postKind==='pickup';
-  const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,budget=price?limitFor(price,qty):0;
+  const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,xEst=pk?extrasEst():0,budget=price?Math.min(MAX_ITEM,limitFor(price,qty)+(xEst?limitFor(xEst,1):0)):0;
+  const tiny=pk&&budget>0&&budget<=12.5&&!postExtras.length?0.99:0;
   const small=pk&&budget>0&&budget<=SMALL_BUDGET,jmin=small?SMALL_MIN_PAY:MIN_PAY;
   const rush=postDay==='asap'&&!postEvent?RUSH_FEE:0;
   // Worst case (what the card hold covers) and a typical 15-minute wait.
-  const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small),total=time+budget+fee+rush;
-  const likelyTime=Math.max(jmin,0.25*r),est=price*qty,likely=likelyTime+est+svcV2(likelyTime,est,small)+rush;
+  const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small)+tiny,total=time+budget+fee+rush;
+  const likelyTime=Math.max(jmin,0.25*r),est=price*qty+xEst,likely=likelyTime+est+svcV2(likelyTime,est,small)+tiny+rush;
   const st=evStands(postEvent).find(x=>x.id===postStand),run=st&&STAND_RUNS.find(x=>x.eventId===postEvent&&x.place.trim().toLowerCase()===st.name.trim().toLowerCase());
   const addOn=run&&run.waiterInLine?ADDON_PAY+est+ADDON_FEE:0;
   if(pk){$('#l-price').textContent=qty>1?'Estimated price each':'Estimated price';
@@ -905,11 +921,11 @@ function updateQuote(){
     $('#h-meet').textContent='You meet your waiter to get it, within 4 hours of the purchase, so after the game or show works. For food, meet within 30 minutes so it stays fresh.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
   q.innerHTML=`<div class="total"><span>Estimated total</span><span class="mono">${price?money(likely):'—'}</span></div>`
-    +`<div class="hint" style="display:block">For a typical 15-minute wait${pk&&est?' and the item at an estimated '+money(est):''}. ${small?'Small orders have a lower minimum and fee. ':''}${postEvent?'No rush fee at events. ':''}</div>`
+    +`<div class="hint" style="display:block">For a typical 15-minute wait${pk&&est?' and the item at an estimated '+money(est):''}. ${tiny?'Includes a $0.99 small-order fee, which drops if your order joins a group run or you add another item. ':small?'Small orders have a lower minimum and fee. ':''}${postEvent?'No rush fee at events. ':''}</div>`
     +(addOn?`<div class="note" style="margin:6px 0"><b>A waiter is in line at ${esc(st.name)} right now.</b> If they add yours on, it's an estimated <b>${money(addOn)}</b>: a flat $5 for them and a $1.49 fee, no time charge.</div>`:'')
     +`<details class="feedet"><summary>Most it could cost: ${money(total)}</summary>`
     +row(`Your waiter (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
-    +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')
+    +(pk?row(postExtras.length?'Items, up to':qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')
     +(rush?row('Rush bonus (goes to your waiter)',money(rush)):'')+row('Service fee',money(fee))
     +`<div class="hint" style="display:block">You're charged only for the time your waiter actually spends, in 15-minute steps${pk?', plus the receipt price':''}. Short jobs have a ${money(jmin)} minimum for your waiter's time. If it takes longer than ${h} hour${h===1?'':'s'}, we'll ask before adding time. When a waiter claims your request, your bank shows a temporary hold for this amount; you're charged only what was used.</div></details>`
     +FEE_NOTE}
@@ -959,6 +975,9 @@ function waiterFind(){
     if(near.radius)open=open.filter(j=>{const d=distOf(j);return d!=null&&d<=near.radius});
     open=open.slice().sort((a,b)=>{const x=distOf(a),y=distOf(b);return(x==null)-(y==null)||(x??0)-(y??0)});
   }
+  {const cnt=new Map();for(const j of open)if(kindOf(j)==='pickup'){const k=standKey(j);cnt.set(k,(cnt.get(k)||0)+1)}
+   const score=j=>kindOf(j)!=='pickup'?0:inLineAt.has(standKey(j))?3:data.shifts.some(x=>['claimed','enroute'].includes(x.status)&&standKey(x)===standKey(j))?2:(cnt.get(standKey(j))||0)>1?1:0;
+   open=open.slice().sort((a,b)=>score(b)-score(a)||(near.on?((distOf(a)??1e9)-(distOf(b)??1e9)):0))}
   const radii=[[0,'Any distance'],[5,'5 mi'],[10,'10 mi'],[25,'25 mi']];
   const evName=eventFilter&&(EVENTS.find(e=>e.id===eventFilter)||{}).name;
   const selBar=open.length>1&&WSTATS.canBatch?(selecting?`<div class="selbar"><span><b>${picked.size}</b> selected${picked.size>=5?' (most at once)':''}</span><span class="btns"><button class="btn small" data-act="claim-batch"${picked.size?'':' disabled'}>Claim ${picked.size||''}</button><button class="btn ghost small" data-act="select-off">Cancel</button></span></div>`
@@ -1019,6 +1038,10 @@ function waiterShifts(){
      else if(j.status==='handoff'&&j.graceEndsAt){
        if(nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't swapped in within 30 minutes. You can end the job and be paid for your time.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">End job (booker didn't show)</button>`;
        else extra+=`<div class="hint">If ${O} doesn't swap in by ${clockOf(j.graceEndsAt)}, you can end the job and be paid for your time. Message them below.</div>`}
+     if(pickup&&['claimed','enroute'].includes(j.status)&&!j.purchasedAt&&j.eventId){const live=j.runLeavesAt&&new Date(j.runLeavesAt)>Date.now(),more=data.open.filter(x=>kindOf(x)==='pickup'&&standKey(x)===standKey(j)).length;
+       extra+=WSTATS.canBatch?`<div class="meetbox"><b>${live?`Run open: leaving in <span data-leaves="${j.runLeavesAt}">${leftTxt(j.runLeavesAt)}</span>`:'Hold for more orders?'}</b><div class="hint">${live?'New orders for this stand join your run automatically while the timer runs. Each one pays you more for the same wait.':'Fans at this event see a countdown and can join your run before you get in line. New orders for this stand are added to your jobs automatically.'}${more?` ${more} more open order${more===1?' is':'s are'} waiting at this stand in Find.`:''}</div>
+         <div class="btns"><button class="btn ghost small" data-act="run-window" data-id="${j.id}" data-min="3">${live?'Reset to 3 min':'Hold 3 min'}</button><button class="btn ghost small" data-act="run-window" data-id="${j.id}" data-min="5">${live?'Reset to 5 min':'Hold 5 min'}</button></div></div>`
+         :more?`<div class="note">${more} more open order${more===1?' is':'s are'} waiting at this stand. Claiming several at once opens up after you finish ${WSTATS.batchMinJobs} jobs.</div>`:''}
      if(pickup&&['claimed','enroute','inline','nearfront','handoff'].includes(j.status)){const sx=evStands(j.eventId).find(x=>x.id===j.standId),seat=[j.seatSection&&'Section '+j.seatSection,j.seatRow&&'Row '+j.seatRow].filter(Boolean).join(', ');
        const quick=[sx&&`At ${sx.name}${sx.location?' ('+sx.location+')':''}`,seat&&`By your seats: ${seat}`,j.seatSection&&`Concourse behind Section ${j.seatSection}`].filter(Boolean);
        extra+=`<div class="meetbox"><b>${j.meetSpot?'Meetup spot':'Where will you meet?'}</b><div class="hint">${j.meetSpot?`${O} sees: <b>${esc(j.meetSpot)}</b>. Change it if plans move.`:`Tell ${O} where you'll hand it over. They get an alert.`}</div>
@@ -1176,7 +1199,9 @@ function render(){
   if(t==='post'){['rate','hr','mn','ap','qty'].forEach(initWheel);updateQuote();
     $('#postForm').querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>setDay(b.dataset.day));
     $('#postForm').querySelectorAll('[data-event]').forEach(b=>b.onclick=()=>setEvent(+b.dataset.event||null));
-    $('#postForm').addEventListener('change',e=>{if(e.target.id==='f-stand')setStand(e.target.value)});
+    $('#postForm').addEventListener('change',e=>{if(e.target.id==='f-stand')setStand(e.target.value);const x=e.target.dataset&&e.target.dataset.x;if(x!==undefined){postExtras[+x][e.target.dataset.k]=e.target.value;updateQuote()}});
+    $('#postForm').addEventListener('input',e=>{const x=e.target.dataset&&e.target.dataset.x;if(x!==undefined){postExtras[+x][e.target.dataset.k]=e.target.value;updateQuote()}});
+    $('#postForm').addEventListener('click',e=>{const a=e.target.closest('[data-xadd]'),rm=e.target.closest('[data-xrm]');if(!a&&!rm)return;if(a)postExtras.push({item:'',details:'',qty:1,price:''});else postExtras.splice(+rm.dataset.xrm,1);$('#extras').innerHTML=extrasHTML();updateQuote();if(a){const i=$('#x-item-'+(postExtras.length-1));if(i)i.focus()}});
     $('#postForm').addEventListener('click',e=>{const c=e.target.closest('[data-runplace]');if(!c)return;const sx=evStands(postEvent).find(x=>x.name.trim().toLowerCase()===c.dataset.runplace.trim().toLowerCase());if(sx){setStand(sx.id);const sel=$('#f-stand');if(sel)sel.value=sx.id}$('#f-place').value=c.dataset.runplace;c.parentNode.querySelectorAll('[data-runplace]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));toast(`Posting at ${c.dataset.runplace}. You'll join that group run if a waiter buys them together.`)});
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));
     $('#postForm').querySelectorAll('[data-hand]').forEach(b=>b.onclick=()=>setHandoff(b.dataset.hand));
@@ -1184,11 +1209,14 @@ function render(){
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
       try{const {d,text}=chosenStart();
         const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:postDay==='asap',startAt:d.toISOString(),startText:text,hours:editing?editing.hours:approvedFor(),rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
-        if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add the estimated price.');const q=QTYS[wheel.qty];if(p*q>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
-          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:limitFor(p,q),
+        if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add the estimated price.');const q=QTYS[wheel.qty];
+          const xs=postExtras.filter(x=>String(x.item||'').trim());if(xs.some(x=>!(+x.price>0)))throw new Error('Add an estimated price for each extra item.');
+          const xe=xs.reduce((s,x)=>s+x.price*x.qty,0);if(p*q+xe>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
+          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:Math.min(MAX_ITEM,limitFor(p,q)+(xe?limitFor(xe,1):0)),extraItems:xs.map(x=>({item:x.item,details:x.details||'',qty:+x.qty||1})),
           handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value})}
         if(evStands(postEvent).length){if(!postStand)throw new Error('Choose a stand, or pick Other / not listed.');if(postStandChosen())body.standId=postStand}
-        await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});
+        const res=await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});postExtras=[];
+        if(res.joinedRun){editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(`Joined ${res.joinedRun.waiterName}'s run at ${res.line.place}. You'll get the group price.`);return}
         const was=editing;editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.')}
       catch(err){if(payNeedsSetup(err))return;$('#formErr').textContent=err.message;btn.disabled=false}})}
   if(t==='account'&&cardOpen)mountCard();
@@ -1232,7 +1260,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);if(kindOf(j)!=='pickup'){toast('Save my spot requests can\'t be edited anymore. Cancel it and post a pickup instead.');b.disabled=false;return}editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postEvent=j.eventId||null;postStand=j.standId||(evStands(j.eventId).length?'other':'');wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-RATES[0])*4)));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);if(kindOf(j)!=='pickup'){toast('Save my spot requests can\'t be edited anymore. Cancel it and post a pickup instead.');b.disabled=false;return}editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postExtras=(j.extraItems||[]).map(x=>({...x,price:''}));postEvent=j.eventId||null;postStand=j.standId||(evStands(j.eventId).length?'other':'');wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-RATES[0])*4)));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}
@@ -1249,7 +1277,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='withdraw-offer'){await api(`/lines/${id}/withdraw-offer`,{method:'POST'});toast('Offer withdrawn.')}
     if(a==='accept-offer'){const r=await api(`/lines/${id}/accept-offer`,{method:'POST',body:{offerId:+b.dataset.offer}});toast(`Booked ${r.line.waiterName} at ${fmtRate(r.line.rate)}/hr.`)}
     if(a==='decline-offer'){await api(`/lines/${id}/decline-offer`,{method:'POST',body:{offerId:+b.dataset.offer}});toast('Offer declined.')}
-    if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.`);tab.waiter='shifts'}
+    if(a==='claim'){const r=await api(`/lines/${id}/claim`,{method:'POST'});const more=data.open.filter(x=>x.id!==r.line.id&&kindOf(x)==='pickup'&&standKey(x)===standKey(r.line)).length;toast(`Claimed. Head to ${r.line.place} by ${r.line.startText}.${more?` ${more} more order${more===1?'':'s'} open at this stand: see your job card.`:''}`);tab.waiter='shifts'}
     if(a==='advance'){const r=await api(`/lines/${id}/advance`,{method:'POST'});toast(`${r.line.ownerName} can see you're ${stShort(r.line).toLowerCase()}.`)}
     if(a==='here'){const r=await api(`/events/${id}/here`,{method:'POST',body:{here:b.dataset.here==='1'}});toast(b.dataset.here==='1'?`You're checked in at ${r.event.name}. New requests there will alert you.`:'Marked as left.')}
     if(a==='ev-filter'){eventFilter=eventFilter===+id?null:+id;b.disabled=false;render();window.scrollTo(0,0);return}
@@ -1257,6 +1285,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='claim-batch'){const r=await api('/lines/claim-batch',{method:'POST',body:{ids:[...picked]}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
       selecting=false;picked.clear();toast(bad.length?`Claimed ${ok.length} of ${r.results.length}. ${bad[0].error}`:`Claimed all ${ok.length}. They're in My jobs.`);if(ok.length)tab.waiter='shifts'}
     if(a==='ms-fill'){const i=document.getElementById('ms-'+id);if(i)i.value=b.dataset.text;b.disabled=false;return}
+    if(a==='run-window'){const m=+b.dataset.min;await api(`/lines/${id}/run-window`,{method:'POST',body:{minutes:m}});toast(`Run open for ${m} minutes. New orders for this stand join automatically.`)}
     if(a==='meet-spot'){const v=(document.getElementById('ms-'+id)||{}).value||'';if(!v.trim())throw new Error('Type where you\'ll meet.');await api(`/lines/${id}/meet-spot`,{method:'POST',body:{spot:v}});toast('Meetup spot sent. The booker got an alert.')}
     if(a==='join-run'){const r=await api(`/lines/${id}/join-run`,{method:'POST',body:{targetId:+b.dataset.target}});toast(`Moved to ${r.line.place}. If a waiter buys it with the others, you save 10–25% on waiter time, more the bigger the group.`)}
     if(a==='claim-stand'){const ids=b.dataset.ids.split(',').map(Number);const r=await api('/lines/claim-batch',{method:'POST',body:{ids}});const ok=r.results.filter(x=>x.ok),bad=r.results.filter(x=>!x.ok);
