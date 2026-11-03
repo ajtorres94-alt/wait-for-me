@@ -400,7 +400,9 @@ function lineFields(b, event = null) {
   f.extraItems = extras.map((x, i) => {
     const qty = x.qty === undefined ? 1 : Number(x.qty);
     if (!Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) fail(400, `Pick a quantity from 1 to ${MAX_QTY} for item ${i + 2}.`);
-    return { item: text(x.item, `item ${i + 2}`, 80), details: text(x.details, `item ${i + 2}'s details`, 80, { required: false }), qty };
+    const price = x.price === undefined || x.price === "" || x.price === null ? null : Number(x.price);
+    if (price !== null && !(price > 0 && price <= MAX_ITEM)) fail(400, `Check the estimated price for item ${i + 2}.`);
+    return { item: text(x.item, `item ${i + 2}`, 80), details: text(x.details, `item ${i + 2}'s details`, 80, { required: false }), qty, price };
   });
   f.handoff = "meet"; // drop-off was retired in Nov 2026: the booker meets the waiter
   // The waiter holds the item for 4 hours after buying it, so meeting after a show works.
@@ -643,7 +645,7 @@ async function claimLine(me, l) {
     if (owed + Number(l.itemBudget || 0) > FLOAT_MAX)
       fail(409, `That would put more than ${dollars(FLOAT_MAX)} of item purchases on you at once (you have up to ${dollars(owed)} to buy already). Buy what you've claimed first, then claim more.`, "float_cap");
   }
-  let updated = await store.updateLine(l.id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date() });
+  let updated = await store.updateLine(l.id, "open", { status: "claimed", waiterId: me.id, claimedAt: new Date(), runLeavesAt: null });
   if (!updated) fail(409, "Someone else just claimed this request.");
   await store.closeOtherOffers(l.id, 0);
   updated = await holdIfDue(updated);
@@ -1118,18 +1120,6 @@ async function api(req, res, urlPath, query) {
       fail(400, "Times in the next 30 minutes count as ASAP. Pick ASAP, or a time at least 30 minutes from now.", "asap_window");
     await requireCard(me);
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
-    if (event) {
-      // Tell waiters who said they're at this event.
-      const who = (await store.presentUserIds(event.id)).filter((id) => id !== me.id);
-      const what = f.kind === "pickup" ? `${f.qty > 1 ? `${f.qty} × ` : ""}${f.item}` : f.what;
-      for (const id of who) {
-        const w = await store.userById(id);
-        if (w && w.minRate != null && f.rate < w.minRate) continue; // below the rate this waiter asked for
-        ping(id, `New request at ${event.name}`, `${what} · $${f.rate.toFixed(2)}/hr`);
-      }
-    }
-    // Look up map coordinates in the background so posting stays instant.
-    locateLine(line.id, line.place, event).catch(() => {});
     // A waiter holding a run open at this stand takes the new order automatically (it joins their group run).
     let joinedRun = null;
     if (line.kind === "pickup") {
@@ -1149,6 +1139,18 @@ async function api(req, res, urlPath, query) {
         } catch {}
       }
     }
+    if (event && !joinedRun) {
+      // Tell waiters who said they're at this event.
+      const who = (await store.presentUserIds(event.id)).filter((id) => id !== me.id);
+      const what = f.kind === "pickup" ? `${f.qty > 1 ? `${f.qty} × ` : ""}${f.item}` : f.what;
+      for (const id of who) {
+        const w = await store.userById(id);
+        if (w && w.minRate != null && f.rate < w.minRate) continue; // below the rate this waiter asked for
+        ping(id, `New request at ${event.name}`, `${what} · $${f.rate.toFixed(2)}/hr`);
+      }
+    }
+    // Look up map coordinates in the background so posting stays instant.
+    locateLine(line.id, line.place, event).catch(() => {});
     // Waiters already in line at this stand can add it on for a flat $5.
     if (line.kind === "pickup" && !joinedRun) {
       const told = new Set();
@@ -1307,7 +1309,7 @@ async function api(req, res, urlPath, query) {
       if (at == null) fail(409, "Your waiter has already checked in at the line.");
       if (Date.now() < at) fail(409, "You can report a no-show 15 minutes after the start time (and at least 45 minutes after your waiter claimed it).");
       const waiterId = l.waiterId;
-      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
+      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null, runLeavesAt: null });
       if (!updated) fail(409, "This line changed. Refresh and try again.");
       await store.incNoShows(waiterId);
       updated = await releaseIfHeld(updated);
@@ -1464,7 +1466,7 @@ async function api(req, res, urlPath, query) {
       updated = await store.updateLine(id, l.status, { pos });
     } else if (action === "release") {
       if (!["claimed", "enroute"].includes(l.status)) fail(409, "You can only release a line before you're in it.");
-      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null });
+      updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null, runLeavesAt: null });
     } else if (action === "purchase") {
       if (!pickup) fail(400, "Only pickups have a purchase to record.");
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the store before recording the purchase.");

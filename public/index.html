@@ -691,7 +691,7 @@ function renderTabs(){
   const mine=data.mine.filter(j=>j.status!=='done').length, open=data.open.length, shifts=data.shifts.filter(j=>j.status!=='done').length;
   const t=role==='customer'?[['mine','Requests',mine],['post','Post',0],['account','Account',0]]:[['find','Find jobs',open],['shifts','My jobs',shifts],['account','Account',0]];
   $('#tabs').innerHTML=t.map(([k,l,c])=>`<button role="tab" id="tab-${k}" class="${k==='post'?'plus':''}" aria-selected="${tab[role]===k}" data-k="${k}"><span class="ic">${ICONS[k]}${c?`<span class="badge">${c}</span>`:''}</span>${l}</button>`).join('');
-  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){if(tab[role]==='post')editing=null;tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){if(tab[role]==='post'){editing=null;postExtras=[]}tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
 }
 function setRole(r){if(r===role)return;role=r;store.set('wfm_role',r);render();window.scrollTo(0,0)}
 document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
@@ -796,7 +796,7 @@ function customerPost(){
   const e=editing,pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
   if(e){const st=e.startAt?new Date(e.startAt):null;if(st&&st>new Date()&&e.startText!=='ASAP')setWhen(st);else{setWhen(new Date(Date.now()+30*6e4));postDay='asap'}}
   else{const t=new Date(Date.now()+30*6e4);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);setWhen(t);wheel.qty=0}
-  const price=e&&e.itemBudget?Math.round(e.itemBudget/PRICE_BUFFER/(e.qty||1)):'';
+  const xe=e?(e.extraItems||[]).reduce((s,x)=>s+(+x.price||0)*(+x.qty||1),0):0,price=e&&e.itemBudget?Math.max(1,Math.round((e.itemBudget-(xe?limitFor(xe,1):0))/PRICE_BUFFER/(e.qty||1))):'';
   const kindBtn=(k,t,d)=>`<button type="button" role="radio" aria-checked="${postKind===k}" data-kind="${k}"><b>${t}</b><span>${d}</span></button>`;
   const dayBtn=(k,t)=>`<button type="button" class="chip" aria-pressed="${postDay===k}" data-day="${k}">${t}</button>`;
   const minDate=localInput(new Date()).slice(0,10);
@@ -1212,7 +1212,7 @@ function render(){
         if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add the estimated price.');const q=QTYS[wheel.qty];
           const xs=postExtras.filter(x=>String(x.item||'').trim());if(xs.some(x=>!(+x.price>0)))throw new Error('Add an estimated price for each extra item.');
           const xe=xs.reduce((s,x)=>s+x.price*x.qty,0);if(p*q+xe>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
-          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:Math.min(MAX_ITEM,limitFor(p,q)+(xe?limitFor(xe,1):0)),extraItems:xs.map(x=>({item:x.item,details:x.details||'',qty:+x.qty||1})),
+          Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:Math.min(MAX_ITEM,limitFor(p,q)+(xe?limitFor(xe,1):0)),extraItems:xs.map(x=>({item:x.item,details:x.details||'',qty:+x.qty||1,price:+x.price})),
           handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value})}
         if(evStands(postEvent).length){if(!postStand)throw new Error('Choose a stand, or pick Other / not listed.');if(postStandChosen())body.standId=postStand}
         const res=await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});postExtras=[];
@@ -1260,9 +1260,9 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);if(kindOf(j)!=='pickup'){toast('Save my spot requests can\'t be edited anymore. Cancel it and post a pickup instead.');b.disabled=false;return}editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postExtras=(j.extraItems||[]).map(x=>({...x,price:''}));postEvent=j.eventId||null;postStand=j.standId||(evStands(j.eventId).length?'other':'');wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-RATES[0])*4)));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);if(kindOf(j)!=='pickup'){toast('Save my spot requests can\'t be edited anymore. Cancel it and post a pickup instead.');b.disabled=false;return}editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postExtras=(j.extraItems||[]).map(x=>({...x,price:x.price??''}));postEvent=j.eventId||null;postStand=j.standId||(evStands(j.eventId).length?'other':'');wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));wheel.rate=Math.max(0,Math.min(RATES.length-1,Math.round((j.rate-RATES[0])*4)));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
-    if(a==='edit-cancel'){editing=null;tab.customer='mine';b.disabled=false;render();return}
+    if(a==='edit-cancel'){editing=null;postExtras=[];tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}
     if(a==='cancelbk'){const r=await api(`/lines/${id}/cancel-booking`,{method:'POST'});cancelOpen=null;toast(r.line.bill.total?`Booking cancelled. Charge: ${money(r.line.bill.total)}.`:'Booking cancelled at no charge.')}
     if(a==='noshow'){await api(`/lines/${id}/report-noshow`,{method:'POST'});toast('No-show reported. Your line is open to other waiters again.')}

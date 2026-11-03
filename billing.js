@@ -138,7 +138,7 @@ function billing(line, now = Date.now()) {
   const serviceFee = addOn ? (charged ? ADDON_FEE : 0) : v2(line) ? (charged ? serviceFeeV2(timePay, item, small, line.pricingV) : 0) : roundCents(timePay * feeRate);
   const bookingFee = !v2(line) && charged ? bookingFeeFor(line) : 0;
   const itemFee = v2(line) ? 0 : roundCents(item * ITEM_FEE);
-  const tinyFee = Number(line.pricingV) >= 4 && charged && !addOn && !grouped && kindOf(line) === "pickup" && Number(line.itemBudget) > 0 && Number(line.itemBudget) <= TINY_BUDGET ? TINY_FEE : 0;
+  const tinyFee = Number(line.pricingV) >= 4 && charged && !addOn && !grouped && kindOf(line) === "pickup" && !(line.extraItems || []).length && Number(line.itemBudget) > 0 && Number(line.itemBudget) <= TINY_BUDGET ? TINY_FEE : 0;
   const fee = roundCents(serviceFee + bookingFee + itemFee + groupMargin + tinyFee);
   return {
     approvedHours: approved,
@@ -174,7 +174,7 @@ function maxTotal(line) {
   const time = Math.max(jobMinPay(line), hours * Number(line.rate));
   if (v2(line)) {
     const budget = kindOf(line) === "pickup" ? Number(line.itemBudget) || 0 : 0;
-    const tiny = Number(line.pricingV) >= 4 && kindOf(line) === "pickup" && budget > 0 && budget <= TINY_BUDGET ? TINY_FEE : 0;
+    const tiny = Number(line.pricingV) >= 4 && kindOf(line) === "pickup" && !(line.extraItems || []).length && budget > 0 && budget <= TINY_BUDGET ? TINY_FEE : 0;
     return time + budget + serviceFeeV2(time, budget, isSmall(line), line.pricingV) + tiny + (line.rush ? RUSH_FEE : 0);
   }
   let total = time * (1 + FEE) + bookingFeeFor(line) + (line.rush ? RUSH_FEE : 0);
