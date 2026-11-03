@@ -175,6 +175,7 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS seat_section TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS seat_row TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS seat_number TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_spot TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS add_on BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -277,7 +278,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -363,6 +364,7 @@ const COLS = {
   seatRow: "seat_row",
   seatNumber: "seat_number",
   meetSpot: "meet_spot",
+  addOn: "add_on",
 };
 const USER_COLS = {
   look: "look",

@@ -375,7 +375,7 @@ function lineFields(b, event = null) {
     rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
-    rush: b.asap === true, // ASAP requests carry a rush bonus for the waiter
+    rush: b.asap === true && !event, // ASAP requests carry a rush bonus for the waiter, except at events (where nearly everything is ASAP)
     pricingV: 2,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
@@ -692,6 +692,7 @@ function checkAtPlace(l, b, where) {
 // Orders at the same stand: same event (if any) and the same place name, ignoring case and extra spaces.
 const standKey = (l) => (l.eventId || "") + "|" + String(l.place || "").trim().toLowerCase().replace(/\s+/g, " ");
 const RUN_NEAR_M = 150;
+const ADDON_AFTER_MS = 2 * 60 * 1000; // orders checked in within 2 minutes of each other were claimed together (a group run), not added on
 // Words that describe any stand, so they don't count when deciding two names mean the same stand.
 const STAND_WORDS = new Set("the a an at by near in of and to sec section stand booth merch merchandise store shop team official stadium arena center centre kiosk cart concession concessions level floor".split(" "));
 const standTokens = (p) => new Set(String(p || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((w) => w && !STAND_WORDS.has(w)));
@@ -1066,12 +1067,13 @@ async function api(req, res, urlPath, query) {
       for (const x of await store.activePickups()) {
         if (!x.eventId || !evIds.has(x.eventId)) continue;
         const k = standKey(x);
-        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id };
+        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id, waiterInLine: false };
         r.orders++;
+        if (x.waiterId && ["inline", "nearfront"].includes(x.status)) r.waiterInLine = true;
         if (x.id < r.firstId) [r.firstId, r.place] = [x.id, x.place];
         g.set(k, r);
       }
-      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders }) => ({ eventId, place, orders }));
+      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders, waiterInLine }) => ({ eventId, place, orders, waiterInLine }));
     }
     if (mineL.some((l) => l.status === "open" && l.kind === "pickup")) {
       const active = await store.activePickups();
@@ -1115,6 +1117,15 @@ async function api(req, res, urlPath, query) {
     }
     // Look up map coordinates in the background so posting stays instant.
     locateLine(line.id, line.place, event).catch(() => {});
+    // Waiters already in line at this stand can add it on for a flat $3.
+    if (line.kind === "pickup") {
+      const told = new Set();
+      for (const x of await store.activePickups())
+        if (x.waiterId && x.waiterId !== me.id && !told.has(x.waiterId) && ["inline", "nearfront"].includes(x.status) && standKey(x) === standKey(line)) {
+          told.add(x.waiterId);
+          ping(x.waiterId, "Add-on at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it for +$3.`);
+        }
+    }
     return send(res, 201, { line: await one(me, line) });
   }
 
@@ -1382,9 +1393,17 @@ async function api(req, res, urlPath, query) {
       updated = await store.updateLine(id, l.status, fields);
       // Group run: this check-in and the waiter's other unbought orders at the same stand share one wait.
       if (updated && next === "inline" && pickup) {
-        const same = (await store.listLines({ waiterId: me.id })).filter((x) => x.kind === "pickup" && ["inline", "nearfront"].includes(x.status) && !x.purchasedAt && standKey(x) === standKey(l));
-        if (same.length > 1) for (const x of same) if (!x.bundled || (x.bundleSize || 0) < same.length) await store.updateLineAny(x.id, { bundled: true, bundleSize: same.length });
-        if (same.length > 1) updated = await store.getLine(id);
+        const mine = (await store.listLines({ waiterId: me.id })).filter((x) => x.kind === "pickup" && ["inline", "nearfront"].includes(x.status) && !x.purchasedAt && standKey(x) === standKey(l));
+        // Add-on: the waiter was already in line here for someone else (checked in over 2 minutes ago),
+        // so this order costs them almost no extra time.
+        const already = mine.some((x) => x.id !== l.id && !x.addOn && x.checkinAt && Date.now() - new Date(x.checkinAt).getTime() > ADDON_AFTER_MS);
+        if (already) {
+          updated = await store.updateLineAny(l.id, { addOn: true });
+        } else {
+          const same = mine.filter((x) => !x.addOn);
+          if (same.length > 1) for (const x of same) if (!x.bundled || (x.bundleSize || 0) < same.length) await store.updateLineAny(x.id, { bundled: true, bundleSize: same.length });
+          if (same.length > 1) updated = await store.getLine(id);
+        }
       }
       const who = firstName(me.name);
       const say = { enroute: `${who} is on the way to ${l.place}.`, inline: pickup ? `${who} is in line at ${l.place}.` : `${who} is saving your spot.`,

@@ -367,7 +367,8 @@ const KEYS={pickup:['open','claimed','enroute','inline','nearfront','handoff','d
 const kindOf=j=>j&&j.kind==='pickup'?'pickup':'spot';
 const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includes(j.status)?KEYS.legacy:KEYS.spot;
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
-const GROUP_DISCOUNT={2:.1,3:.15,4:.2,5:.25},groupDisc=n=>GROUP_DISCOUNT[Math.min(5,Math.max(2,+n||2))],BUNDLE_RATE=0.75,BUNDLE_MIN_PAY=6,BASE_FEE=2.99,PCT_FEE=0.09,FEE_CAP=12,v2=j=>+j.pricingV>=2,svcV2=(t,i)=>r2(Math.min(FEE_CAP,BASE_FEE+PCT_FEE*(t+i)));
+const GROUP_DISCOUNT={2:.1,3:.15,4:.2,5:.25},groupDisc=n=>GROUP_DISCOUNT[Math.min(5,Math.max(2,+n||2))],BUNDLE_RATE=0.75,BUNDLE_MIN_PAY=6,BASE_FEE=2.99,PCT_FEE=0.09,FEE_CAP=12,SMALL_BUDGET=25,SMALL_MIN_PAY=6,SMALL_BASE_FEE=1.49,ADDON_PAY=3,ADDON_FEE=1,v2=j=>+j.pricingV>=2,svcV2=(t,i,small)=>r2(Math.min(FEE_CAP,(small?SMALL_BASE_FEE:BASE_FEE)+PCT_FEE*(t+i)));
+const isSmallJ=j=>kindOf(j)==='pickup'&&+j.itemBudget>0&&+j.itemBudget<=SMALL_BUDGET;
 const GROUP_MAX_HOURLY=35,MIN_PAY=8,RUSH_FEE=4,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const bookingFeeFor=j=>kindOf(j)==='pickup'?PICKUP_BOOKING_FEE:BOOKING_FEE;
@@ -404,7 +405,7 @@ function steps(j){const keys=keysFor(j),i=keys.indexOf(j.status);return`<ol clas
 const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pick it up':'Save my spot'}</span>${j.event?` <span class="kindtag ev">${esc(j.event.name)}</span>`:''}`;
 // The most a job could cost the booker (time at the approved hours, fees, and for pickups the item limit and drop-off fee).
 function upTo(j,hours){const h=hours??(j.bill?j.bill.approvedHours:j.hours),time=h*j.rate;
-  if(v2(j)){const tm=Math.max(MIN_PAY,time),bud=kindOf(j)==='pickup'?+j.itemBudget||0:0;return tm+bud+svcV2(tm,bud)+(j.rush?RUSH_FEE:0)}
+  if(v2(j)){const sm=isSmallJ(j),tm=Math.max(sm?SMALL_MIN_PAY:MIN_PAY,time),bud=kindOf(j)==="pickup"?+j.itemBudget||0:0;return tm+bud+svcV2(tm,bud,sm)+(j.rush?RUSH_FEE:0)}
   let t=Math.max(MIN_PAY,time)*(1+FEE)+bookingFeeFor(j)+(j.rush?RUSH_FEE:0);if(kindOf(j)==='pickup'){t+=(+j.itemBudget||0)*(1+ITEM_FEE);if(j.handoff==='dropoff')t+=+j.dropoffFee||0}return t}
 const waiterUpTo=j=>(j.bill?j.bill.approvedHours:j.hours)*j.rate+(kindOf(j)==='pickup'&&j.handoff==='dropoff'?+j.dropoffFee||0:0)+(j.rush?RUSH_FEE:0);
 function facts(j,mode){
@@ -435,28 +436,28 @@ let clockSkew=0;
 const nowS=()=>Date.now()+clockSkew;
 function billOf(j){
   if(j.status==='done'&&j.bill){const s=j.bill;return{approved:s.approvedHours,waited:s.waitedHours,billed:s.billedHours,time:s.timePay??s.waiterPay,drop:s.dropoff||0,item:s.item||0,
-    saved:s.bundleSaving||0,disc:s.groupDiscount||0,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
+    saved:s.bundleSaving||0,disc:s.groupDiscount||0,addOn:!!s.addOn,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
   const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
-  const raw=r2(billed*j.rate),minApplied=billed>0&&raw<MIN_PAY,full=minApplied?MIN_PAY:raw,grp=!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
-  const size=Math.max(2,+j.bundleSize||2),cap=Math.max(MIN_PAY,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(wtime+drop+rush),svc=v2(j)?(billed>0?svcV2(time,item):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),fee=r2(svc+book+ifee+(time-wtime));
+  const small=isSmallJ(j),jmin=small?SMALL_MIN_PAY:MIN_PAY,addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?ADDON_PAY:minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
+  const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(wtime+drop+rush),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),fee=r2(svc+book+ifee+(time-wtime));
   const live=!!ci&&!bought;
-  return{approved,waited:w,billed,time,wtime,saved,disc,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
+  return{approved,waited:w,billed,time,wtime,saved,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
 // One "Service fee" line, with the parts behind a tap for anyone who wants them.
-const FEE_NOTE=`<div class="feedet">$2.99 + 9% of your waiter's time and the item, never more than $12. It covers card processing, payouts and support.</div>`;
+const FEE_NOTE=`<div class="feedet">Service fee: $2.99 + 9% of your waiter's time and the item (or $1.49 + 9% on small orders up to about $20), never more than $12. It covers card processing, payouts and support.</div>`;
 function feeDetails(parts){const p=parts.filter(([,v])=>v>0);return`<details class="feedet"><summary>What's in the service fee</summary>${p.map(([k,v])=>`<div><span>${k}</span><span class="mono">${money(v)}</span></div>`).join('')}</details>`}
 function billRows(b,who){
-  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.saved?(who==='customer'?` (group run, ${Math.round((b.disc||.25)*100)}% off)`:' (group run)'):b.minApplied?` (${money(MIN_PAY)} minimum)`:''),money(who==='customer'?b.time:(b.wtime??b.time))]];
+  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.addOn?' (add-on to a run, flat)':b.saved?(who==='customer'?` (group run, ${Math.round((b.disc||.25)*100)}% off)`:' (group run)'):b.minApplied?' (job minimum)':''),money(who==='customer'?b.time:(b.wtime??b.time))]];
   if(b.saved&&who==='customer')rows.push(['You saved on the group run',`−${money(b.saved)}`]);
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
   if(b.rush)rows.push([who==='customer'?'Rush bonus (goes to your waiter)':'Rush bonus',money(b.rush)]);
   const fee=b.svc+b.book+b.ifee;
   if(who==='customer'&&fee>0)rows.push(['Service fee',money(fee)]);
-  return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}${who==='customer'&&fee>0?(b.book||b.ifee?feeDetails([['15% of waiter time',b.svc],['Booking',b.book],['Card processing (3% of item)',b.ifee]]):FEE_NOTE):''}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
+  return`<div class="receipt">${rows.map(([k,v])=>`<div><span>${k}</span><span class="mono">${v}</span></div>`).join('')}${who==='customer'&&b.addOn&&fee>0?'<div class="feedet">A flat $1 for add-on orders.</div>':who==='customer'&&fee>0?(b.book||b.ifee?feeDetails([['15% of waiter time',b.svc],['Booking',b.book],['Card processing (3% of item)',b.ifee]]):FEE_NOTE):''}<div class="total"><span>${who==='customer'?'Total':'You receive'}</span><span class="mono">${money(who==='customer'?b.total:b.payout)}</span></div></div>`}
 const clockTxt=h=>{const m=Math.floor(h*60);return`${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}`};
 function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
@@ -768,6 +769,7 @@ function customerMine(){
 
 let editing=null,postKind='pickup',postHandoff='meet',postDay='today',postEvent=null,EVENTS=[];
 const APPROVED_HOURS=2; // time approved up front; bookers are asked to add more if it runs out
+const approvedFor=()=>postEvent?1:APPROVED_HOURS; // at events, lines are short and the game is the clock: 1 hour
 const PRICE_BUFFER=1.25; // the item limit is the booker's rough price plus room for tax and price changes
 const limitFor=(p,q=1)=>Math.min(MAX_ITEM,Math.ceil(p*q*PRICE_BUFFER));
 // Puts the time wheels on a date and picks the matching day chip.
@@ -815,9 +817,9 @@ const evStands=id=>{const ev=EVENTS.find(e=>e.id===id);return ev&&ev.stands?ev.s
 const postStandChosen=()=>postStand&&postStand!=='other'&&evStands(postEvent).some(s=>s.id===postStand);
 // The venue's stand list, busiest group runs first, with what joining would save.
 function standPicker(){const st=evStands(postEvent);if(!st.length)return'';
-  const runs=new Map(STAND_RUNS.filter(r=>r.eventId===postEvent).map(r=>[r.place.trim().toLowerCase(),r.orders]));
-  const rows=st.map(x=>({...x,orders:runs.get(x.name.trim().toLowerCase())||0})).sort((a,b)=>b.orders-a.orders||a.name.localeCompare(b.name));
-  return`<div class="field"><label for="f-stand">Which stand?</label><select id="f-stand" class="standsel"><option value="">Choose a stand</option>${rows.map(x=>`<option value="${x.id}"${postStand===x.id?' selected':''}>${esc(x.name)}${x.location?' · '+esc(x.location):''}${x.orders?` · ${x.orders} ordering now, save ${Math.round(groupDisc(x.orders+1)*100)}%`:''}</option>`).join('')}<option value="other"${postStand==='other'?' selected':''}>Other / not listed</option></select>
+  const runs=new Map(STAND_RUNS.filter(r=>r.eventId===postEvent).map(r=>[r.place.trim().toLowerCase(),r]));
+  const rows=st.map(x=>{const g=runs.get(x.name.trim().toLowerCase());return{...x,orders:g?g.orders:0,inLine:!!(g&&g.waiterInLine)}}).sort((a,b)=>b.orders-a.orders||a.name.localeCompare(b.name));
+  return`<div class="field"><label for="f-stand">Which stand?</label><select id="f-stand" class="standsel"><option value="">Choose a stand</option>${rows.map(x=>`<option value="${x.id}"${postStand===x.id?' selected':''}>${esc(x.name)}${x.location?' · '+esc(x.location):''}${x.inLine?' · waiter in line now (add-on: $4 + item)':x.orders?` · ${x.orders} ordering now, save ${Math.round(groupDisc(x.orders+1)*100)}%`:''}</option>`).join('')}<option value="other"${postStand==='other'?' selected':''}>Other / not listed</option></select>
   <small id="h-stand">${standHint()}</small></div>`}
 function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x)return'Pick where to buy it. Orders at the same stand can be bought together, and everyone saves on waiter time.';
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
@@ -882,20 +884,28 @@ function initWheel(key){
 }
 function updateQuote(){
   const q=$('#quote');if(!q)return;
-  const h=APPROVED_HOURS,r=RATES[wheel.rate],time=h*r,svc=time*FEE,pk=postKind==='pickup';
+  const h=approvedFor(),r=RATES[wheel.rate],pk=postKind==='pickup';
   const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,budget=price?limitFor(price,qty):0;
-  const drop=pk&&postHandoff==='dropoff'?Math.max(0,parseFloat($('#f-dropfee').value)||0):0;
-  const rush=postDay==='asap'?RUSH_FEE:0,fee=svcV2(time,budget),total=time+budget+fee+rush;
+  const small=pk&&budget>0&&budget<=SMALL_BUDGET,jmin=small?SMALL_MIN_PAY:MIN_PAY;
+  const rush=postDay==='asap'&&!postEvent?RUSH_FEE:0;
+  // Worst case (what the card hold covers) and a typical 15-minute wait.
+  const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small),total=time+budget+fee+rush;
+  const likelyTime=Math.max(jmin,0.25*r),est=price*qty,likely=likelyTime+est+svcV2(likelyTime,est,small)+rush;
+  const st=evStands(postEvent).find(x=>x.id===postStand),run=st&&STAND_RUNS.find(x=>x.eventId===postEvent&&x.place.trim().toLowerCase()===st.name.trim().toLowerCase());
+  const addOn=run&&run.waiterInLine?ADDON_PAY+est+ADDON_FEE:0;
   if(pk){$('#l-price').textContent=qty>1?'About how much each?':'About how much is it?';
     $('#h-price').textContent=price*qty>MAX_ITEM?`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
     $('#h-meet').textContent='You meet your waiter to get it, within 4 hours of the purchase, so after the game or show works. For food, meet within 30 minutes so it stays fresh.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
-  q.innerHTML=row(`Your waiter (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
-    +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')+(drop?row('Drop-off',money(drop)):'')
-    +(rush?row('Rush bonus (goes to your waiter)',money(rush)):'')+row('Service fee',money(fee))+FEE_NOTE
-    +`<div class="total"><span>Most you'll pay</span><span class="mono">${money(total)}</span></div>`
-    +`<div class="hint" style="display:block">This is the most it could cost. You're charged only for the time your waiter actually spends, in 15-minute steps${pk?', plus the receipt price':''}. Short jobs have an $8 minimum for your waiter's time. If it takes longer than ${h} hours, we'll ask before adding time.</div>`
-    +`<div class="hint" style="display:block"><b>About the card hold:</b> when a waiter claims your request, your bank shows a temporary hold of up to about ${money(total+r*0.5*(1+PCT_FEE))}. It isn't a charge. When the job ends, you're charged only what was used and the rest of the hold drops off, usually within a few days depending on your bank.</div>`}
+  q.innerHTML=`<div class="total"><span>Likely about</span><span class="mono">${price?money(likely):'—'}</span></div>`
+    +`<div class="hint" style="display:block">For a typical 15-minute wait${pk&&est?' and the item at about '+money(est):''}. ${small?'Small orders have a lower minimum and fee. ':''}${postEvent?'No rush fee at events. ':''}</div>`
+    +(addOn?`<div class="note" style="margin:6px 0"><b>A waiter is in line at ${esc(st.name)} right now.</b> If they add yours on, it's about <b>${money(addOn)}</b>: a flat $3 for them and a $1 fee, no time charge.</div>`:'')
+    +`<details class="feedet"><summary>Most it could cost: ${money(total)}</summary>`
+    +row(`Your waiter (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
+    +(pk?row(qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')
+    +(rush?row('Rush bonus (goes to your waiter)',money(rush)):'')+row('Service fee',money(fee))
+    +`<div class="hint" style="display:block">You're charged only for the time your waiter actually spends, in 15-minute steps${pk?', plus the receipt price':''}. Short jobs have a ${money(jmin)} minimum for your waiter's time. If it takes longer than ${h} hour${h===1?'':'s'}, we'll ask before adding time. When a waiter claims your request, your bank shows a temporary hold for this amount; you're charged only what was used.</div></details>`
+    +FEE_NOTE}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -931,6 +941,7 @@ function eventCards(){
    <div class="btns"><button class="btn ${e.meHere?'ghost ':''}small" data-act="here" data-id="${e.id}" data-here="${e.meHere?'0':'1'}">${e.meHere?'I left':'I\'m here'}</button>${e.open||eventFilter===e.id?`<button class="btn ghost small" data-act="ev-filter" data-id="${e.id}">${eventFilter===e.id?'Show all jobs':'Show its requests'}</button>`:''}</div>
    ${e.meHere?'<div class="hint">You\'ll get an alert for each new request posted for this event.</div>':''}</article>`).join('')}</div>`}
 function waiterFind(){
+  const inLineAt=new Set(data.shifts.filter(j=>kindOf(j)==='pickup'&&['inline','nearfront'].includes(j.status)&&!j.purchasedAt).map(standKey));
   const cats=['All','Pickups','Spots'];
   let open=data.open.filter(j=>filter==='All'||(filter==='Pickups')===(kindOf(j)==='pickup'));
   if(eventFilter)open=open.filter(j=>j.eventId===eventFilter);
@@ -949,7 +960,8 @@ function waiterFind(){
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
      ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>${selBar}
-   ${bundleCards(open)}${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup';return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${fmtRate(j.rate)}/hr</span></div>
+   ${bundleCards(open)}${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup',addon=pickup&&inLineAt.has(standKey(j));return`<article class="card${addon?' bundle':''}"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${addon?'+$3 add-on':fmtRate(j.rate)+'/hr'}</span></div>
+     ${addon?'<div class="note"><b>You\'re already in line at this stand.</b> Claim it and tap I\'m in line: it\'s a flat $3 add-on for you, with no time charge for the booker.</div>':''}
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
      <div class="hint">${pickup?`Paid for your time from check-in to purchase, at least $8 a job. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
@@ -1164,7 +1176,7 @@ function render(){
     ['#f-price','#f-dropfee'].forEach(id=>{const el=$(id);if(el)el.addEventListener('input',updateQuote)});
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
       try{const {d,text}=chosenStart();
-        const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:postDay==='asap',startAt:d.toISOString(),startText:text,hours:editing?editing.hours:APPROVED_HOURS,rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
+        const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:postDay==='asap',startAt:d.toISOString(),startText:text,hours:editing?editing.hours:approvedFor(),rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
         if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add about how much it costs.');const q=QTYS[wheel.qty];if(p*q>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
           Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:limitFor(p,q),
           handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value})}
