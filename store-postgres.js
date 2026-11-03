@@ -162,6 +162,19 @@ CREATE TABLE IF NOT EXISTS events (
   lng DOUBLE PRECISION,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS venues (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  stands TEXT NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE events ADD COLUMN IF NOT EXISTS venue_id INT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS stand_id TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS seat_section TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS seat_row TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS seat_number TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_spot TEXT;
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -264,7 +277,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -274,8 +287,13 @@ function line(r) {
   );
 }
 
+function venueRow(r) {
+  let stands = [];
+  try { stands = JSON.parse(r.stands || "[]"); } catch {}
+  return { id: r.id, name: r.name, address: r.address || "", stands, createdAt: r.created_at };
+}
 function event(r) {
-  return r ? { id: r.id, name: r.name, venue: r.venue, startsAt: r.starts_at, endsAt: r.ends_at, lat: r.lat, lng: r.lng } : null;
+  return r ? { id: r.id, name: r.name, venue: r.venue, startsAt: r.starts_at, endsAt: r.ends_at, lat: r.lat, lng: r.lng, venueId: r.venue_id || null } : null;
 }
 function report(r) {
   return r ? { id: r.id, lineId: r.line_id, reporterId: r.reporter_id, reason: r.reason, details: r.details, status: r.status,
@@ -340,6 +358,11 @@ const COLS = {
   bundleSize: "bundle_size",
   receiptSha: "receipt_sha",
   receiptDhash: "receipt_dhash",
+  standId: "stand_id",
+  seatSection: "seat_section",
+  seatRow: "seat_row",
+  seatNumber: "seat_number",
+  meetSpot: "meet_spot",
 };
 const USER_COLS = {
   look: "look",
@@ -436,18 +459,40 @@ module.exports = {
   async createLine(f) {
     const r = await pool.query(
       `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at,
-         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty, event_id, rush, pricing_v)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23) RETURNING id`,
+         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty, event_id, rush, pricing_v, stand_id, seat_section, seat_row, seat_number)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING id`,
       [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt,
         f.kind || "spot", f.item || null, f.itemDetails || null, f.itemBackup || null, f.itemBudget ?? null,
-        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null, f.eventId || null, !!f.rush, f.pricingV || 1]
+        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null, f.eventId || null, !!f.rush, f.pricingV || 1, f.standId || null, f.seatSection || null, f.seatRow || null, f.seatNumber || null]
     );
     return this.getLine(r.rows[0].id);
   },
   // ---- events (venue nights) ----
-  async createEvent({ name, venue, startsAt, endsAt }) {
-    const r = await pool.query("INSERT INTO events (name, venue, starts_at, ends_at) VALUES ($1, $2, $3, $4) RETURNING *", [name, venue, startsAt, endsAt]);
+  async createEvent({ name, venue, startsAt, endsAt, venueId = null }) {
+    const r = await pool.query("INSERT INTO events (name, venue, starts_at, ends_at, venue_id) VALUES ($1, $2, $3, $4, $5) RETURNING *", [name, venue, startsAt, endsAt, venueId]);
     return event(r.rows[0]);
+  },
+  // ---- venues and their stands (stands are kept as a JSON list on the venue) ----
+  async listVenues() {
+    const r = await pool.query("SELECT * FROM venues ORDER BY name");
+    return r.rows.map(venueRow);
+  },
+  async venueById(id) {
+    const r = await pool.query("SELECT * FROM venues WHERE id = $1", [id]);
+    return r.rows[0] ? venueRow(r.rows[0]) : null;
+  },
+  async createVenue({ name, address }) {
+    const r = await pool.query("INSERT INTO venues (name, address) VALUES ($1, $2) RETURNING *", [name, address]);
+    return venueRow(r.rows[0]);
+  },
+  async setVenueStands(id, stands) {
+    const r = await pool.query("UPDATE venues SET stands = $2 WHERE id = $1 RETURNING *", [id, JSON.stringify(stands)]);
+    return r.rows[0] ? venueRow(r.rows[0]) : null;
+  },
+  async deleteVenue(id) {
+    await pool.query("UPDATE events SET venue_id = NULL WHERE venue_id = $1", [id]);
+    const r = await pool.query("DELETE FROM venues WHERE id = $1", [id]);
+    return r.rowCount > 0;
   },
   async setEventGeo(id, geo) {
     await pool.query("UPDATE events SET lat = $2, lng = $3 WHERE id = $1", [id, geo.lat, geo.lng]);

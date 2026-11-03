@@ -157,6 +157,10 @@ function lineFor(viewer, l) {
     delete out.checkinDist;
     delete out.dropoffAddr;
     delete out.itemNote;
+    delete out.seatSection;
+    delete out.seatRow;
+    delete out.seatNumber;
+    delete out.meetSpot;
   }
   delete out.swapFails;
   if (!isOwner) delete out.codeResetAt;
@@ -373,6 +377,10 @@ function lineFields(b, event = null) {
     eventId: event ? event.id : null,
     rush: b.asap === true, // ASAP requests carry a rush bonus for the waiter
     pricingV: 2,
+    standId: null,
+    seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
+    seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,
+    seatNumber: text(b.seatNumber, "your seat", 8, { required: false }) || null,
   };
   if (!pickup) {
     if (b.spotAgree !== true)
@@ -397,6 +405,18 @@ function lineFields(b, event = null) {
   if ([f.item, f.itemDetails, f.itemBackup, notes].some((t) => RESTRICTED.test(t || "")))
     fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, tickets or admission (including wristbands and parking passes), lottery tickets, gift cards, or money orders.");
   return f;
+}
+
+// A stand picked from the venue's list: the request's place becomes the stand's exact name, so
+// everyone ordering from it lands in the same group run.
+async function applyStand(f, b, event) {
+  if (!b.standId) return;
+  const venue = event && event.venueId ? await store.venueById(event.venueId) : null;
+  const s = venue && venue.stands.find((x) => x.id === String(b.standId) && !x.hidden);
+  if (!s) fail(400, "That stand isn't on this event's list anymore. Pick another, or choose Other.", "stand_unknown");
+  f.standId = s.id;
+  f.place = s.name;
+  f.what = f.item || f.what;
 }
 
 // A receipt photo sent as a data URL. Only real JPEG, PNG, or WebP images are kept.
@@ -587,7 +607,17 @@ function startPaymentSweeper() {
 const ping = (userId, title, body) => push.notify(store, userId, { title, body });
 
 const publicEvent = (e) => ({ id: e.id, name: e.name, venue: e.venue, startsAt: e.startsAt, endsAt: e.endsAt,
-  live: new Date(e.startsAt).getTime() <= Date.now() + 2 * 3600e3, open: e.open || 0, here: e.here || 0, meHere: !!e.meHere });
+  live: new Date(e.startsAt).getTime() <= Date.now() + 2 * 3600e3, open: e.open || 0, here: e.here || 0, meHere: !!e.meHere,
+  venueId: e.venueId || null, stands: e.stands || [] });
+// Adds each event's venue stand list (visible stands only) for the request form and waiters.
+const publicStand = (s) => ({ id: s.id, name: s.name, location: s.location || "", sells: s.sells || "", notes: s.notes || "" });
+async function withStands(evs) {
+  const ids = [...new Set(evs.map((e) => e.venueId).filter(Boolean))];
+  if (!ids.length) return evs;
+  const vs = new Map();
+  for (const id of ids) vs.set(id, await store.venueById(id));
+  return evs.map((e) => ({ ...e, stands: e.venueId && vs.get(e.venueId) ? vs.get(e.venueId).stands.filter((s) => !s.hidden).map(publicStand) : [] }));
+}
 async function eventFor(eventId) {
   if (eventId === undefined || eventId === null || eventId === "") return null;
   const ev = await store.eventById(Number(eventId));
@@ -985,7 +1015,7 @@ async function api(req, res, urlPath, query) {
 
   // ---- events: venue nights where waiters say they're inside ----
   if (urlPath === "/api/events" && method === "GET") {
-    return send(res, 200, { events: (await store.upcomingEvents(me.id)).map(publicEvent) });
+    return send(res, 200, { events: (await withStands(await store.upcomingEvents(me.id))).map(publicEvent) });
   }
   const em = urlPath.match(/^\/api\/events\/(\d+)\/here$/);
   if (em && method === "POST") {
@@ -1023,7 +1053,7 @@ async function api(req, res, urlPath, query) {
   if (urlPath === "/api/sync" && method === "GET") {
     const [mineL, openL, shiftsL, sums, evs] = await Promise.all([
       store.listLines({ ownerId: me.id }), store.listLines({ openExcept: me.id }), store.listLines({ waiterId: me.id }),
-      store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS)), store.upcomingEvents(me.id),
+      store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS)), store.upcomingEvents(me.id).then(withStands),
     ]);
     const all = new Map();
     for (const l of [...mineL, ...openL, ...shiftsL]) all.set(l.id, l);
@@ -1071,6 +1101,7 @@ async function api(req, res, urlPath, query) {
     requireAdult(me);
     const event = await eventFor(b.eventId);
     const f = lineFields(b, event);
+    await applyStand(f, b, event);
     await requireCard(me);
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
     if (event) {
@@ -1121,7 +1152,7 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
@@ -1141,7 +1172,9 @@ async function api(req, res, urlPath, query) {
     if (action === "edit") {
       if (l.ownerId !== me.id) fail(403, "Only the person who posted this line can edit it.");
       if (l.status !== "open") fail(409, "A waiter already claimed this line, so it can't be edited.");
-      const f = lineFields(b, await eventFor(b.eventId));
+      const evE = await eventFor(b.eventId);
+      const f = lineFields(b, evE);
+      await applyStand(f, b, evE);
       const fields = { ...f, approvedHours: f.hours };
       const ev = f.eventId ? await store.eventById(f.eventId) : null;
       const moved = f.place !== l.place || f.eventId !== l.eventId;
@@ -1249,6 +1282,17 @@ async function api(req, res, urlPath, query) {
     }
 
     // A booker moves their open request onto another stand's run, so one waiter can buy them together.
+    // The waiter says where they'll be for the handover (a concourse spot, a section and row, or "at your seat").
+    if (action === "meet-spot") {
+      if (l.waiterId !== me.id) fail(403, "Only your waiter can set the meetup spot.");
+      if (!["claimed", "enroute", "inline", "nearfront", "handoff"].includes(l.status)) fail(409, "This job is already finished.");
+      const spot = text(b.spot, "where you'll meet", 100);
+      const moved = await store.updateLine(id, l.status, { meetSpot: spot });
+      if (!moved) fail(409, "This job just changed. Try again.");
+      ping(l.ownerId, "Meetup spot", `${firstName(me.name)} will meet you at: ${spot}`);
+      return send(res, 200, { line: await one(me, moved) });
+    }
+
     if (action === "join-run") {
       if (l.ownerId !== me.id) fail(403, "Only the person who posted this can change it.");
       if (l.status !== "open") fail(409, "A waiter already claimed this request.");
@@ -1455,15 +1499,56 @@ async function api(req, res, urlPath, query) {
     if (urlPath === "/api/admin/events" && method === "POST") {
       const b = await readBody(req);
       const name = text(b.name, "the event name", 100);
-      const venue = text(b.venue, "the venue and city", 120);
+      const ven = b.venueId ? await store.venueById(Number(b.venueId)) : null;
+      if (b.venueId && !ven) fail(400, "That venue doesn't exist.");
+      const venue = ven ? `${ven.name}${ven.address ? ", " + ven.address : ""}`.slice(0, 120) : text(b.venue, "the venue and city", 120);
       const startsAt = Date.parse(b.startsAt), endsAt = Date.parse(b.endsAt);
       if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) fail(400, "Add when the event starts and ends.");
       if (endsAt <= startsAt) fail(400, "The end has to be after the start.");
       if (endsAt < Date.now()) fail(400, "That event has already ended.");
       if (endsAt - startsAt > 4 * 86400e3) fail(400, "Keep an event under 4 days. Add each day of a fair separately.");
-      const ev = await store.createEvent({ name, venue, startsAt: new Date(startsAt), endsAt: new Date(endsAt) });
+      const ev = await store.createEvent({ name, venue, startsAt: new Date(startsAt), endsAt: new Date(endsAt), venueId: ven ? ven.id : null });
       geocode(venue).then((g) => g && store.setEventGeo(ev.id, g)).catch(() => {});
       return send(res, 201, { event: publicEvent(ev) });
+    }
+    // ---- venues and stand lists ----
+    if (urlPath === "/api/admin/venues" && method === "GET") return send(res, 200, { venues: await store.listVenues() });
+    if (urlPath === "/api/admin/venues" && method === "POST") {
+      const b = await readBody(req);
+      const v = await store.createVenue({ name: text(b.name, "the venue name", 100), address: text(b.address, "the venue's city or address", 160) });
+      return send(res, 201, { venue: v });
+    }
+    const avm = urlPath.match(/^\/api\/admin\/venues\/(\d+)\/(stands|stand|delete)$/);
+    if (avm && method === "POST") {
+      const v = await store.venueById(Number(avm[1]));
+      if (!v) fail(404, "That venue doesn't exist.");
+      const b = await readBody(req, 200000);
+      if (avm[2] === "delete") {
+        await store.deleteVenue(v.id);
+        return send(res, 200, { ok: true });
+      }
+      if (avm[2] === "stands") {
+        // One stand per line: Name | Location | Sells | Notes (only the name is required; tabs work too, for pasted spreadsheets).
+        const rows = String(b.text || "").split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+        if (!rows.length) fail(400, "Paste at least one stand, one per line.");
+        if (rows.length + v.stands.length > 300) fail(400, "A venue can have up to 300 stands.");
+        const have = new Set(v.stands.map((s) => s.name.toLowerCase()));
+        let added = 0;
+        for (const row of rows) {
+          const [name, location = "", sells = "", notes = ""] = row.split(/\t|\s*\|\s*/).map((x) => x.trim());
+          if (!name || /^(name|stand)$/i.test(name) || have.has(name.toLowerCase())) continue;
+          v.stands.push({ id: crypto.randomBytes(5).toString("hex"), name: name.slice(0, 80), location: location.slice(0, 100), sells: sells.slice(0, 40), notes: notes.slice(0, 120), hidden: false });
+          have.add(name.toLowerCase());
+          added++;
+        }
+        const saved = await store.setVenueStands(v.id, v.stands);
+        return send(res, 200, { venue: saved, added });
+      }
+      // stand: hide or show one stand
+      const s = v.stands.find((x) => x.id === String(b.standId));
+      if (!s) fail(404, "That stand doesn't exist.");
+      s.hidden = !!b.hidden;
+      return send(res, 200, { venue: await store.setVenueStands(v.id, v.stands) });
     }
     const aem = urlPath.match(/^\/api\/admin\/events\/(\d+)\/delete$/);
     if (aem && method === "POST") {

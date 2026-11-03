@@ -139,3 +139,7 @@ Group-run pay: the waiter's share of a run is capped at $35/hr for the shared wa
 Fake-receipt checks: recording a purchase needs the phone's location near the store (when the place has exact coordinates), and the receipt photo is fingerprinted (SHA-256 on the server plus a 64-bit difference hash from the phone). A photo matching one of the waiter's other jobs (outside the same group run) is refused and admins are alerted.
 
 Rate-limit counters and payout-recheck times are saved to `app_settings` every minute and on SIGTERM, and reloaded at start-up.
+
+## Venues, stands, seats and meetup spots
+
+Admins add venues with a stand list on the admin page (paste one stand per line: `Name | Where | Sells | Notes`; tabs from a spreadsheet work too) and can hide a stand for a game. Events can be tied to a venue; the request form then shows a stand dropdown (busiest group runs first, with the saving) plus "Other / not listed". Picking a stand sets the request's place to the stand's exact name, so orders group into runs reliably. Bookers can add their seat (section, row, seat), visible only to their waiter. Waiters set a meetup spot (`POST /api/lines/:id/meet-spot`) with quick picks for the stand, the booker's seat, or the concourse behind their section; the booker gets an alert.

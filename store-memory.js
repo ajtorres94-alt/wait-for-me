@@ -10,6 +10,8 @@ const events = []; // { id, name, venue, startsAt, endsAt, lat, lng, createdAt }
 const presence = new Map(); // "eventId:userId" -> Date
 const reports = [];
 let nextEvent = 1;
+const venues = []; // { id, name, address, stands: [{ id, name, location, sells, notes, hidden }] }
+let nextVenue = 1;
 let nextReport = 1;
 const pushSubs = new Map(); // endpoint -> { endpoint, userId, p256dh, auth, at }
 const ratings = [];
@@ -108,14 +110,39 @@ module.exports = {
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
       payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
       kind: "spot", item: "", itemDetails: "", qty: 1, itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
-      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, pricingV: 1, bundled: false, bundleSize: 0, receiptSha: null, receiptDhash: null, ...f,
+      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, pricingV: 1, bundled: false, bundleSize: 0, receiptSha: null, receiptDhash: null, standId: null, seatSection: null, seatRow: null, seatNumber: null, meetSpot: null, ...f,
     };
     lines.push(l);
     return withNames(l);
   },
   // ---- events ----
-  async createEvent({ name, venue, startsAt, endsAt }) {
-    const e = { id: nextEvent++, name, venue, startsAt: new Date(startsAt), endsAt: new Date(endsAt), lat: null, lng: null, createdAt: new Date() };
+  async listVenues() {
+    return venues.slice().sort((a, b) => a.name.localeCompare(b.name)).map((v) => ({ ...v, stands: v.stands.map((s) => ({ ...s })) }));
+  },
+  async venueById(id) {
+    const v = venues.find((x) => x.id === id);
+    return v ? { ...v, stands: v.stands.map((s) => ({ ...s })) } : null;
+  },
+  async createVenue({ name, address }) {
+    const v = { id: nextVenue++, name, address: address || "", stands: [], createdAt: new Date() };
+    venues.push(v);
+    return { ...v, stands: [] };
+  },
+  async setVenueStands(id, stands) {
+    const v = venues.find((x) => x.id === id);
+    if (!v) return null;
+    v.stands = stands.map((s) => ({ ...s }));
+    return { ...v, stands: v.stands.map((s) => ({ ...s })) };
+  },
+  async deleteVenue(id) {
+    for (const e of events) if (e.venueId === id) e.venueId = null;
+    const i = venues.findIndex((x) => x.id === id);
+    if (i < 0) return false;
+    venues.splice(i, 1);
+    return true;
+  },
+  async createEvent({ name, venue, startsAt, endsAt, venueId = null }) {
+    const e = { id: nextEvent++, name, venue, startsAt: new Date(startsAt), endsAt: new Date(endsAt), lat: null, lng: null, venueId, createdAt: new Date() };
     events.push(e);
     return { ...e };
   },
