@@ -49,7 +49,7 @@ const BUNDLE_RATE = 0.75; // kept for older callers; the discount now depends on
 const BUNDLE_MIN_PAY = 6;
 // On a group run the waiter earns at most $35/hr for the shared wait (or the highest agreed rate, if higher,
 // and never less than the $8 job minimum). What bookers pay beyond that stays with Wait For Me!.
-const GROUP_MAX_HOURLY = 35;
+const GROUP_MAX_HOURLY = 32;
 // Small orders (item limit up to $25, so about a $20 item): a $6 minimum for the waiter's time and a
 // $1.49 base fee instead of $8 and $2.99, so a drink or a snack isn't buried in fixed charges.
 const SMALL_BUDGET = 25;
@@ -61,7 +61,11 @@ const jobMinPay = (line) => (isSmall(line) ? SMALL_MIN_PAY : MIN_PAY);
 // little extra time, so it's a flat $5 to the waiter and a $1.49 fee, with no time charge.
 const ADDON_PAY = 5;
 const ADDON_FEE = 1.49;
-const serviceFeeV2 = (timePay, item, small = false) => roundCents(Math.min(FEE_CAP, (small ? SMALL_BASE_FEE : BASE_FEE) + PCT_FEE * (timePay + item)));
+// Pricing v3 (requests posted from Nov 3, 2026): base fees up $0.50, to $3.49 (regular) and $1.99 (small).
+const V3_BASE_FEE = 3.49;
+const V3_SMALL_BASE_FEE = 1.99;
+const baseFee = (small, v) => (Number(v) >= 3 ? (small ? V3_SMALL_BASE_FEE : V3_BASE_FEE) : small ? SMALL_BASE_FEE : BASE_FEE);
+const serviceFeeV2 = (timePay, item, small = false, v = 2) => roundCents(Math.min(FEE_CAP, baseFee(small, v) + PCT_FEE * (timePay + item)));
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
 const HOUR = 3600 * 1000;
 
@@ -127,7 +131,7 @@ function billing(line, now = Date.now()) {
   const rushFee = line.rush && billed > 0 && line.outcome !== "cancelled_late" ? RUSH_FEE : 0;
   const waiterPay = roundCents(waiterTimePay + dropoff + rushFee);
   const charged = feeRate > 0 && billed > 0;
-  const serviceFee = addOn ? (charged ? ADDON_FEE : 0) : v2(line) ? (charged ? serviceFeeV2(timePay, item, small) : 0) : roundCents(timePay * feeRate);
+  const serviceFee = addOn ? (charged ? ADDON_FEE : 0) : v2(line) ? (charged ? serviceFeeV2(timePay, item, small, line.pricingV) : 0) : roundCents(timePay * feeRate);
   const bookingFee = !v2(line) && charged ? bookingFeeFor(line) : 0;
   const itemFee = v2(line) ? 0 : roundCents(item * ITEM_FEE);
   const fee = roundCents(serviceFee + bookingFee + itemFee + groupMargin);
@@ -164,7 +168,7 @@ function maxTotal(line) {
   const time = Math.max(jobMinPay(line), hours * Number(line.rate));
   if (v2(line)) {
     const budget = kindOf(line) === "pickup" ? Number(line.itemBudget) || 0 : 0;
-    return time + budget + serviceFeeV2(time, budget, isSmall(line)) + (line.rush ? RUSH_FEE : 0);
+    return time + budget + serviceFeeV2(time, budget, isSmall(line), line.pricingV) + (line.rush ? RUSH_FEE : 0);
   }
   let total = time * (1 + FEE) + bookingFeeFor(line) + (line.rush ? RUSH_FEE : 0);
   if (kindOf(line) === "pickup") {
@@ -175,4 +179,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { SMALL_BUDGET, SMALL_MIN_PAY, SMALL_BASE_FEE, ADDON_PAY, ADDON_FEE, isSmall, GROUP_DISCOUNT, groupDiscount, GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { V3_BASE_FEE, V3_SMALL_BASE_FEE, SMALL_BUDGET, SMALL_MIN_PAY, SMALL_BASE_FEE, ADDON_PAY, ADDON_FEE, isSmall, GROUP_DISCOUNT, groupDiscount, GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };

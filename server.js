@@ -376,7 +376,7 @@ function lineFields(b, event = null) {
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
     rush: b.asap === true && !event, // ASAP requests carry a rush bonus for the waiter, except at events (where nearly everything is ASAP)
-    pricingV: 2,
+    pricingV: 3,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
     seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,
@@ -1067,13 +1067,14 @@ async function api(req, res, urlPath, query) {
       for (const x of await store.activePickups()) {
         if (!x.eventId || !evIds.has(x.eventId)) continue;
         const k = standKey(x);
-        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id, waiterInLine: false };
+        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id, waiterInLine: false, waiterHeading: false };
         r.orders++;
         if (x.waiterId && ["inline", "nearfront"].includes(x.status)) r.waiterInLine = true;
+        if (x.waiterId && ["claimed", "enroute"].includes(x.status)) r.waiterHeading = true;
         if (x.id < r.firstId) [r.firstId, r.place] = [x.id, x.place];
         g.set(k, r);
       }
-      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders, waiterInLine }) => ({ eventId, place, orders, waiterInLine }));
+      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders, waiterInLine, waiterHeading }) => ({ eventId, place, orders, waiterInLine, waiterHeading }));
     }
     if (mineL.some((l) => l.status === "open" && l.kind === "pickup")) {
       const active = await store.activePickups();
@@ -1124,9 +1125,14 @@ async function api(req, res, urlPath, query) {
     if (line.kind === "pickup") {
       const told = new Set();
       for (const x of await store.activePickups())
-        if (x.waiterId && x.waiterId !== me.id && !told.has(x.waiterId) && ["inline", "nearfront"].includes(x.status) && standKey(x) === standKey(line)) {
-          told.add(x.waiterId);
-          ping(x.waiterId, "Add-on at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it for +$5.`);
+        if (x.waiterId && x.waiterId !== me.id && !told.has(x.waiterId) && standKey(x) === standKey(line)) {
+          if (["inline", "nearfront"].includes(x.status)) {
+            told.add(x.waiterId);
+            ping(x.waiterId, "Add-on at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it for +$5.`);
+          } else if (["claimed", "enroute"].includes(x.status)) {
+            told.add(x.waiterId);
+            ping(x.waiterId, "Another order for your run", `New order at ${line.place}: ${line.item}. Claim it before you get in line and it joins your group run.`);
+          }
         }
     }
     return send(res, 201, { line: await one(me, line) });

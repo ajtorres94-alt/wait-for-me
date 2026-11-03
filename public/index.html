@@ -368,9 +368,9 @@ const KEYS={pickup:['open','claimed','enroute','inline','nearfront','handoff','d
 const kindOf=j=>j&&j.kind==='pickup'?'pickup':'spot';
 const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includes(j.status)?KEYS.legacy:KEYS.spot;
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
-const GROUP_DISCOUNT={2:.1,3:.15,4:.2,5:.25},groupDisc=n=>GROUP_DISCOUNT[Math.min(5,Math.max(2,+n||2))],BUNDLE_RATE=0.75,BUNDLE_MIN_PAY=6,BASE_FEE=2.99,PCT_FEE=0.09,FEE_CAP=12,SMALL_BUDGET=25,SMALL_MIN_PAY=6,SMALL_BASE_FEE=1.49,ADDON_PAY=5,ADDON_FEE=1.49,v2=j=>+j.pricingV>=2,svcV2=(t,i,small)=>r2(Math.min(FEE_CAP,(small?SMALL_BASE_FEE:BASE_FEE)+PCT_FEE*(t+i)));
+const GROUP_DISCOUNT={2:.1,3:.15,4:.2,5:.25},groupDisc=n=>GROUP_DISCOUNT[Math.min(5,Math.max(2,+n||2))],BUNDLE_RATE=0.75,BUNDLE_MIN_PAY=6,BASE_FEE=2.99,PCT_FEE=0.09,FEE_CAP=12,SMALL_BUDGET=25,SMALL_MIN_PAY=6,SMALL_BASE_FEE=1.49,ADDON_PAY=5,ADDON_FEE=1.49,v2=j=>+j.pricingV>=2,svcV2=(t,i,small,v=3)=>r2(Math.min(FEE_CAP,(+v>=3?(small?1.99:3.49):(small?SMALL_BASE_FEE:BASE_FEE))+PCT_FEE*(t+i)));
 const isSmallJ=j=>kindOf(j)==='pickup'&&+j.itemBudget>0&&+j.itemBudget<=SMALL_BUDGET;
-const GROUP_MAX_HOURLY=35,MIN_PAY=8,RUSH_FEE=4,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
+const GROUP_MAX_HOURLY=32,MIN_PAY=8,RUSH_FEE=4,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const bookingFeeFor=j=>kindOf(j)==='pickup'?PICKUP_BOOKING_FEE:BOOKING_FEE;
 const money=n=>'$'+(Math.round(n*100)/100).toFixed(2).replace(/\.00$/,'');
@@ -406,7 +406,7 @@ function steps(j){const keys=keysFor(j),i=keys.indexOf(j.status);return`<ol clas
 const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pick it up':'Save my spot'}</span>${j.event?` <span class="kindtag ev">${esc(j.event.name)}</span>`:''}`;
 // The most a job could cost the booker (time at the approved hours, fees, and for pickups the item limit and drop-off fee).
 function upTo(j,hours){const h=hours??(j.bill?j.bill.approvedHours:j.hours),time=h*j.rate;
-  if(v2(j)){const sm=isSmallJ(j),tm=Math.max(sm?SMALL_MIN_PAY:MIN_PAY,time),bud=kindOf(j)==="pickup"?+j.itemBudget||0:0;return tm+bud+svcV2(tm,bud,sm)+(j.rush?RUSH_FEE:0)}
+  if(v2(j)){const sm=isSmallJ(j),tm=Math.max(sm?SMALL_MIN_PAY:MIN_PAY,time),bud=kindOf(j)==="pickup"?+j.itemBudget||0:0;return tm+bud+svcV2(tm,bud,sm,j.pricingV)+(j.rush?RUSH_FEE:0)}
   let t=Math.max(MIN_PAY,time)*(1+FEE)+bookingFeeFor(j)+(j.rush?RUSH_FEE:0);if(kindOf(j)==='pickup'){t+=(+j.itemBudget||0)*(1+ITEM_FEE);if(j.handoff==='dropoff')t+=+j.dropoffFee||0}return t}
 const waiterUpTo=j=>(j.bill?j.bill.approvedHours:j.hours)*j.rate+(kindOf(j)==='pickup'&&j.handoff==='dropoff'?+j.dropoffFee||0:0)+(j.rush?RUSH_FEE:0);
 function facts(j,mode){
@@ -443,12 +443,12 @@ function billOf(j){
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
   const small=isSmallJ(j),jmin=small?SMALL_MIN_PAY:MIN_PAY,addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?ADDON_PAY:minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
-  const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(wtime+drop+rush),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),fee=r2(svc+book+ifee+(time-wtime));
+  const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,pay=r2(wtime+drop+rush),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small,j.pricingV):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),fee=r2(svc+book+ifee+(time-wtime));
   const live=!!ci&&!bought;
   return{approved,waited:w,billed,time,wtime,saved,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
 // One "Service fee" line, with the parts behind a tap for anyone who wants them.
-const FEE_NOTE=`<div class="feedet">Service fee: $2.99 + 9% of your waiter's time and the item (or $1.49 + 9% on small orders, an estimated $20 or less), never more than $12. It covers card processing, payouts and support.</div>`;
+const FEE_NOTE=`<div class="feedet">Service fee: $3.49 + 9% of your waiter's time and the item (or $1.99 + 9% on small orders, an estimated $20 or less), never more than $12. It covers card processing, payouts and support.</div>`;
 function feeDetails(parts){const p=parts.filter(([,v])=>v>0);return`<details class="feedet"><summary>What's in the service fee</summary>${p.map(([k,v])=>`<div><span>${k}</span><span class="mono">${money(v)}</span></div>`).join('')}</details>`}
 function billRows(b,who){
   const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.addOn?' (add-on to a run, flat)':b.saved?(who==='customer'?` (group run, ${Math.round((b.disc||.25)*100)}% off)`:' (group run)'):b.minApplied?' (job minimum)':''),money(who==='customer'?b.time:(b.wtime??b.time))]];
@@ -790,8 +790,9 @@ function customerPost(){
    ${EVENTS.length?`<div class="field"><span class="wlabel" id="l-event">At an event?</span><div class="filters" role="group" aria-labelledby="l-event">
      <button type="button" class="chip" aria-pressed="${!postEvent}" data-event="">No</button>${EVENTS.map(ev=>`<button type="button" class="chip" aria-pressed="${postEvent===ev.id}" data-event="${ev.id}">${esc(ev.name)} · ${evWhen(ev)} · ${ev.here} waiter${ev.here===1?'':'s'} here</button>`).join('')}</div>
      <small id="h-event">${eventHint()}</small></div>`:''}
+   <div id="h-runs">${runChips()}</div>
    <div id="stand-pick">${standPicker()}</div>
-   <div class="field" id="place-field"${postStandChosen()?' hidden':''}><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><div id="h-runs">${runChips()}</div><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
+   <div class="field" id="place-field"${postStandChosen()?' hidden':''}><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
    <div class="grp" data-for="pickup"${pk?'':' hidden'}>
      <div class="field"><label for="f-item">What should they buy?</label><input id="f-item" maxlength="120" placeholder="e.g. Tour hoodie" value="${v('item')}"><small>Up to ${MAX_QTY} of the same item. Some drops limit 1 per person.</small></div>
      <div class="field"><label for="f-details">Size, flavor, or other details <span class="meta">(optional)</span></label><input id="f-details" maxlength="200" placeholder="e.g. Size L, black" value="${v('itemDetails')}"></div>
@@ -819,13 +820,14 @@ const postStandChosen=()=>postStand&&postStand!=='other'&&evStands(postEvent).so
 // The venue's stand list, busiest group runs first, with what joining would save.
 function standPicker(){const st=evStands(postEvent);if(!st.length)return'';
   const runs=new Map(STAND_RUNS.filter(r=>r.eventId===postEvent).map(r=>[r.place.trim().toLowerCase(),r]));
-  const rows=st.map(x=>{const g=runs.get(x.name.trim().toLowerCase());return{...x,orders:g?g.orders:0,inLine:!!(g&&g.waiterInLine)}}).sort((a,b)=>b.orders-a.orders||a.name.localeCompare(b.name));
-  return`<div class="field"><label for="f-stand">Which stand?</label><select id="f-stand" class="standsel"><option value="">Choose a stand</option>${rows.map(x=>`<option value="${x.id}"${postStand===x.id?' selected':''}>${esc(x.name)}${x.location?' · '+esc(x.location):''}${x.inLine?' · waiter in line now (add-on: $6.49 + item)':x.orders?` · ${x.orders} ordering now, save ${Math.round(groupDisc(x.orders+1)*100)}%`:''}</option>`).join('')}<option value="other"${postStand==='other'?' selected':''}>Other / not listed</option></select>
+  const rows=st.map(x=>{const g=runs.get(x.name.trim().toLowerCase());return{...x,orders:g?g.orders:0,inLine:!!(g&&g.waiterInLine),run:g||{}}}).sort((a,b)=>b.orders-a.orders||a.name.localeCompare(b.name));
+  return`<div class="field"><label for="f-stand">Which stand?</label><select id="f-stand" class="standsel"><option value="">Choose a stand</option>${rows.map(x=>`<option value="${x.id}"${postStand===x.id?' selected':''}>${esc(x.name)}${x.location?' · '+esc(x.location):''}${x.orders?' · '+runTag(x.run,x.orders):''}</option>`).join('')}<option value="other"${postStand==='other'?' selected':''}>Other / not listed</option></select>
   <small id="h-stand">${standHint()}</small></div>`}
 function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x)return'Pick where to buy it. Orders at the same stand can be bought together, and everyone saves on waiter time.';
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
-function runChips(){if(evStands(postEvent).length)return'';const rs=STAND_RUNS.filter(r=>r.eventId===postEvent);if(!rs.length)return'';
-  return`<div class="runs" style="margin:6px 0"><b>Join a group run and save</b><div class="hint">Others at this event are ordering from these stands. If yours is sold there, tap it: one waiter buys for the whole group, and everyone saves 10–25% on waiter time (more people, bigger savings).</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.orders} order${r.orders===1?'':'s'}</button>`).join('')}</div></div>`}
+function runTag(r,n){return r.waiterInLine?'waiter in line now: add-on, $5 + $1.49 fee':r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
+function runChips(){const rs=STAND_RUNS.filter(r=>r.eventId===postEvent).sort((a,b)=>(b.waiterInLine-a.waiterInLine)||(b.waiterHeading-a.waiterHeading)||(b.orders-a.orders));if(!rs.length)return'';
+  return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–25% on waiter time, or pay just $5 + a $1.49 fee if a waiter is already in line.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${runTag(r,r.orders)}</button>`).join('')}</div></div>`}
 function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
   return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
 function setEvent(id){postEvent=id||null;const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
@@ -1175,7 +1177,7 @@ function render(){
     $('#postForm').querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>setDay(b.dataset.day));
     $('#postForm').querySelectorAll('[data-event]').forEach(b=>b.onclick=()=>setEvent(+b.dataset.event||null));
     $('#postForm').addEventListener('change',e=>{if(e.target.id==='f-stand')setStand(e.target.value)});
-    $('#postForm').addEventListener('click',e=>{const c=e.target.closest('[data-runplace]');if(!c)return;$('#f-place').value=c.dataset.runplace;c.parentNode.querySelectorAll('[data-runplace]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));toast(`Posting at ${c.dataset.runplace}. You'll join that group run if a waiter buys them together.`)});
+    $('#postForm').addEventListener('click',e=>{const c=e.target.closest('[data-runplace]');if(!c)return;const sx=evStands(postEvent).find(x=>x.name.trim().toLowerCase()===c.dataset.runplace.trim().toLowerCase());if(sx){setStand(sx.id);const sel=$('#f-stand');if(sel)sel.value=sx.id}$('#f-place').value=c.dataset.runplace;c.parentNode.querySelectorAll('[data-runplace]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));toast(`Posting at ${c.dataset.runplace}. You'll join that group run if a waiter buys them together.`)});
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));
     $('#postForm').querySelectorAll('[data-hand]').forEach(b=>b.onclick=()=>setHandoff(b.dataset.hand));
     ['#f-price','#f-dropfee'].forEach(id=>{const el=$(id);if(el)el.addEventListener('input',updateQuote)});
