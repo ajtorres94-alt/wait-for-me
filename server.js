@@ -1029,6 +1029,21 @@ async function api(req, res, urlPath, query) {
     for (const l of [...mineL, ...openL, ...shiftsL]) all.set(l.id, l);
     const byId = new Map((await decorate(me, [...all.values()])).map((d) => [d.id, d]));
     const pick = (list) => list.map((l) => byId.get(l.id));
+    // Stands at live events with orders that haven't been bought yet, so a booker posting there can join that run.
+    let standRuns = [];
+    if (evs.length) {
+      const evIds = new Set(evs.map((e) => e.id));
+      const g = new Map();
+      for (const x of await store.activePickups()) {
+        if (!x.eventId || !evIds.has(x.eventId)) continue;
+        const k = standKey(x);
+        const r = g.get(k) || { eventId: x.eventId, place: x.place, orders: 0, firstId: x.id };
+        r.orders++;
+        if (x.id < r.firstId) [r.firstId, r.place] = [x.id, x.place];
+        g.set(k, r);
+      }
+      standRuns = [...g.values()].sort((a, b) => b.orders - a.orders).slice(0, 12).map(({ eventId, place, orders }) => ({ eventId, place, orders }));
+    }
     if (mineL.some((l) => l.status === "open" && l.kind === "pickup")) {
       const active = await store.activePickups();
       for (const l of mineL) { const d = byId.get(l.id); if (d && l.status === "open") d.runs = runsFor(l, active); }
@@ -1036,7 +1051,7 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, {
       now: Date.now(), mine: pick(mineL), open: pick(openL), shifts: pick(shiftsL),
       user: publicUser(me), ratings: { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) },
-      tags: TAGS, payments: paymentsInfo(), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL),
+      tags: TAGS, payments: paymentsInfo(), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL), standRuns,
     });
   }
 
