@@ -1103,6 +1103,9 @@ async function api(req, res, urlPath, query) {
     const event = await eventFor(b.eventId);
     const f = lineFields(b, event);
     await applyStand(f, b, event);
+    // A start within 30 minutes is ASAP: it has to be posted (and priced) as ASAP.
+    if (b.asap !== true && new Date(f.startAt).getTime() < Date.now() + 29 * 60 * 1000)
+      fail(400, "Times in the next 30 minutes count as ASAP. Pick ASAP, or a time at least 30 minutes from now.", "asap_window");
     await requireCard(me);
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
     if (event) {
@@ -1123,7 +1126,7 @@ async function api(req, res, urlPath, query) {
       for (const x of await store.activePickups())
         if (x.waiterId && x.waiterId !== me.id && !told.has(x.waiterId) && ["inline", "nearfront"].includes(x.status) && standKey(x) === standKey(line)) {
           told.add(x.waiterId);
-          ping(x.waiterId, "Add-on at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it for +$3.`);
+          ping(x.waiterId, "Add-on at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it for +$5.`);
         }
     }
     return send(res, 201, { line: await one(me, line) });

@@ -58,9 +58,9 @@ const SMALL_BASE_FEE = 1.49;
 const isSmall = (line) => kindOf(line) === "pickup" && Number(line.itemBudget) > 0 && Number(line.itemBudget) <= SMALL_BUDGET;
 const jobMinPay = (line) => (isSmall(line) ? SMALL_MIN_PAY : MIN_PAY);
 // Add-ons: an order a waiter picks up while already in line at that stand for someone else costs them
-// almost no extra time, so it's a flat $3 to the waiter and a $1 fee, with no time charge.
-const ADDON_PAY = 3;
-const ADDON_FEE = 1;
+// little extra time, so it's a flat $5 to the waiter and a $1.49 fee, with no time charge.
+const ADDON_PAY = 5;
+const ADDON_FEE = 1.49;
 const serviceFeeV2 = (timePay, item, small = false) => roundCents(Math.min(FEE_CAP, (small ? SMALL_BASE_FEE : BASE_FEE) + PCT_FEE * (timePay + item)));
 const MAX_ITEM = 150; // most a waiter can be asked to spend on an item, tax included
 const HOUR = 3600 * 1000;
