@@ -122,7 +122,12 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .quote{background:var(--bg);border-radius:10px;padding:12px 14px;display:grid;gap:4px;font-size:14px}
 .quote div{display:flex;justify-content:space-between}
-.quote .total{font-weight:800;border-top:1px solid var(--line);padding-top:6px;margin-top:2px}
+.quote .total{font-weight:800;font-size:16px}
+.quote .qline{display:block;color:var(--muted);font-size:13px;margin-top:-2px}
+.quote .qnote{display:block;margin:4px 0}
+.quote details.feedet{margin:2px 0 0}.quote details.feedet[open]{display:grid;gap:6px}
+.quote .frow{display:block}.quote .frow>div{display:flex;justify-content:space-between;color:var(--ink);font-size:14px}.quote .frow small,.quote .fnote{display:block;color:var(--muted);font-size:12px;line-height:1.4}
+#h-when.asapnote{color:var(--ink);background:color-mix(in srgb,var(--ticket) 30%,transparent);border-radius:8px;padding:6px 8px;display:block}
 
 .filters{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:5px 12px;font-size:13px;font-weight:600}
@@ -458,7 +463,7 @@ function billRows(b,who){
   if(b.saved&&who==='customer')rows.push(['You saved on the group run',`−${money(b.saved)}`]);
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
-  if(b.rush)rows.push([who==='customer'?'Rush bonus (goes to your waiter)':'Rush bonus',money(b.rush)]);
+  if(b.rush)rows.push([who==='customer'?'ASAP fee (goes to your waiter)':'ASAP bonus',money(b.rush)]);
   if(who==='customer'&&b.tiny)rows.push(['Small-order fee',money(b.tiny)]);
   const fee=b.svc+b.book+b.ifee;
   if(who==='customer'&&fee>0)rows.push(['Service fee',money(fee)]);
@@ -471,7 +476,7 @@ function meterInner(j,mode){
    <div class="meter-bot"><span>${mode==='customer'?'Cost so far ($8 minimum)':'Earned so far ($8 minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'&&!(kindOf(j)==='pickup'&&j.purchasedAt)?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
 const leftTxt=t=>{const ms=new Date(t).getTime()-Date.now();if(!(ms>0))return'now';const m=Math.floor(ms/60000),sec=Math.floor(ms/1000)%60;return`${m}:${String(sec).padStart(2,'0')}`};
-setInterval(()=>{if($('#w-hr')&&postDay==='today'){markTimes();snapToday();const h=$('#h-when');if(h&&/^Earliest today/.test(h.textContent))h.textContent=`Earliest today is ${earliestToday().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}. Sooner than that, pick ASAP.`}},30000);
+setInterval(()=>{if($('#w-hr')&&postDay==='today'){snapToday();updateQuote()}},30000);
 setInterval(()=>document.querySelectorAll('[data-leaves]').forEach(el=>{el.textContent=leftTxt(el.dataset.leaves)}),1000);
 setInterval(()=>document.querySelectorAll('[data-timer]').forEach(el=>{const id=+el.dataset.timer,j=[...data.mine,...data.shifts].find(x=>x.id===id);if(j)el.innerHTML=meterInner(j,el.dataset.mode)}),10000);
 let myRatings=null,TAGS={waiter:[],booker:[]};
@@ -796,8 +801,8 @@ function setWhen(d){const now=new Date(),day=x=>new Date(x.getFullYear(),x.getMo
 let postDate='';
 function customerPost(){
   const e=editing,pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
-  if(e){const st=e.startAt?new Date(e.startAt):null;if(st&&st>new Date()&&e.startText!=='ASAP')setWhen(st);else{setWhen(new Date(Date.now()+30*6e4));postDay='asap'}}
-  else{const t=new Date(Date.now()+30*6e4);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);setWhen(t);wheel.qty=0}
+  if(e){const st=e.startAt?new Date(e.startAt):null;setWhen(st&&st>new Date()?st:nowSlot())}
+  else{setWhen(postEvent?nowSlot():firstNoFee());wheel.qty=0}
   const xe=e?(e.extraItems||[]).reduce((s,x)=>s+(+x.price||0)*(+x.qty||1),0):0,price=e&&e.itemBudget?Math.max(1,Math.round((e.itemBudget-(xe?limitFor(xe,1):0))/PRICE_BUFFER/(e.qty||1))):'';
   const kindBtn=(k,t,d)=>`<button type="button" role="radio" aria-checked="${postKind===k}" data-kind="${k}"><b>${t}</b><span>${d}</span></button>`;
   const dayBtn=(k,t)=>`<button type="button" class="chip" aria-pressed="${postDay===k}" data-day="${k}">${t}</button>`;
@@ -822,10 +827,10 @@ function customerPost(){
        <small>Only your waiter sees it, so they can find you or meet you near your section.</small></div>
    </div>
    <div class="field"><span class="wlabel" id="l-when">When should they get there?</span>
-     <div class="filters" role="group" aria-labelledby="l-when">${dayBtn('asap','ASAP')}${dayBtn('today','Today')}${dayBtn('tomorrow','Tomorrow')}${dayBtn('date','Pick a date')}</div>
+     <div class="filters" role="group" aria-labelledby="l-when">${dayBtn('today','Today')}${dayBtn('tomorrow','Tomorrow')}${dayBtn('date','Pick a date')}</div>
      <input id="f-date" type="date" min="${minDate}" value="${postDate}" aria-label="Date"${postDay==='date'?'':' hidden'} style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px">
-     <div class="wheels three" id="when-wheels"${postDay==='asap'?' hidden':''}>${wheelHTML('hr','Hour',HRS,String,wheel.hr)}${wheelHTML('mn','Minute',MINS,fmtMin,wheel.mn)}${wheelHTML('ap','AM or PM',AMPM,String,wheel.ap)}</div>
-     <small id="h-when">${postDay==='asap'?'Waiters nearby see it right away and head over once they claim it.':''}</small></div>
+     <div class="wheels three" id="when-wheels">${wheelHTML('hr','Hour',HRS,String,wheel.hr)}${wheelHTML('mn','Minute',MINS,fmtMin,wheel.mn)}${wheelHTML('ap','AM or PM',AMPM,String,wheel.ap)}</div>
+     <small id="h-when"></small></div>
    <div class="wheels one">${wheelHTML('rate','Hourly rate',RATES,fmtRate,wheel.rate)}</div>
    <div class="quote" id="quote"></div>
    <button class="btn block" type="submit">${e?'Save changes':'Post request'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">Cancel editing</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
@@ -847,7 +852,7 @@ function runChips(){const rs=STAND_RUNS.filter(r=>r.eventId===postEvent).sort((a
   return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–25% on waiter time, or pay just $5 + a $1.49 fee if a waiter is already in line.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
 function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
   return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
-function setEvent(id){postEvent=id||null;const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
+function setEvent(id){const was=postEvent;postEvent=id||null;if(!editing&&postDay==='today'&&!was!==!postEvent&&$('#w-hr')){setWhen(postEvent?nowSlot():firstNoFee());syncWheels()}const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
   const ev=EVENTS.find(e=>e.id===postEvent);if(ev&&!$('#f-place').value.trim())$('#f-place').value=ev.venue;$('#h-event').innerHTML=eventHint();const hr=$('#h-runs');if(hr)hr.innerHTML=runChips();
   postStand='';const sp=$('#stand-pick');if(sp)sp.innerHTML=standPicker();const pf=$('#place-field');if(pf)pf.hidden=false}
 function setStand(id){postStand=id;const pf=$('#place-field');const x=evStands(postEvent).find(s=>s.id===id);if(pf)pf.hidden=!!x;if(x)$('#f-place').value=x.name;else if(id==='other'){const ev=EVENTS.find(e=>e.id===postEvent);if(ev&&evStands(postEvent).some(s=>s.name===$('#f-place').value))$('#f-place').value=ev.venue}const h=$('#h-stand');if(h)h.innerHTML=standHint()}
@@ -861,33 +866,37 @@ function setPostKind(k){postKind=k;const f=$('#postForm');if(!f)return;
   updateQuote()}
 function setHandoff(h){postHandoff=h;const f=$('#postForm');f.querySelectorAll('[data-hand]').forEach(b=>b.setAttribute('aria-checked',b.dataset.hand===h));
   f.querySelector('.grp[data-for="dropoff"]').hidden=h!=='dropoff';updateQuote()}
-// Anything starting within 30 minutes is ASAP (and priced as ASAP), so Today's earliest time is 30 minutes out.
+// Any time can be picked. A start within the next 30 minutes is ASAP: away from events it adds a $4 ASAP fee that goes to the waiter.
 const ASAP_WINDOW_MS=30*6e4;
-function earliestToday(){const t=new Date(Date.now()+ASAP_WINDOW_MS);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);return t}
-const todayOpen=()=>earliestToday().getDate()===new Date().getDate();   // late at night, Today has no times left
+const nowSlot=()=>{const t=new Date();t.setMinutes(Math.floor(t.getMinutes()/15)*15,0,0);return t};           // the 15-minute slot we're in = "now"
+const firstNoFee=()=>{const t=new Date(Date.now()+ASAP_WINDOW_MS);t.setMinutes(Math.ceil(t.getMinutes()/15)*15,0,0);return t};
+const earliestToday=nowSlot;
 const todayAt=(hr,mn,ap)=>{const d=new Date();d.setHours(HRS[hr]%12+(ap?12:0),MINS[mn],0,0);return d};
-// Puts the wheels' highlight and scroll position back on the chosen values.
+const tLabel=d=>d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+function pickedTime(){try{return chosenStart().d}catch{return null}}
+function isAsap(){const d=pickedTime();return!!d&&d.getTime()<Date.now()+ASAP_WINDOW_MS-6e4}
 function syncWheels(){['hr','mn','ap'].forEach(k=>{const el=$('#w-'+k);if(!el)return;[...el.children].forEach((c,i)=>c.classList.toggle('on',i===wheel[k]));el.scrollTop=wheel[k]*ROW})}
-// With Today picked, times in the next 30 minutes (the ASAP window) and earlier are greyed out and can't be kept.
-function markTimes(){const live=postDay==='today',e=earliestToday();
+// With Today picked, times that have already passed are greyed out and can't be kept.
+function markTimes(){const live=postDay==='today',e=nowSlot();
   const mark=(k,bad)=>{const el=$('#w-'+k);if(el)[...el.children].forEach((c,i)=>{const off=live&&bad(i);c.classList.toggle('off',off);c.setAttribute('aria-disabled',off)})};
   mark('hr',i=>todayAt(i,3,wheel.ap)<e);mark('mn',i=>todayAt(wheel.hr,i,wheel.ap)<e);mark('ap',i=>todayAt(10,3,i)<e);
-  const tb=$('#postForm [data-day=today]');if(tb){const open=todayOpen();tb.disabled=!open;tb.title=open?'':'No times left today. Pick ASAP or Tomorrow.'}}
+  const h=$('#h-when');if(!h)return;const asap=isAsap();h.classList.toggle('asapnote',asap&&!postEvent);
+  h.innerHTML=asap?(postEvent?'<b>ASAP.</b> Waiters here see it right away. No ASAP fee at events.':`<b>ASAP: +${money(RUSH_FEE)} fee</b>, all of it to your waiter. To skip it, pick ${tLabel(firstNoFee())} or later.`)
+    :postDay==='today'&&!postEvent?`Starting before ${tLabel(firstNoFee())} (within 30 minutes) adds a ${money(RUSH_FEE)} ASAP fee.`:''}
 let snapT=0;
-function snapToday(){clearTimeout(snapT);snapT=setTimeout(()=>{if(postDay!=='today'||!$('#w-hr'))return;const e=earliestToday();
-  if(todayAt(wheel.hr,wheel.mn,wheel.ap)<e){setWhen(e);syncWheels();setDay(postDay);const h=$('#h-when');if(h)h.textContent=`That's within 30 minutes, so it's ASAP. Moved to the earliest time today, ${e.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}, or pick ASAP.`}},450)}
-function setDay(k){postDay=k;if(k==='today'){const{d}=(()=>{try{return chosenStart()}catch{return{d:null}}})();if(!d||d<earliestToday()){setWhen(earliestToday());k=postDay;syncWheels()}}const f=$('#postForm');f.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.day===k));
-  $('#f-date').hidden=k!=='date';$('#when-wheels').hidden=k==='asap';
-  $('#h-when').textContent=k==='asap'?'Waiters nearby see it right away and head over once they claim it.':k==='today'?`Earliest today is ${earliestToday().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}. Sooner than that, pick ASAP.`:'';
+function snapToday(){clearTimeout(snapT);snapT=setTimeout(()=>{if(postDay!=='today'||!$('#w-hr'))return;const e=nowSlot();
+  if(todayAt(wheel.hr,wheel.mn,wheel.ap)<e){setWhen(e);syncWheels();setDay(postDay)}},450)}
+function setDay(k){postDay=k;if(k==='today'){const d=pickedTime();if(!d||d<nowSlot()){setWhen(postEvent?nowSlot():firstNoFee());k=postDay;syncWheels()}}const f=$('#postForm');f.querySelectorAll('[data-day]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.day===k));
+  $('#f-date').hidden=k!=='date';
   if(k==='date'&&!$('#f-date').value)$('#f-date').showPicker?.();updateQuote()}
 // The start time picked on the form. Throws a message the form shows if it's not usable.
 function chosenStart(){
-  const now=new Date();if(postDay==='asap')return{d:now,text:'ASAP'};
+  const now=new Date();
   let d;if(postDay==='date'){const v=$('#f-date').value;if(!v)throw new Error('Pick a date.');const [y,m,dd]=v.split('-').map(Number);d=new Date(y,m-1,dd)}
   else{d=new Date(now);if(postDay==='tomorrow')d.setDate(d.getDate()+1)}
   d.setHours(HRS[wheel.hr]%12+(wheel.ap?12:0),MINS[wheel.mn],0,0);
-  if(d<now-5*6e4)throw new Error('That time has already passed. Pick a later time, or ASAP.');
-  if(d<new Date(now.getTime()+ASAP_WINDOW_MS-6e4))throw new Error('Times in the next 30 minutes count as ASAP. Pick ASAP, or a time at least 30 minutes from now.');
+  if(d<nowSlot())throw new Error('That time has already passed. Pick a later time.');
+  if(d<=now)return{d:now,text:'ASAP'};
   return{d,text:fmtStart(d)}}
 // ---------- scroll wheels ----------
 const RATES=Array.from({length:741},(_,i)=>15+i/4);   // $15.00 … $200.00
@@ -924,7 +933,7 @@ function updateQuote(){
   const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,xEst=pk?extrasEst():0,budget=price?Math.min(MAX_ITEM,limitFor(price,qty)+(xEst?limitFor(xEst,1):0)):0;
   const tiny=pk&&budget>0&&budget<=12.5&&!postExtras.length?0.99:0;
   const small=pk&&budget>0&&budget<=SMALL_BUDGET,jmin=small?SMALL_MIN_PAY:MIN_PAY;
-  const rush=postDay==='asap'&&!postEvent?RUSH_FEE:0;
+  const rush=isAsap()&&!postEvent?RUSH_FEE:0;
   // Worst case (what the card hold covers) and a typical 15-minute wait.
   const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small)+tiny,total=time+budget+fee+rush;
   const likelyTime=Math.max(jmin,0.25*r),est=price*qty+xEst,likely=likelyTime+est+svcV2(likelyTime,est,small)+tiny+rush;
@@ -934,15 +943,23 @@ function updateQuote(){
     $('#h-price').textContent=price*qty>MAX_ITEM?`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
     $('#h-meet').textContent='You meet your waiter to get it, within 4 hours of the purchase, so after the game or show works. For food, meet within 30 minutes so it stays fresh.'}
   const row=(k,v)=>`<div><span>${k}</span><span class="mono">${v}</span></div>`;
+  const likelyFee=svcV2(likelyTime,est,small)+tiny,likelyBase=svcV2(likelyTime,est,small);
+  const parts=[`Waiter ${money(likelyTime)}`,pk?`Item${postExtras.length?'s':''} ${est?money(est):'—'}`:'',`Fees ${money(likelyFee+rush)}`].filter(Boolean);
+  const frow=(k,v,why)=>`<div class="frow"><div><span>${k}</span><span class="mono">${v}</span></div><small>${why}</small></div>`;
   q.innerHTML=`<div class="total"><span>Estimated total</span><span class="mono">${price?money(likely):'—'}</span></div>`
-    +`<div class="hint" style="display:block">For a typical 15-minute wait${pk&&est?' and the item at an estimated '+money(est):''}. ${tiny?'Includes a $0.99 small-order fee, which drops if your order joins a group run or you add another item. ':small?'Small orders have a lower minimum and fee. ':''}${postEvent?'No rush fee at events. ':''}</div>`
-    +(addOn?`<div class="note" style="margin:6px 0"><b>A waiter is in line at ${esc(st.name)} right now.</b> If they add yours on, it's an estimated <b>${money(addOn)}</b>: a flat $5 for them and a $1.49 fee, no time charge.</div>`:'')
+    +`<div class="qline">${parts.join(' · ')}</div>`
+    +(addOn?`<div class="note qnote"><b>A waiter is in line at ${esc(st.name)} now.</b> If they add yours on, it's about <b>${money(addOn)}</b>.</div>`:'')
+    +`<details class="feedet"><summary>What are the fees?</summary>`
+    +frow('Service fee',money(likelyBase),`${small?'$1.99':'$3.49'} + 9% of the waiter's time and item, never more than $12. Covers card processing, payouts and support.`)
+    +(tiny?frow('Small-order fee',money(tiny),'For solo orders an estimated $10 or less. Add a second item or join a group run and it goes away.'):'')
+    +(rush?frow('ASAP fee',money(rush),'You picked a start within 30 minutes. All of it goes to your waiter.'):postEvent?'':frow('ASAP fee','$0.00',`Only if the start is within 30 minutes (before ${tLabel(firstNoFee())} today).`))
+    +`<small class="fnote">Joining a group run takes 10–25% off the waiter's time.${small?' Small orders have a $6 time minimum instead of $8.':''}</small></details>`
     +`<details class="feedet"><summary>Most it could cost: ${money(total)}</summary>`
-    +row(`Your waiter (up to ${h} hr × ${fmtRate(r)}/hr)`,money(time))
+    +row(`Waiter, up to ${h} hr × ${fmtRate(r)}/hr`,money(time))
     +(pk?row(postExtras.length?'Items, up to':qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')
-    +(rush?row('Rush bonus (goes to your waiter)',money(rush)):'')+row('Service fee',money(fee))
-    +`<div class="hint" style="display:block">You're charged only for the time your waiter actually spends, in 15-minute steps${pk?', plus the receipt price':''}. Short jobs have a ${money(jmin)} minimum for your waiter's time. If it takes longer than ${h} hour${h===1?'':'s'}, we'll ask before adding time. When a waiter claims your request, your bank shows a temporary hold for this amount; you're charged only what was used.</div></details>`
-    +FEE_NOTE;markTimes()}
+    +(rush?row('ASAP fee',money(rush)):'')+row('Fees',money(fee))
+    +`<small class="fnote">That's the temporary hold when a waiter claims it. You're charged only for time used, in 15-minute steps (${money(jmin)} minimum)${pk?', plus the receipt price':''}. Past ${h} hr${h===1?'':'s'}, we ask before adding time.</small></details>`;
+  markTimes()}
 
 // ---------- Near me (waiters) ----------
 let near={on:false,pos:null,radius:0,busy:false};
@@ -1222,7 +1239,7 @@ function render(){
     ['#f-price','#f-dropfee'].forEach(id=>{const el=$(id);if(el)el.addEventListener('input',updateQuote)});
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
       try{const {d,text}=chosenStart();
-        const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:postDay==='asap',startAt:d.toISOString(),startText:text,hours:editing?editing.hours:approvedFor(),rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
+        const body={kind:postKind,place:$('#f-place').value,eventId:postEvent,asap:isAsap(),startAt:d.toISOString(),startText:text,hours:editing?editing.hours:approvedFor(),rate:RATES[wheel.rate],notes:editing?editing.notes||'':''};
         if(postKind==='pickup'){const p=parseFloat($('#f-price').value);if(!(p>0))throw new Error('Add the estimated price.');const q=QTYS[wheel.qty];
           const xs=postExtras.filter(x=>String(x.item||'').trim());if(xs.some(x=>!(+x.price>0)))throw new Error('Add an estimated price for each extra item.');
           const xe=xs.reduce((s,x)=>s+x.price*x.qty,0);if(p*q+xe>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);

@@ -344,6 +344,8 @@ function checkVenue(...texts) {
     fail(400, "Theme parks don't allow holding places in line for others, so we can't post this line.");
 }
 
+const ASAP_WINDOW_MS = 30 * 60 * 1000;
+const isAsapStart = (d) => new Date(d).getTime() < Date.now() + ASAP_WINDOW_MS - 60 * 1000;
 function parseStart(v) {
   const t = Date.parse(v);
   if (!Number.isFinite(t)) fail(400, "Pick when the waiter should arrive.");
@@ -375,7 +377,8 @@ function lineFields(b, event = null) {
     rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
-    rush: b.asap === true && !event, // ASAP requests carry a rush bonus for the waiter, except at events (where nearly everything is ASAP)
+    // A start within the next 30 minutes is ASAP: it adds a rush bonus for the waiter, except at events (where nearly everything is ASAP).
+    rush: isAsapStart(startAt) && !event,
     pricingV: 4,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
@@ -1115,9 +1118,6 @@ async function api(req, res, urlPath, query) {
     const event = await eventFor(b.eventId);
     const f = lineFields(b, event);
     await applyStand(f, b, event);
-    // A start within 30 minutes is ASAP: it has to be posted (and priced) as ASAP.
-    if (b.asap !== true && new Date(f.startAt).getTime() < Date.now() + 29 * 60 * 1000)
-      fail(400, "Times in the next 30 minutes count as ASAP. Pick ASAP, or a time at least 30 minutes from now.", "asap_window");
     await requireCard(me);
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
     // A waiter holding a run open at this stand takes the new order automatically (it joins their group run).
@@ -1225,6 +1225,7 @@ async function api(req, res, urlPath, query) {
       const f = lineFields(b, evE);
       await applyStand(f, b, evE);
       const fields = { ...f, approvedHours: f.hours };
+      if (Math.abs(new Date(f.startAt) - new Date(l.startAt)) < 60 * 1000 && f.eventId === l.eventId) fields.rush = !!l.rush; // same time: same ASAP fee as when posted
       const ev = f.eventId ? await store.eventById(f.eventId) : null;
       const moved = f.place !== l.place || f.eventId !== l.eventId;
       if (moved) Object.assign(fields, { lat: null, lng: null, geoApprox: null });
