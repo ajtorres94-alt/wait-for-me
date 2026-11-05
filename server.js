@@ -333,7 +333,6 @@ const num = (v, field, min, max) => {
 // counter-offer a higher rate and set the lowest rate they want to see.
 const STANDARD_RATE = 17;
 const MIN_RATE = 17;
-const BOOSTS = [0, 2, 5]; // optional flat boost a booker adds; all of it goes to the waiter
 const MAX_RATE = 200;
 
 // Hours and rates move in quarter steps (15 minutes, 25 cents).
@@ -378,7 +377,7 @@ function lineFields(b, event = null) {
     startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
     rate: STANDARD_RATE,
-    boost: BOOSTS.includes(Number(b.boost)) ? Number(b.boost) : 0,
+    boost: 0, // boosts were retired the day they launched (ASAP already covers "get it to me fast")
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
     // A start within the next 30 minutes is ASAP: it adds a rush bonus for the waiter, except at events (where nearly everything is ASAP).

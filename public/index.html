@@ -833,9 +833,7 @@ function customerPost(){
      <input id="f-date" type="date" min="${minDate}" value="${postDate}" aria-label="Date"${postDay==='date'?'':' hidden'} style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px">
      <div class="wheels three" id="when-wheels">${wheelHTML('hr','Hour',HRS,String,wheel.hr)}${wheelHTML('mn','Minute',MINS,fmtMin,wheel.mn)}${wheelHTML('ap','AM or PM',AMPM,String,wheel.ap)}</div>
      <small id="h-when"></small></div>
-   <div class="field"><span class="wlabel" id="l-boost">Boost <span class="meta">(optional)</span></span>
-     <div class="filters" role="group" aria-labelledby="l-boost">${BOOSTS.map(v=>`<button type="button" class="chip" aria-pressed="${postBoost===v}" data-boost="${v}">${v?'+'+money(v):'No boost'}</button>`).join('')}</div>
-     <small>Waiters are paid ${money(STANDARD_RATE)}/hr for their time. A boost goes 100% to your waiter and can get your request claimed faster on busy nights.</small></div>
+   <div class="field"><small id="h-rate">Waiters are paid ${money(STANDARD_RATE)}/hr for their time, in 15-minute steps.</small></div>
    <div class="quote" id="quote"></div>
    <button class="btn block" type="submit">${e?'Save changes':'Post request'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">Cancel editing</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
 function evWhen(ev){const s=new Date(ev.startsAt);if(ev.live)return'Now';const t=s.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),d=s.toDateString()===new Date().toDateString()?'Today':s.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});return`${d} ${t}`}
@@ -904,7 +902,7 @@ function chosenStart(){
   return{d,text:fmtStart(d)}}
 // ---------- scroll wheels ----------
 const STANDARD_RATE=17;                                 // every request's hourly rate (waiters can counter-offer more)
-const BOOSTS=[0,2,5];let postBoost=0;
+let postBoost=0; // boosts retired; kept at 0 so older boosted requests still price right
 const RATES=Array.from({length:733},(_,i)=>17+i/4);   // $17.00 … $200.00
 const HRS=Array.from({length:12},(_,i)=>i+1),MINS=[0,15,30,45],AMPM=['AM','PM'];
 const fmtMin=m=>':'+String(m).padStart(2,'0');
@@ -1235,7 +1233,6 @@ function render(){
   v.innerHTML=t==='account'?account():role==='customer'?(t==='mine'?customerMine():customerPost()):(t==='find'?waiterFind():waiterShifts());
   if(t==='post'){['hr','mn','ap','qty'].forEach(initWheel);updateQuote();
     $('#postForm').querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>setDay(b.dataset.day));
-    $('#postForm').querySelectorAll('[data-boost]').forEach(b=>b.onclick=()=>{postBoost=+b.dataset.boost;$('#postForm').querySelectorAll('[data-boost]').forEach(x=>x.setAttribute('aria-pressed',x===b));updateQuote()});
     $('#postForm').querySelectorAll('[data-event]').forEach(b=>b.onclick=()=>setEvent(+b.dataset.event||null));
     $('#postForm').addEventListener('change',e=>{if(e.target.id==='f-stand')setStand(e.target.value);const x=e.target.dataset&&e.target.dataset.x;if(x!==undefined){postExtras[+x][e.target.dataset.k]=e.target.value;updateQuote()}});
     $('#postForm').addEventListener('input',e=>{const x=e.target.dataset&&e.target.dataset.x;if(x!==undefined){postExtras[+x][e.target.dataset.k]=e.target.value;updateQuote()}});
@@ -1298,7 +1295,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='avatar'){me=(await api('/me',{method:'PATCH',body:{avatar:b.dataset.av}})).user;toast(me.avatar?'Avatar updated.':'Showing your initials.');await load(true);return}
     if(a==='outfit'){const input=id?document.getElementById('outfit-'+id):$('#acct-look');me=(await api('/me',{method:'PATCH',body:{look:input.value}})).user;toast(me.look?`Customers will look for: ${me.look}`:'Outfit cleared.');b.disabled=false;return}
     if(a==='cancel'){await api(`/lines/${id}/cancel`,{method:'POST'});toast('Request cancelled.')}
-    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);if(kindOf(j)!=='pickup'){toast('Save my spot requests can\'t be edited anymore. Cancel it and post a pickup instead.');b.disabled=false;return}editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postExtras=(j.extraItems||[]).map(x=>({...x,price:x.price??''}));postBoost=+j.boost||0;postEvent=j.eventId||null;postStand=j.standId||(evStands(j.eventId).length?'other':'');wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));
+    if(a==='edit'){const j=data.mine.find(x=>x.id===+id);if(kindOf(j)!=='pickup'){toast('Save my spot requests can\'t be edited anymore. Cancel it and post a pickup instead.');b.disabled=false;return}editing=j;postKind=kindOf(j);postHandoff=j.handoff==='dropoff'?'dropoff':'meet';postExtras=(j.extraItems||[]).map(x=>({...x,price:x.price??''}));postEvent=j.eventId||null;postStand=j.standId||(evStands(j.eventId).length?'other':'');wheel.qty=Math.max(0,Math.min(4,(j.qty||1)-1));
       tab.customer='post';b.disabled=false;render();window.scrollTo(0,0);return}
     if(a==='edit-cancel'){editing=null;postExtras=[];postBoost=0;tab.customer='mine';b.disabled=false;render();return}
     if(a==='cancelbk-open'||a==='cancelbk-close'){cancelOpen=a==='cancelbk-open'?+id:null;b.disabled=false;render();return}
