@@ -133,7 +133,9 @@ function billing(line, now = Date.now()) {
   const dropoff = bought && line.handoff === "dropoff" ? roundCents(Number(line.dropoffFee) || 0) : 0;
   // ASAP requests: the rush fee goes to the waiter as a bonus (not on late cancellations).
   const rushFee = line.rush && billed > 0 && line.outcome !== "cancelled_late" ? RUSH_FEE : 0;
-  const waiterPay = roundCents(waiterTimePay + dropoff + rushFee);
+  // Booker's optional boost: a flat amount, all to the waiter (not on late cancellations).
+  const boost = Number(line.boost) > 0 && billed > 0 && line.outcome !== "cancelled_late" ? roundCents(Number(line.boost)) : 0;
+  const waiterPay = roundCents(waiterTimePay + dropoff + rushFee + boost);
   const charged = feeRate > 0 && billed > 0;
   const serviceFee = addOn ? (charged ? ADDON_FEE : 0) : v2(line) ? (charged ? serviceFeeV2(timePay, item, small, line.pricingV) : 0) : roundCents(timePay * feeRate);
   const bookingFee = !v2(line) && charged ? bookingFeeFor(line) : 0;
@@ -161,6 +163,7 @@ function billing(line, now = Date.now()) {
     bookingFee,
     itemFee,
     rushFee,
+    boost,
     fee,
     payout: roundCents(waiterPay + item), // what the waiter receives
     total: roundCents(waiterPay + item + fee),
@@ -175,7 +178,7 @@ function maxTotal(line) {
   if (v2(line)) {
     const budget = kindOf(line) === "pickup" ? Number(line.itemBudget) || 0 : 0;
     const tiny = Number(line.pricingV) >= 4 && kindOf(line) === "pickup" && !(line.extraItems || []).length && budget > 0 && budget <= TINY_BUDGET ? TINY_FEE : 0;
-    return time + budget + serviceFeeV2(time, budget, isSmall(line), line.pricingV) + tiny + (line.rush ? RUSH_FEE : 0);
+    return time + budget + serviceFeeV2(time, budget, isSmall(line), line.pricingV) + tiny + (line.rush ? RUSH_FEE : 0) + (Number(line.boost) || 0);
   }
   let total = time * (1 + FEE) + bookingFeeFor(line) + (line.rush ? RUSH_FEE : 0);
   if (kindOf(line) === "pickup") {

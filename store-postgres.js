@@ -178,6 +178,7 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS meet_spot TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS add_on BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS extra_items TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS run_leaves_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS boost NUMERIC(6,2) NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -280,7 +281,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -372,6 +373,7 @@ const COLS = {
   meetSpot: "meet_spot",
   addOn: "add_on",
   runLeavesAt: "run_leaves_at",
+  boost: "boost",
   extraItems: "extra_items",
 };
 const USER_COLS = {
@@ -469,11 +471,11 @@ module.exports = {
   async createLine(f) {
     const r = await pool.query(
       `INSERT INTO lines (owner_id, place, what, cat, start_text, hours, rate, notes, code, approved_hours, start_at,
-         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty, event_id, rush, pricing_v, stand_id, seat_section, seat_row, seat_number, extra_items)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING id`,
+         kind, item, item_details, item_backup, item_budget, handoff, dropoff_fee, dropoff_addr, meet_within, qty, event_id, rush, pricing_v, stand_id, seat_section, seat_row, seat_number, extra_items, boost)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $6, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29) RETURNING id`,
       [f.ownerId, f.place, f.what, f.cat, f.startText, f.hours, f.rate, f.notes, f.code, f.startAt,
         f.kind || "spot", f.item || null, f.itemDetails || null, f.itemBackup || null, f.itemBudget ?? null,
-        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null, f.eventId || null, !!f.rush, f.pricingV || 1, f.standId || null, f.seatSection || null, f.seatRow || null, f.seatNumber || null, f.extraItems && f.extraItems.length ? JSON.stringify(f.extraItems) : null]
+        f.handoff || null, f.dropoffFee || 0, f.dropoffAddr || null, f.meetWithin || null, f.qty || null, f.eventId || null, !!f.rush, f.pricingV || 1, f.standId || null, f.seatSection || null, f.seatRow || null, f.seatNumber || null, f.extraItems && f.extraItems.length ? JSON.stringify(f.extraItems) : null, Number(f.boost) || 0]
     );
     return this.getLine(r.rows[0].id);
   },

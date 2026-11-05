@@ -329,8 +329,11 @@ const num = (v, field, min, max) => {
   return Math.round(n * 100) / 100;
 };
 
-// Rates are set between bookers and waiters; these are only sanity limits.
-const MIN_RATE = 15;
+// Every request is posted at the standard rate (Nov 2026: bookers no longer pick one). Waiters can still
+// counter-offer a higher rate and set the lowest rate they want to see.
+const STANDARD_RATE = 17;
+const MIN_RATE = 17;
+const BOOSTS = [0, 2, 5]; // optional flat boost a booker adds; all of it goes to the waiter
 const MAX_RATE = 200;
 
 // Hours and rates move in quarter steps (15 minutes, 25 cents).
@@ -374,12 +377,13 @@ function lineFields(b, event = null) {
     startAt,
     startText: text(b.startText, "the start time", 60, { required: false }) || startAt.toUTCString(),
     hours: quarter(num(b.hours, "Estimated wait", 0.25, 24)),
-    rate: quarter(num(b.rate, "Hourly rate", MIN_RATE, MAX_RATE)),
+    rate: STANDARD_RATE,
+    boost: BOOSTS.includes(Number(b.boost)) ? Number(b.boost) : 0,
     item: "", itemDetails: "", itemBackup: "", qty: 1, itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
     eventId: event ? event.id : null,
     // A start within the next 30 minutes is ASAP: it adds a rush bonus for the waiter, except at events (where nearly everything is ASAP).
     rush: isAsapStart(startAt) && !event,
-    pricingV: 4,
+    pricingV: 5,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
     seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,
