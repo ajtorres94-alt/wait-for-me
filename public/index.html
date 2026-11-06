@@ -448,7 +448,7 @@ let clockSkew=0;
 const nowS=()=>Date.now()+clockSkew;
 function billOf(j){
   if(j.status==='done'&&j.bill){const s=j.bill;return{approved:s.approvedHours,waited:s.waitedHours,billed:s.billedHours,time:s.timePay??s.waiterPay,drop:s.dropoff||0,item:s.item||0,
-    saved:s.bundleSaving||0,disc:s.groupDiscount||0,addOn:!!s.addOn,tiny:s.tinyFee||0,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,boost:s.boost||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
+    saved:s.bundleSaving||0,bundled:!!s.bundled,disc:s.groupDiscount||0,addOn:!!s.addOn,tiny:s.tinyFee||0,wtime:s.waiterTimePay??(s.timePay??s.waiterPay),pay:s.waiterPay,svc:s.serviceFee??s.fee,book:s.bookingFee||0,ifee:s.itemFee||0,rush:s.rushFee||0,boost:s.boost||0,minApplied:!!s.minApplied,fee:s.fee,payout:s.payout??s.waiterPay,total:s.total,timeUp:s.timeUp,nearUp:false}}
   const approved=j.bill?j.bill.approvedHours:j.hours,ci=j.checkinAt?Date.parse(j.checkinAt):null;
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
@@ -456,13 +456,13 @@ function billOf(j){
   const small=isSmallJ(j),jmin=jminOf(j),addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?addonPayOf(j):minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(v6(j)?jmin:small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
   const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,boost=+j.boost>0&&billed>0?+j.boost:0,pay=r2(wtime+drop+rush+boost),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small,j.pricingV):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),tiny=+j.pricingV>=4&&billed>0&&!addOn&&!grp&&!(j.extraItems||[]).length&&+j.itemBudget>0&&+j.itemBudget<=12.5?0.99:0,fee=r2(svc+book+ifee+(time-wtime)+tiny);
   const live=!!ci&&!bought;
-  return{approved,waited:w,billed,time,wtime,saved,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,boost,tiny,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
+  return{approved,waited:w,billed,time,wtime,saved,bundled:grp,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,boost,tiny,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
 // The itemized bill shown on finished jobs (and once a pickup is bought).
 // One "Service fee" line, with the parts behind a tap for anyone who wants them.
 const FEE_NOTE=`<div class="feedet">Service fee: $3.49 + 9% of your waiter's time and the item (or $1.99 + 9% on small orders, an estimated $20 or less), never more than $12. It covers card processing, payouts and support.</div>`;
 function feeDetails(parts){const p=parts.filter(([,v])=>v>0);return`<details class="feedet"><summary>What's in the service fee</summary>${p.map(([k,v])=>`<div><span>${k}</span><span class="mono">${money(v)}</span></div>`).join('')}</details>`}
 function billRows(b,who){
-  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.addOn?' (add-on to a run, flat)':b.saved?(who==='customer'?` (group run, ${Math.round((b.disc||.25)*100)}% off)`:' (group run)'):b.minApplied?' (job minimum)':''),money(who==='customer'?b.time:(b.wtime??b.time))]];
+  const rows=[['Time in line',clockTxt(b.waited)],['Billed',fmtShort(b.billed)],[(who==='customer'?'Waiter time':'Your time')+(b.addOn?' (add-on to a run, flat)':b.saved?(who==='customer'?` (group run, ${Math.round((b.disc||.25)*100)}% off)`:' (group run)'):b.bundled?(who==='customer'?' (group run, 15-min minimum)':' (group run)'):b.minApplied?' (job minimum)':''),money(who==='customer'?b.time:(b.wtime??b.time))]];
   if(b.saved&&who==='customer')rows.push(['You saved on the group run',`−${money(b.saved)}`]);
   if(b.drop)rows.push(['Drop-off',money(b.drop)]);
   if(b.item)rows.push([who==='customer'?'Item (receipt price)':'Item paid back',money(b.item)]);
