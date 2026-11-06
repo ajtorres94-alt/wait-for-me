@@ -382,7 +382,7 @@ function lineFields(b, event = null) {
     eventId: event ? event.id : null,
     // A start within the next 30 minutes is ASAP: it adds a rush bonus for the waiter, except at events (where nearly everything is ASAP).
     rush: isAsapStart(startAt) && !event,
-    pricingV: 6,
+    pricingV: 7,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
     seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,
@@ -1161,7 +1161,7 @@ async function api(req, res, urlPath, query) {
         if (x.waiterId && x.waiterId !== me.id && !told.has(x.waiterId) && standKey(x) === standKey(line)) {
           if (["inline", "nearfront"].includes(x.status)) {
             told.add(x.waiterId);
-            ping(x.waiterId, "Add-on at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it for +$5.`);
+            ping(x.waiterId, "Another order at your stand", `New order at ${line.place}: ${line.item}. You're already in line, so claim it and it joins your run.`);
           } else if (["claimed", "enroute"].includes(x.status)) {
             told.add(x.waiterId);
             ping(x.waiterId, "Another order for your run", `New order at ${line.place}: ${line.item}. Claim it before you get in line and it joins your group run.`);
@@ -1452,7 +1452,16 @@ async function api(req, res, urlPath, query) {
         // Add-on: the waiter was already in line here for someone else (checked in over 2 minutes ago),
         // so this order costs them almost no extra time.
         const already = mine.some((x) => x.id !== l.id && !x.addOn && x.checkinAt && Date.now() - new Date(x.checkinAt).getTime() > ADDON_AFTER_MS);
-        if (already) {
+        if (already && Number(l.pricingV) >= 7) {
+          // Pricing v7: a late order joins the run as a full member. Its clock starts when the run's wait
+          // began, so it pays the same shared-wait price as everyone else, and the run's discount grows.
+          const others = mine.filter((x) => x.id !== l.id && !x.addOn && x.checkinAt);
+          const runStart = new Date(Math.min(...others.map((x) => new Date(x.checkinAt).getTime())));
+          await store.updateLineAny(l.id, { checkinAt: runStart });
+          const same = mine.filter((x) => !x.addOn);
+          for (const x of same) if (!x.bundled || (x.bundleSize || 0) < same.length) await store.updateLineAny(x.id, { bundled: true, bundleSize: same.length });
+          updated = await store.getLine(id);
+        } else if (already) {
           updated = await store.updateLineAny(l.id, { addOn: true });
         } else {
           const same = mine.filter((x) => !x.addOn);

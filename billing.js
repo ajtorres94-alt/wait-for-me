@@ -45,6 +45,10 @@ const v2 = (line) => Number(line.pricingV) >= 2;
 // Group-run discount on the waiter-time charge, by how many orders share the wait.
 const GROUP_DISCOUNT = { 2: 0.1, 3: 0.15, 4: 0.2, 5: 0.25 };
 const groupDiscount = (size) => GROUP_DISCOUNT[Math.min(5, Math.max(2, Number(size) || 2))];
+// Pricing v7 (Nov 5, 2026): the group discount tops out at 20% (4 or more orders), and add-ons are retired:
+// an order placed while the waiter is already in line joins the run at the run price.
+const GROUP_DISCOUNT_CAP_V7 = 0.2;
+const groupDiscountFor = (line) => (Number(line.pricingV) >= 7 ? Math.min(GROUP_DISCOUNT_CAP_V7, groupDiscount(line.bundleSize)) : groupDiscount(line.bundleSize));
 const BUNDLE_RATE = 0.75; // kept for older callers; the discount now depends on group size
 const BUNDLE_MIN_PAY = 6;
 // On a group run the waiter earns at most $35/hr for the shared wait (or the highest agreed rate, if higher,
@@ -126,7 +130,7 @@ function billing(line, now = Date.now()) {
   const minApplied = !addOn && billed > 0 && rawPay < jobMin;
   const fullTimePay = addOn ? addOnPay(line) : minApplied ? jobMin : rawPay;
   const grouped = !addOn && !!line.bundled && billed > 0 && line.outcome !== "cancelled_late";
-  const discount = grouped ? groupDiscount(line.bundleSize) : 0;
+  const discount = grouped ? groupDiscountFor(line) : 0;
   const groupMin = v6(line) ? jobMin : small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
   const timePay = grouped ? Math.max(groupMin, roundCents(rawPay * (1 - discount))) : fullTimePay;
   const bundleSaving = grouped ? roundCents(fullTimePay - timePay) : 0;
@@ -194,4 +198,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { V6_ADDON_PAY, jobMinPay, addOnPay, TINY_BUDGET, TINY_FEE, V3_BASE_FEE, V3_SMALL_BASE_FEE, SMALL_BUDGET, SMALL_MIN_PAY, SMALL_BASE_FEE, ADDON_PAY, ADDON_FEE, isSmall, GROUP_DISCOUNT, groupDiscount, GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { groupDiscountFor, GROUP_DISCOUNT_CAP_V7, V6_ADDON_PAY, jobMinPay, addOnPay, TINY_BUDGET, TINY_FEE, V3_BASE_FEE, V3_SMALL_BASE_FEE, SMALL_BUDGET, SMALL_MIN_PAY, SMALL_BASE_FEE, ADDON_PAY, ADDON_FEE, isSmall, GROUP_DISCOUNT, groupDiscount, GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
