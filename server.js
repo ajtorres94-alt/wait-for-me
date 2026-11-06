@@ -625,7 +625,22 @@ const publicEvent = (e) => ({ id: e.id, name: e.name, venue: e.venue, startsAt: 
   live: new Date(e.startsAt).getTime() <= Date.now() + 2 * 3600e3, open: e.open || 0, here: e.here || 0, meHere: !!e.meHere,
   venueId: e.venueId || null, stands: e.stands || [] });
 // Adds each event's venue stand list (visible stands only) for the request form and waiters.
-const publicStand = (s) => ({ id: s.id, name: s.name, location: s.location || "", sells: s.sells || "", notes: s.notes || "" });
+const publicStand = (s) => ({ id: s.id, name: s.name, location: s.location || "", sells: s.sells || "", notes: s.notes || "",
+  menu: (s.menu || []).map((m) => ({ id: m.id, name: m.name, price: m.price, soldOut: !!m.soldOut })) });
+
+// ---- venue staff and the Stand Board ----
+// Staff access is never self-serve: an admin grants it per person and per venue (optionally limited to some
+// stands), so the app and the venue stay in step. Grants are kept as one JSON list in app settings.
+async function staffGrants() {
+  try { return JSON.parse((await store.getSetting("venue_staff")) || "[]"); } catch { return []; }
+}
+const saveGrants = (g) => store.setSetting("venue_staff", JSON.stringify(g));
+async function myGrants(me) {
+  return (await staffGrants()).filter((g) => g.userId === me.id);
+}
+const PREP_STATES = ["new", "preparing", "ready", "unavailable"];
+// The order number stands and waiters use at the counter.
+const orderNo = (l) => `#${l.id}`;
 async function withStands(evs) {
   const ids = [...new Set(evs.map((e) => e.venueId).filter(Boolean))];
   if (!ids.length) return evs;
@@ -1556,6 +1571,66 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { line: await one(me, updated) });
   }
 
+  // ---- Stand Board (venue staff granted access by an admin) ----
+  if (urlPath.startsWith("/api/stand/")) {
+    const grants = await myGrants(me);
+    if (!grants.length) fail(403, "This account isn't set up for a stand. Ask Wait For Me! to add you.", "not_staff");
+    const allowed = (venueId, standId) => grants.some((g) => g.venueId === venueId && (!g.standIds || !g.standIds.length || g.standIds.includes(standId)));
+    if (urlPath === "/api/stand/board" && method === "GET") {
+      const now = Date.now();
+      const evs = (await store.upcomingEvents(me.id)).filter((e) => e.venueId && grants.some((g) => g.venueId === e.venueId) && new Date(e.startsAt).getTime() - 3 * 3600e3 < now);
+      const lines = await store.eventLines(evs.map((e) => e.id));
+      const venues = [];
+      for (const g of grants) {
+        const v = await store.venueById(g.venueId);
+        if (!v) continue;
+        const stands = v.stands.filter((s) => !s.hidden && (!g.standIds || !g.standIds.length || g.standIds.includes(s.id)));
+        venues.push({ id: v.id, name: v.name, stands: stands.map(publicStand), events: evs.filter((e) => e.venueId === v.id).map((e) => ({ id: e.id, name: e.name, startsAt: e.startsAt, endsAt: e.endsAt })) });
+      }
+      const evVenue = new Map(evs.map((e) => [e.id, e.venueId]));
+      const orders = lines
+        .filter((l) => l.standId && allowed(evVenue.get(l.eventId), l.standId) && l.status !== "open")
+        .filter((l) => !l.purchasedAt || now - new Date(l.purchasedAt).getTime() < 30 * 60 * 1000)
+        .filter((l) => !(l.status === "done" && !l.purchasedAt))
+        .map((l) => ({
+          id: l.id, no: orderNo(l), eventId: l.eventId, standId: l.standId, stand: l.place, item: l.item, qty: l.qty || 1, details: l.itemDetails || "",
+          backup: l.itemBackup || "", extraItems: (l.extraItems || []).map((x) => ({ item: x.item, details: x.details || "", qty: x.qty || 1 })),
+          waiter: firstName(l.waiterName || ""), waiterStage: l.status, prepStatus: l.prepStatus || "new", prepAt: l.prepAt, claimedAt: l.claimedAt, pickedUpAt: l.purchasedAt || null,
+        }));
+      return send(res, 200, { venues, orders, staff: { name: firstName(me.name) } });
+    }
+    const spm = urlPath.match(/^\/api\/stand\/lines\/(\d+)\/prep$/);
+    if (spm && method === "POST") {
+      const l = await store.getLine(Number(spm[1]));
+      const ev = l && l.eventId ? await store.eventById(l.eventId) : null;
+      if (!l || !ev || !l.standId || !allowed(ev.venueId, l.standId)) fail(404, "That order isn't at your stand.");
+      if (l.purchasedAt || ["done", "open"].includes(l.status)) fail(409, "That order has already been picked up or isn't active.");
+      const b = await readBody(req);
+      const st = String(b.status || "");
+      if (!PREP_STATES.includes(st)) fail(400, "Pick a status.");
+      const updated = await store.updateLineAny(l.id, { prepStatus: st, prepAt: new Date() });
+      const item = `${l.qty > 1 ? `${l.qty} × ` : ""}${l.item}`;
+      if (st === "ready" && l.waiterId) ping(l.waiterId, `Order ${orderNo(l)} is ready`, `${item} is ready at ${l.place}. Show ${orderNo(l)} at the counter and pay as usual.`);
+      if (st === "unavailable") {
+        if (l.waiterId) ping(l.waiterId, `${l.place} can't make ${orderNo(l)}`, `The stand says ${item} isn't available. Don't buy it; the booker has been told.`);
+        ping(l.ownerId, "Item unavailable", `${l.place} says ${item} isn't available right now. Edit your request or cancel it.`);
+      }
+      return send(res, 200, { ok: true, prepStatus: updated.prepStatus });
+    }
+    if (urlPath === "/api/stand/menu" && method === "POST") {
+      const b = await readBody(req);
+      const v = await store.venueById(Number(b.venueId));
+      const s = v && v.stands.find((x) => x.id === String(b.standId));
+      if (!s || !allowed(v.id, s.id)) fail(404, "That stand isn't yours.");
+      const m = (s.menu || []).find((x) => x.id === String(b.itemId));
+      if (!m) fail(404, "That item isn't on the menu.");
+      m.soldOut = !!b.soldOut;
+      await store.setVenueStands(v.id, v.stands);
+      return send(res, 200, { ok: true });
+    }
+    fail(404, "Not found.");
+  }
+
   // ---- admin (only for emails listed in the ADMIN_EMAILS variable) ----
   if (urlPath.startsWith("/api/admin/")) {
     if (!isAdmin(me)) fail(404, "Not found.");
@@ -1593,6 +1668,37 @@ async function api(req, res, urlPath, query) {
       geocode(venue).then((g) => g && store.setEventGeo(ev.id, g)).catch(() => {});
       return send(res, 201, { event: publicEvent(ev) });
     }
+    // ---- venue staff: granted per person and per venue, only here ----
+    if (urlPath === "/api/admin/staff" && method === "GET") {
+      const out = [];
+      for (const g of await staffGrants()) {
+        const u = await store.userById(g.userId);
+        const v = await store.venueById(g.venueId);
+        out.push({ ...g, name: u ? u.name : "(deleted account)", email: u ? u.email : "", venueName: v ? v.name : "(deleted venue)",
+          standNames: v && g.standIds && g.standIds.length ? v.stands.filter((s) => g.standIds.includes(s.id)).map((s) => s.name) : [] });
+      }
+      return send(res, 200, { staff: out });
+    }
+    if (urlPath === "/api/admin/staff" && method === "POST") {
+      const b = await readBody(req);
+      const u = await store.userByEmail(String(b.email || "").trim().toLowerCase());
+      if (!u) fail(404, "No account uses that email. Ask them to sign up at waitforme.io first, then add them here.");
+      const v = await store.venueById(Number(b.venueId));
+      if (!v) fail(404, "Pick a venue.");
+      const ids = Array.isArray(b.standIds) ? b.standIds.map(String).filter((id) => v.stands.some((s) => s.id === id)) : [];
+      const grants = (await staffGrants()).filter((g) => !(g.userId === u.id && g.venueId === v.id));
+      grants.push({ userId: u.id, venueId: v.id, standIds: ids, grantedAt: new Date().toISOString(), grantedBy: me.email });
+      await saveGrants(grants);
+      return send(res, 200, { ok: true });
+    }
+    if (urlPath === "/api/admin/staff/revoke" && method === "POST") {
+      const b = await readBody(req);
+      const before = await staffGrants();
+      const after = before.filter((g) => !(g.userId === Number(b.userId) && g.venueId === Number(b.venueId)));
+      if (after.length === before.length) fail(404, "That access was already removed.");
+      await saveGrants(after);
+      return send(res, 200, { ok: true });
+    }
     // ---- venues and stand lists ----
     if (urlPath === "/api/admin/venues" && method === "GET") return send(res, 200, { venues: await store.listVenues() });
     if (urlPath === "/api/admin/venues" && method === "POST") {
@@ -1600,7 +1706,7 @@ async function api(req, res, urlPath, query) {
       const v = await store.createVenue({ name: text(b.name, "the venue name", 100), address: text(b.address, "the venue's city or address", 160) });
       return send(res, 201, { venue: v });
     }
-    const avm = urlPath.match(/^\/api\/admin\/venues\/(\d+)\/(stands|stand|delete)$/);
+    const avm = urlPath.match(/^\/api\/admin\/venues\/(\d+)\/(stands|stand|delete|menu)$/);
     if (avm && method === "POST") {
       const v = await store.venueById(Number(avm[1]));
       if (!v) fail(404, "That venue doesn't exist.");
@@ -1625,6 +1731,25 @@ async function api(req, res, urlPath, query) {
         }
         const saved = await store.setVenueStands(v.id, v.stands);
         return send(res, 200, { venue: saved, added });
+      }
+      if (avm[2] === "menu") {
+        // A stand's menu, one item per line: Name | Price. Replaces the menu; items keep their sold-out flag by name.
+        const s = v.stands.find((x) => x.id === String(b.standId));
+        if (!s) fail(404, "That stand doesn't exist.");
+        const rows = String(b.text || "").split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+        if (rows.length > 150) fail(400, "A stand's menu can have up to 150 items.");
+        const old = new Map((s.menu || []).map((m) => [m.name.toLowerCase(), m]));
+        const menu = [];
+        for (const row of rows) {
+          const [name, priceTxt = ""] = row.split(/\t|\s*\|\s*/).map((x) => x.trim());
+          if (!name || /^(item|name)$/i.test(name)) continue;
+          const price = Number(String(priceTxt).replace(/[$,\s]/g, ""));
+          if (!(price > 0 && price <= MAX_ITEM)) fail(400, `Add a price for "${name.slice(0, 40)}" (for example: ${name.slice(0, 20)} | 12.50).`);
+          const prev = old.get(name.toLowerCase());
+          menu.push({ id: prev ? prev.id : crypto.randomBytes(4).toString("hex"), name: name.slice(0, 80), price: Math.round(price * 100) / 100, soldOut: prev ? !!prev.soldOut : false });
+        }
+        s.menu = menu;
+        return send(res, 200, { venue: await store.setVenueStands(v.id, v.stands), items: menu.length });
       }
       // stand: hide or show one stand
       const s = v.stands.find((x) => x.id === String(b.standId));
@@ -1738,7 +1863,7 @@ async function api(req, res, urlPath, query) {
 
 // ---------- static files ----------
 // Privacy, terms, and support pages. SUPPORT_EMAIL and COMPANY_NAME come from Railway variables.
-const PAGES = { "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html", "/dashboard": "dashboard.html", "/reset": "reset.html" };
+const PAGES = { "/stand": "stand.html", "/privacy": "privacy.html", "/terms": "terms.html", "/support": "support.html", "/admin": "admin.html", "/dashboard": "dashboard.html", "/reset": "reset.html" };
 function servePage(res, file) {
   fs.readFile(path.join(ROOT, file), "utf8", (err, html) => {
     if (err) return res.writeHead(404, { "Content-Type": "text/plain" }).end("Not found");

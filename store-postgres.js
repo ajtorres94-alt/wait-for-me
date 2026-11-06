@@ -179,6 +179,8 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS add_on BOOLEAN NOT NULL DEFAULT false
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS extra_items TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS run_leaves_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS boost NUMERIC(6,2) NOT NULL DEFAULT 0;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_status TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -281,7 +283,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -374,6 +376,8 @@ const COLS = {
   addOn: "add_on",
   runLeavesAt: "run_leaves_at",
   boost: "boost",
+  prepStatus: "prep_status",
+  prepAt: "prep_at",
   extraItems: "extra_items",
 };
 const USER_COLS = {
@@ -606,6 +610,12 @@ module.exports = {
     else await pool.query("DELETE FROM push_subs WHERE endpoint = $1", [endpoint]);
   },
   // Pickups not bought yet (open or with a waiter), posted in the last 12 hours: for grouping orders into runs.
+  // Pickups at these events with a waiter on them (for venue Stand Boards), from the last 12 hours.
+  async eventLines(eventIds) {
+    if (!eventIds.length) return [];
+    const r = await pool.query(`${LINE_SELECT} WHERE l.event_id = ANY($1::int[]) AND l.kind = 'pickup' AND l.waiter_id IS NOT NULL AND l.created_at > now() - interval '12 hours' ORDER BY l.created_at ASC LIMIT 1000`, [eventIds]);
+    return r.rows.map(line);
+  },
   async activePickups() {
     const r = await pool.query(`${LINE_SELECT} WHERE l.kind = 'pickup' AND l.status IN ('open','claimed','enroute','inline','nearfront') AND l.purchased_at IS NULL AND l.created_at > now() - interval '12 hours' LIMIT 500`);
     return r.rows.map(line);

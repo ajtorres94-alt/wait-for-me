@@ -28,6 +28,7 @@ td.wrap{white-space:normal;min-width:200px}
 .tag.warn{background:var(--warn-bg);color:var(--warn)}
 button{font:inherit;font-size:13px;font-weight:700;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 10px;min-height:36px;cursor:pointer}
 button.bad{border-color:var(--bad);color:var(--bad)}
+select,textarea{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
 input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);min-width:0}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #msg{min-height:22px;font-weight:600}
@@ -49,6 +50,17 @@ input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8
       <button type="submit">Add venue</button>
     </form>
     <div id="venues"></div>
+  </section>
+  <section class="card"><h2>Venue staff (Stand Board)</h2>
+    <p class="muted">Only people you add here can open a Stand Board at <b>waitforme.io/stand</b>. They sign up for a normal account first; you then link it to one venue, and optionally to specific stands. Remove access any time.</p>
+    <form id="stForm" class="row">
+      <label class="sr" for="stEmail">Staff email</label><input id="stEmail" type="email" placeholder="Their account email" maxlength="160">
+      <label class="sr" for="stVenue">Venue</label><select id="stVenue"></select>
+      <label class="sr" for="stStands">Stands</label><select id="stStands" multiple size="3" title="Leave empty for every stand at the venue"></select>
+      <button type="submit">Give Stand Board access</button>
+    </form>
+    <p class="muted">Stands: leave none selected for every stand at the venue (hold Ctrl or Cmd to pick several).</p>
+    <div id="staff" class="muted">Loading…</div>
   </section>
   <section class="card"><h2>Events</h2>
     <p class="muted">Add the shows and fairs you're focusing on. Bookers can tag requests with them, and waiters who tap "I'm here" get an alert for each new request.</p>
@@ -99,10 +111,24 @@ function renderVenues(){
     <button class="bad" data-vdel="${v.id}">${confirmKey==='vdel'+v.id?'Confirm delete':'Delete venue'}</button></div>
     ${v.stands.length?`<div class="scroll"><table><thead><tr><th>Stand</th><th>Where</th><th>Sells</th><th>Notes</th><th></th></tr></thead><tbody>${v.stands.map(s=>`<tr${s.hidden?' class="muted"':''}><td>${esc(s.name)}</td><td>${esc(s.location)}</td><td>${esc(s.sells)}</td><td class="wrap">${esc(s.notes)}</td>
       <td><button data-vs="${v.id}" data-sid="${s.id}" data-hide="${s.hidden?'0':'1'}">${s.hidden?'Show':'Hide'}</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No stands yet.</p>'}
+    ${v.stands.length?`<details style="margin:10px 0"><summary><b>Stand menus</b> <span class="muted">(${v.stands.filter(s=>(s.menu||[]).length).length} of ${v.stands.length} stands have one)</span></summary>
+      <p class="muted">A menu lets fans tap an item to order it, and sends orders to the Stand Board by name. One item per line: Name | Price. Saving replaces the stand's menu.</p>
+      <div class="row"><label class="sr" for="vm-s-${v.id}">Stand</label><select id="vm-s-${v.id}" data-vmsel="${v.id}">${v.stands.map(s=>`<option value="${s.id}">${esc(s.name)} (${(s.menu||[]).length} items)</option>`).join('')}</select></div>
+      <label class="sr" for="vm-t-${v.id}">Menu</label><textarea id="vm-t-${v.id}" rows="5" style="width:100%;box-sizing:border-box;margin-top:6px" placeholder="Hot dog | 8.50&#10;Nachos | 12&#10;Bottled water | 6">${esc((v.stands[0].menu||[]).map(m=>m.name+' | '+m.price).join('\n'))}</textarea>
+      <div class="row"><button data-vmsave="${v.id}">Save this stand's menu</button></div></details>`:''}
     <label class="muted" for="vs-${v.id}">Add stands, one per line: Name | Where | Sells | Notes (only the name is required; you can paste rows from a spreadsheet)</label>
     <textarea id="vs-${v.id}" rows="4" style="width:100%;box-sizing:border-box" placeholder="Team Store | Section 112, main concourse | Merch | Limit 2 per person&#10;Portable merch cart | Section 120 | Merch&#10;Taco stand | Section 105 | Food"></textarea>
     <div class="row"><button data-vadd="${v.id}">Add these stands</button></div></div>`).join(''):'<p class="muted">No venues yet.</p>'}
-async function loadExtra(){try{VN=(await call('venues')).venues;renderVenues();EV=(await call('events')).events;renderEvents();REP=(await call('reports')).reports;renderReports()}catch(e){}}
+let ST=[];
+function renderStaffForm(){const vs=$('#stVenue'),keep=vs.value;vs.innerHTML='<option value="">Venue</option>'+VN.map(v=>`<option value="${v.id}">${esc(v.name)}</option>`).join('');if(keep)vs.value=keep;
+  const v=VN.find(x=>String(x.id)===vs.value);$('#stStands').innerHTML=v?v.stands.filter(s=>!s.hidden).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(''):''}
+function renderStaff(){$('#staff').innerHTML=ST.length?`<div class="scroll"><table><thead><tr><th>Person</th><th>Venue</th><th>Stands</th><th>Added</th><th></th></tr></thead><tbody>${ST.map(g=>`<tr><td><b>${esc(g.name)}</b><div class="muted">${esc(g.email)}</div></td><td>${esc(g.venueName)}</td><td class="wrap">${g.standNames.length?esc(g.standNames.join(', ')):'All stands'}</td><td>${when(g.grantedAt)}<div class="muted">by ${esc(g.grantedBy||'')}</div></td>
+  <td><button class="bad" data-strev="${g.userId}" data-stv="${g.venueId}">${confirmKey==='st'+g.userId+'-'+g.venueId?'Confirm remove':'Remove access'}</button></td></tr>`).join('')}</tbody></table></div>`:'<p class="muted">No venue staff yet.</p>'}
+async function loadExtra(){try{VN=(await call('venues')).venues;renderVenues();renderStaffForm();ST=(await call('staff')).staff;renderStaff();EV=(await call('events')).events;renderEvents();REP=(await call('reports')).reports;renderReports()}catch(e){}}
+$('#stVenue').addEventListener('change',renderStaffForm);
+$('#stForm').addEventListener('submit',async e=>{e.preventDefault();try{const standIds=[...$('#stStands').selectedOptions].map(o=>o.value);
+  await post('staff',{email:$('#stEmail').value,venueId:+$('#stVenue').value,standIds});$('#stEmail').value='';say('Access added. They can sign in at waitforme.io/stand.');await loadExtra()}catch(err){say(err.message)}});
+document.addEventListener('change',e=>{const id=e.target.dataset&&e.target.dataset.vmsel;if(!id)return;const v=VN.find(x=>String(x.id)===id),st=v&&v.stands.find(s=>s.id===e.target.value);$('#vm-t-'+id).value=st?(st.menu||[]).map(m=>m.name+' | '+m.price).join('\n'):''});
 $('#vnForm').addEventListener('submit',async e=>{e.preventDefault();try{await post('venues',{name:$('#vnName').value,address:$('#vnAddr').value});e.target.reset();say('Venue added. Paste its stands below.');loadExtra()}catch(err){say(err.message)}});
 $('#evForm').addEventListener('submit',async e=>{e.preventDefault();const st=$('#evStart').value,en=$('#evEnd').value;
   try{if(!st||!en)throw new Error('Add when the event starts and ends.');
@@ -129,6 +155,9 @@ async function load(){try{data=await call('overview');render();say('')}catch(e){
 document.addEventListener('click',async e=>{
   const b=e.target.closest('button');if(!b)return;
   try{
+    if(b.dataset.vmsave){const v=b.dataset.vmsave,r=await post(`venues/${v}/menu`,{standId:$('#vm-s-'+v).value,text:$('#vm-t-'+v).value});say(`Menu saved: ${r.items} item${r.items===1?'':'s'}.`);const keep=$('#vm-s-'+v).value;await loadExtra();const sel=$('#vm-s-'+v);if(sel){sel.value=keep;sel.dispatchEvent(new Event('change',{bubbles:true}))}return}
+    if(b.dataset.strev){const k='st'+b.dataset.strev+'-'+b.dataset.stv;if(confirmKey!==k){confirmKey=k;renderStaff();return}
+      await post('staff/revoke',{userId:+b.dataset.strev,venueId:+b.dataset.stv});confirmKey=null;say('Access removed.');await loadExtra();return}
     if(b.dataset.vadd){const v=b.dataset.vadd,r=await post(`venues/${v}/stands`,{text:$('#vs-'+v).value});say(`Added ${r.added} stand${r.added===1?'':'s'}.`);await loadExtra();return}
     if(b.dataset.vs){await post(`venues/${b.dataset.vs}/stand`,{standId:b.dataset.sid,hidden:b.dataset.hide==='1'});await loadExtra();return}
     if(b.dataset.vdel){const k='vdel'+b.dataset.vdel;if(confirmKey!==k){confirmKey=k;renderVenues();return}

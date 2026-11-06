@@ -110,7 +110,7 @@ module.exports = {
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
       payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
       kind: "spot", item: "", itemDetails: "", qty: 1, itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
-      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, pricingV: 1, bundled: false, bundleSize: 0, receiptSha: null, receiptDhash: null, standId: null, seatSection: null, seatRow: null, seatNumber: null, meetSpot: null, addOn: false, extraItems: null, runLeavesAt: null, boost: 0, ...f,
+      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, pricingV: 1, bundled: false, bundleSize: 0, receiptSha: null, receiptDhash: null, standId: null, seatSection: null, seatRow: null, seatNumber: null, meetSpot: null, addOn: false, extraItems: null, runLeavesAt: null, boost: 0, prepStatus: null, prepAt: null, ...f,
     };
     lines.push(l);
     return withNames(l);
@@ -229,6 +229,10 @@ module.exports = {
   async deletePushSub(endpoint, userId) {
     const s = pushSubs.get(endpoint);
     if (s && (!userId || s.userId === userId)) pushSubs.delete(endpoint);
+  },
+  async eventLines(eventIds) {
+    const since = Date.now() - 12 * 3600e3;
+    return lines.filter((l) => eventIds.includes(l.eventId) && l.kind === "pickup" && l.waiterId && +new Date(l.createdAt) > since).map(withNames);
   },
   async activePickups() {
     const since = Date.now() - 12 * 3600e3;

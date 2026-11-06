@@ -183,6 +183,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .wheel::-webkit-scrollbar{display:none}
 .wheel>div{height:36px;display:grid;place-items:center;scroll-snap-align:center;font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:16px;color:var(--muted);cursor:pointer;white-space:nowrap}
 .wheel>div.on{color:var(--ink);font-weight:700;font-size:17px}
+.itembox .prep b{color:var(--good)}.itembox .prep.warn b{color:var(--warn)}
 .pill.boost{background:color-mix(in srgb,var(--ticket) 45%,transparent);color:var(--ink);margin-left:6px}
 .wheel>div.off{opacity:.35;text-decoration:line-through}.chip:disabled{opacity:.45;cursor:not-allowed}
 .tut{position:fixed;inset:0;z-index:30;background:var(--bg);display:flex;flex-direction:column;
@@ -428,6 +429,8 @@ function itemBox(j,mode){
   if(kindOf(j)!=='pickup')return'';
   const bought=!!j.purchasedAt&&j.outcome!=='sold_out';
   const rows=[`<div><span>Buy</span><b>${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)}</b></div>`];
+  if(j.prepStatus&&j.prepStatus!=='new'&&!j.purchasedAt&&(mode==='waiter'||mode==='customer')){const P={preparing:['Stand is preparing it',''],ready:[mode==='waiter'?`Ready: show #${j.id} at the counter`:'Ready at the stand',''],unavailable:['Stand says it\'s unavailable',' warn']}[j.prepStatus];
+    if(P)rows.push(`<div class="prep${P[1]}"><span>Order #${j.id}</span><b>${P[0]}</b></div>`)}
   (j.extraItems||[]).forEach(x=>rows.push(`<div><span>Also buy</span><b>${x.qty>1?`${x.qty} × `:''}${esc(x.item)}${x.details?` <span class="meta">(${esc(x.details)})</span>`:''}</b></div>`));
   if(j.itemDetails)rows.push(`<div><span>Details</span><span>${esc(j.itemDetails)}</span></div>`);
   if(j.itemBackup)rows.push(`<div><span>If sold out</span><span>${esc(j.itemBackup)}</span></div>`);
@@ -848,7 +851,10 @@ function standPicker(){const st=evStands(postEvent);if(!st.length)return'';
   const runs=new Map(STAND_RUNS.filter(r=>r.eventId===postEvent).map(r=>[r.place.trim().toLowerCase(),r]));
   const rows=st.map(x=>{const g=runs.get(x.name.trim().toLowerCase());return{...x,orders:g?g.orders:0,inLine:!!(g&&g.waiterInLine),run:g||{}}}).sort((a,b)=>b.orders-a.orders||a.name.localeCompare(b.name));
   return`<div class="field"><label for="f-stand">Which stand?</label><select id="f-stand" class="standsel"><option value="">Choose a stand</option>${rows.map(x=>`<option value="${x.id}"${postStand===x.id?' selected':''}>${esc(x.name)}${x.location?' · '+esc(x.location):''}${x.orders?' · '+runTag(x.run,x.orders):''}</option>`).join('')}<option value="other"${postStand==='other'?' selected':''}>Other / not listed</option></select>
-  <small id="h-stand">${standHint()}</small></div>`}
+  <small id="h-stand">${standHint()}</small><div id="stand-menu">${menuChips()}</div></div>`}
+// The stand's menu (when the venue gave us one): tap an item to fill in the name and price.
+function menuChips(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x||!(x.menu||[]).length)return'';
+  return`<div class="filters" role="group" aria-label="${esc(x.name)} menu" style="margin-top:6px">${x.menu.map(m=>`<button type="button" class="chip" data-menu="${m.id}"${m.soldOut?' disabled title="Sold out"':''}>${esc(m.name)} · ${money(m.price)}${m.soldOut?' · sold out':''}</button>`).join('')}</div><small>Tap an item to fill it in. The stand gets your order ahead of time, so it can be ready when your waiter arrives.</small>`}
 function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x)return'Pick where to buy it. Orders at the same stand can be bought together, and everyone saves on waiter time.';
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
 function runTag(r,n){if(r.leavesAt&&new Date(r.leavesAt)>Date.now()&&!r.waiterInLine)return`waiter leaving in ${leftTxt(r.leavesAt)}: join, save ${Math.round(groupDisc(n+1)*100)}%`;return r.waiterInLine?`waiter in line now: join their run, save ${Math.round(groupDisc(n+1)*100)}%`:r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
@@ -859,7 +865,7 @@ function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pic
 function setEvent(id){const was=postEvent;postEvent=id||null;if(!editing&&postDay==='today'&&!was!==!postEvent&&$('#w-hr')){setWhen(postEvent?nowSlot():firstNoFee());syncWheels()}const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
   const ev=EVENTS.find(e=>e.id===postEvent);if(ev&&!$('#f-place').value.trim())$('#f-place').value=ev.venue;$('#h-event').innerHTML=eventHint();const hr=$('#h-runs');if(hr)hr.innerHTML=runChips();
   postStand='';const sp=$('#stand-pick');if(sp)sp.innerHTML=standPicker();const pf=$('#place-field');if(pf)pf.hidden=false}
-function setStand(id){postStand=id;const pf=$('#place-field');const x=evStands(postEvent).find(s=>s.id===id);if(pf)pf.hidden=!!x;if(x)$('#f-place').value=x.name;else if(id==='other'){const ev=EVENTS.find(e=>e.id===postEvent);if(ev&&evStands(postEvent).some(s=>s.name===$('#f-place').value))$('#f-place').value=ev.venue}const h=$('#h-stand');if(h)h.innerHTML=standHint()}
+function setStand(id){postStand=id;const pf=$('#place-field');const x=evStands(postEvent).find(s=>s.id===id);if(pf)pf.hidden=!!x;const sm=$('#stand-menu');if(sm)sm.innerHTML=menuChips();if(x)$('#f-place').value=x.name;else if(id==='other'){const ev=EVENTS.find(e=>e.id===postEvent);if(ev&&evStands(postEvent).some(s=>s.name===$('#f-place').value))$('#f-place').value=ev.venue}const h=$('#h-stand');if(h)h.innerHTML=standHint()}
 // Switch the post form between the two kinds without losing what's been typed.
 function setPostKind(k){postKind=k;const f=$('#postForm');if(!f)return;
   f.querySelectorAll('[data-kind]').forEach(b=>b.setAttribute('aria-checked',b.dataset.kind===k));
@@ -1238,6 +1244,7 @@ function render(){
     $('#postForm').querySelectorAll('[data-event]').forEach(b=>b.onclick=()=>setEvent(+b.dataset.event||null));
     $('#postForm').addEventListener('change',e=>{if(e.target.id==='f-stand')setStand(e.target.value);const x=e.target.dataset&&e.target.dataset.x;if(x!==undefined){postExtras[+x][e.target.dataset.k]=e.target.value;updateQuote()}});
     $('#postForm').addEventListener('input',e=>{const x=e.target.dataset&&e.target.dataset.x;if(x!==undefined){postExtras[+x][e.target.dataset.k]=e.target.value;updateQuote()}});
+    $('#postForm').addEventListener('click',e=>{const mi=e.target.closest('[data-menu]');if(mi){const x=evStands(postEvent).find(s=>s.id===postStand),m=x&&(x.menu||[]).find(y=>y.id===mi.dataset.menu);if(m){$('#f-item').value=m.name;$('#f-price').value=m.price;updateQuote()}return}});
     $('#postForm').addEventListener('click',e=>{const a=e.target.closest('[data-xadd]'),rm=e.target.closest('[data-xrm]');if(!a&&!rm)return;if(a)postExtras.push({item:'',details:'',qty:1,price:''});else postExtras.splice(+rm.dataset.xrm,1);$('#extras').innerHTML=extrasHTML();updateQuote();if(a){const i=$('#x-item-'+(postExtras.length-1));if(i)i.focus()}});
     $('#postForm').addEventListener('click',e=>{const c=e.target.closest('[data-runplace]');if(!c)return;const sx=evStands(postEvent).find(x=>x.name.trim().toLowerCase()===c.dataset.runplace.trim().toLowerCase());if(sx){setStand(sx.id);const sel=$('#f-stand');if(sel)sel.value=sx.id}$('#f-place').value=c.dataset.runplace;c.parentNode.querySelectorAll('[data-runplace]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));toast(`Posting at ${c.dataset.runplace}. You'll join that group run if a waiter buys them together.`)});
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));

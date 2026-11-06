@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stand Board · Wait For Me!</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" href="/icons/icon-192-v2.png">
+<style>
+:root{--bg:#EEF0F6;--surface:#fff;--ink:#1A1F3D;--muted:#5D6485;--line:#D9DCE8;--logo:#FFCD44;--good:#1D8A55;--good-bg:#DDF3E7;--warn:#B45309;--warn-bg:#FDEBD3;--info:#2F45D8;--info-bg:#E2E6FC;--bad:#B42318;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#10132A;--surface:#1A1F3D;--ink:#ECEEF8;--muted:#A3A9C9;--line:#2D3359;--logo:#FFD561;--good:#5BD49A;--good-bg:#16382A;--warn:#F5A65B;--warn-bg:#3E2A14;--info:#9DABFF;--info-bg:#252C5A;--bad:#FF8A80;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;
+  padding:max(14px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 40px max(16px,env(safe-area-inset-left))}
+main{max-width:1400px;margin:0 auto}
+.top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.stub{background:var(--logo);color:#1A1F3D;font-weight:900;padding:3px 7px;border-radius:3px;transform:rotate(-4deg);font-size:12px}
+h1{font-size:22px;margin:0}
+.muted{color:var(--muted);font-size:14px}
+.sp{flex:1}
+.live{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--good)}
+.dot.off{background:var(--bad)}
+select,input,button{font:inherit}
+select,input{padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface);color:var(--ink);min-height:44px}
+button{font-weight:700;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:10px;padding:10px 14px;min-height:48px;cursor:pointer}
+button.go{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button.ok{background:var(--good);color:#fff;border-color:var(--good)}
+button.bad{border-color:var(--bad);color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+.board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media (max-width:1000px){.board{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:620px){.board{grid-template-columns:1fr}}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px;min-height:120px}
+.col h2{font-size:15px;margin:2px 4px 8px;display:flex;justify-content:space-between;align-items:center}
+.count{font-size:13px;background:var(--line);border-radius:99px;padding:1px 9px}
+.order{border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px;background:var(--bg)}
+.order.fresh{border-color:var(--info);box-shadow:0 0 0 2px var(--info-bg)}
+.no{font-size:22px;font-weight:900;font-variant-numeric:tabular-nums}
+.items{margin:6px 0;padding:0;list-style:none}
+.items li{font-weight:700}
+.items li small{display:block;font-weight:500;color:var(--muted)}
+.meta{font-size:13px;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.stage{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--info-bg);color:var(--info)}
+.stage.here{background:var(--good-bg);color:var(--good)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.btns button{flex:1}
+.empty{color:var(--muted);font-size:14px;padding:8px 4px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;max-width:460px;margin:40px auto}
+.card form{display:flex;flex-direction:column;gap:10px}
+.msg{min-height:22px;font-weight:600;color:var(--bad)}
+details.menu{margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 14px}
+details.menu summary{font-weight:700;cursor:pointer;min-height:36px;display:flex;align-items:center}
+.mi{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
+.mi:last-child{border-bottom:0}
+.mi.out span{text-decoration:line-through;color:var(--muted)}
+.mi button{min-height:40px;padding:6px 12px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<main id="app"><p class="muted">Loading…</p></main>
+<script>
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=n=>'$'+Number(n).toFixed(2);
+async function api(path,opts={}){const r=await fetch('/api'+path,{method:opts.method||'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:opts.body?JSON.stringify(opts.body):undefined});
+  let j={};try{j=await r.json()}catch{}if(!r.ok){const e=new Error(j.error||'Something went wrong.');e.status=r.status;e.code=j.code;throw e}return j}
+let B=null,standFilter=localStorage.getItem('wfm_stand')||'',seen=new Set(),first=true,online=true,busy=new Set(),confirmOut=null;
+const STAGE={claimed:['Waiter assigned',''],enroute:['Waiter on the way',''],inline:['Waiter in line','here'],nearfront:['Waiter at the counter','here'],handoff:['Picked up','here'],done:['Picked up','here']};
+const ago=t=>{if(!t)return'';const m=Math.max(0,Math.round((Date.now()-new Date(t))/60000));return m<1?'just now':m<60?m+' min ago':Math.floor(m/60)+' hr ago'};
+
+function signIn(msg){
+  $('#app').innerHTML=`<div class="card"><div class="top"><span class="stub">No.1</span><h1>Stand Board</h1></div>
+   <p class="muted">For venue staff working with Wait For Me!. Sign in with the account Wait For Me! set up for your stand.</p>
+   <form id="si"><label for="em">Email</label><input id="em" type="email" autocomplete="username" required>
+   <label for="pw">Password</label><input id="pw" type="password" autocomplete="current-password" required>
+   <button class="go" type="submit">Sign in</button><div class="msg" role="alert">${esc(msg||'')}</div></form></div>`;
+  $('#si').addEventListener('submit',async e=>{e.preventDefault();try{await api('/login',{method:'POST',body:{email:$('#em').value,password:$('#pw').value}});load()}catch(err){signIn(err.message)}});
+}
+function notStaff(){
+  $('#app').innerHTML=`<div class="card"><div class="top"><span class="stub">No.1</span><h1>Stand Board</h1></div>
+   <p>This account isn't set up for a stand yet.</p><p class="muted">Wait For Me! adds venue staff one person at a time. Ask your Wait For Me! contact to add the email you signed up with, then reload this page.</p>
+   <button id="so">Sign out</button></div>`;
+  $('#so').onclick=async()=>{await api('/logout',{method:'POST'}).catch(()=>{});signIn()};
+}
+function beep(){try{const c=new (window.AudioContext||window.webkitAudioContext)(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=.08;o.start();setTimeout(()=>{o.stop();c.close()},180)}catch{}}
+
+function orderCard(o){
+  const st=STAGE[o.waiterStage]||['',''],picked=!!o.pickedUpAt,fresh=!seen.has(o.id)&&!first;
+  const items=[`<li>${o.qty>1?o.qty+' × ':''}${esc(o.item)}${o.details?`<small>${esc(o.details)}</small>`:''}${o.backup?`<small>If out: ${esc(o.backup)}</small>`:''}</li>`,
+    ...o.extraItems.map(x=>`<li>${x.qty>1?x.qty+' × ':''}${esc(x.item)}${x.details?`<small>${esc(x.details)}</small>`:''}</li>`)].join('');
+  let btns='';
+  if(!picked){const dis=busy.has(o.id)?' disabled':'';
+    if(o.prepStatus==='new')btns=`<button class="go" data-prep="preparing" data-id="${o.id}"${dis}>Start preparing</button>`;
+    else if(o.prepStatus==='preparing')btns=`<button class="ok" data-prep="ready" data-id="${o.id}"${dis}>Mark ready</button>`;
+    else if(o.prepStatus==='ready')btns=`<button data-prep="preparing" data-id="${o.id}"${dis}>Not ready yet</button>`;
+    else if(o.prepStatus==='unavailable')btns=`<button data-prep="new" data-id="${o.id}"${dis}>We can make it after all</button>`;
+    if(o.prepStatus!=='unavailable')btns+=`<button class="bad" data-prep="unavailable" data-id="${o.id}"${dis}>${confirmOut===o.id?'Confirm: can\'t make it':'Can\'t make it'}</button>`}
+  return`<article class="order${fresh?' fresh':''}" aria-label="Order ${esc(o.no)}"><div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px"><span class="no">${esc(o.no)}</span><span class="stage${st[1]?' '+st[1]:''}">${picked?'Picked up':esc(st[0])}</span></div>
+    <ul class="items">${items}</ul>
+    <div class="meta"><span>Waiter: <b>${esc(o.waiter||'—')}</b></span>${B.venues.some(v=>v.stands.length>1)?`<span>${esc(o.stand)}</span>`:''}<span>${picked?'picked up '+ago(o.pickedUpAt):'ordered '+ago(o.claimedAt)}</span></div>
+    ${btns?`<div class="btns">${btns}</div>`:''}</article>`}
+
+function render(){
+  const stands=B.venues.flatMap(v=>v.stands.map(s=>({...s,venueId:v.id,venueName:v.name})));
+  if(standFilter&&!stands.some(s=>s.id===standFilter))standFilter='';
+  const os=B.orders.filter(o=>!standFilter||o.standId===standFilter);
+  const cols=[['New orders',os.filter(o=>!o.pickedUpAt&&o.prepStatus==='new')],['Preparing',os.filter(o=>!o.pickedUpAt&&o.prepStatus==='preparing')],
+    ['Ready for pickup',os.filter(o=>!o.pickedUpAt&&o.prepStatus==='ready')],['Done / can\'t make',os.filter(o=>o.pickedUpAt||o.prepStatus==='unavailable')]];
+  const evs=B.venues.flatMap(v=>v.events);
+  const menuStands=stands.filter(s=>(!standFilter||s.id===standFilter)&&(s.menu||[]).length);
+  $('#app').innerHTML=`<div class="top"><span class="stub">No.1</span><h1>Stand Board</h1><span class="muted">${esc(B.venues.map(v=>v.name).join(', '))}</span><span class="sp"></span>
+    ${stands.length>1?`<label class="sr" for="sf">Stand</label><select id="sf"><option value="">All my stands</option>${stands.map(s=>`<option value="${s.id}"${s.id===standFilter?' selected':''}>${esc(s.name)}</option>`).join('')}</select>`:''}
+    <span class="live"><span class="dot${online?'':' off'}"></span>${online?'Live':'Reconnecting…'}</span><button id="so" style="min-height:40px">Sign out</button></div>
+    ${evs.length?`<p class="muted">${evs.map(e=>esc(e.name)).join(' · ')}. Orders appear here as soon as a waiter takes them. Mark them ready and the waiter gets an alert; they show the order number at the counter and pay as usual.</p>`
+      :`<p class="muted">No event at your venue right now. Orders show up here once an event is within 3 hours of starting.</p>`}
+    <div class="board">${cols.map(([t,list])=>`<section class="col" aria-label="${esc(t)}"><h2>${esc(t)}<span class="count">${list.length}</span></h2>${list.length?list.map(orderCard).join(''):'<div class="empty">Nothing here.</div>'}</section>`).join('')}</div>
+    ${menuStands.length?`<details class="menu"><summary>Menu: mark items sold out</summary>${menuStands.map(s=>`<h3 style="font-size:15px;margin:10px 0 4px">${esc(s.name)}</h3>${s.menu.map(m=>`<div class="mi${m.soldOut?' out':''}"><span>${esc(m.name)} · ${money(m.price)}</span><button data-sold="${m.soldOut?'0':'1'}" data-v="${s.venueId}" data-s="${s.id}" data-m="${m.id}">${m.soldOut?'Back in stock':'Sold out'}</button></div>`).join('')}`).join('')}</details>`:''}`;
+  const sf=$('#sf');if(sf)sf.onchange=()=>{standFilter=sf.value;try{localStorage.setItem('wfm_stand',standFilter)}catch{}render()};
+  $('#so').onclick=async()=>{await api('/logout',{method:'POST'}).catch(()=>{});B=null;signIn()};
+}
+
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('[data-prep],[data-sold]');if(!b||!B)return;
+  try{
+    if(b.dataset.prep){const id=+b.dataset.id,st=b.dataset.prep;
+      if(st==='unavailable'&&confirmOut!==id){confirmOut=id;render();return}
+      confirmOut=null;busy.add(id);render();await api(`/stand/lines/${id}/prep`,{method:'POST',body:{status:st}})}
+    else await api('/stand/menu',{method:'POST',body:{venueId:+b.dataset.v,standId:b.dataset.s,itemId:b.dataset.m,soldOut:b.dataset.sold==='1'}});
+  }catch(err){alertBar(err.message)}
+  finally{busy.clear();await refresh()}
+});
+function alertBar(t){const d=document.createElement('div');d.setAttribute('role','alert');d.textContent=t;d.style.cssText='position:fixed;left:16px;right:16px;bottom:16px;background:var(--bad);color:#fff;padding:12px 14px;border-radius:12px;font-weight:700;z-index:9';document.body.appendChild(d);setTimeout(()=>d.remove(),4000)}
+
+async function refresh(){
+  try{const nb=await api('/stand/board');online=true;
+    const fresh=nb.orders.filter(o=>!seen.has(o.id)&&!o.pickedUpAt);if(!first&&fresh.length)beep();
+    B=nb;render();nb.orders.forEach(o=>seen.add(o.id));first=false}
+  catch(err){if(err.status===401)return signIn();if(err.code==='not_staff')return notStaff();online=false;if(B)render()}
+}
+async function load(){first=true;seen=new Set();await refresh()}
+load();setInterval(()=>{if(B&&!document.hidden)refresh()},5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&B)refresh()});
+</script>
+</body>
+</html>
