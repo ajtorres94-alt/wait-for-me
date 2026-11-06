@@ -56,7 +56,12 @@ const SMALL_BUDGET = 25;
 const SMALL_MIN_PAY = 6;
 const SMALL_BASE_FEE = 1.49;
 const isSmall = (line) => kindOf(line) === "pickup" && Number(line.itemBudget) > 0 && Number(line.itemBudget) <= SMALL_BUDGET;
-const jobMinPay = (line) => (isSmall(line) ? SMALL_MIN_PAY : MIN_PAY);
+// Pricing v6 (Nov 5, 2026): no job minimum beyond the first 15-minute step (15 min at $17/hr = $4.25),
+// and an add-on costs the booker $5 in all: $3.51 to the waiter and the $1.49 fee.
+const v6 = (line) => Number(line.pricingV) >= 6;
+const V6_ADDON_PAY = 3.51;
+const jobMinPay = (line) => (v6(line) ? roundCents(MIN_HOURS * Number(line.rate)) : isSmall(line) ? SMALL_MIN_PAY : MIN_PAY);
+const addOnPay = (line) => (v6(line) ? V6_ADDON_PAY : ADDON_PAY);
 // Add-ons: an order a waiter picks up while already in line at that stand for someone else costs them
 // little extra time, so it's a flat $5 to the waiter and a $1.49 fee, with no time charge.
 const ADDON_PAY = 5;
@@ -115,14 +120,14 @@ function billing(line, now = Date.now()) {
   }
 
   const small = isSmall(line);
-  const jobMin = small ? SMALL_MIN_PAY : MIN_PAY;
+  const jobMin = jobMinPay(line);
   const addOn = !!line.addOn && billed > 0 && line.outcome !== "cancelled_late";
   const rawPay = roundCents(billed * line.rate);
   const minApplied = !addOn && billed > 0 && rawPay < jobMin;
-  const fullTimePay = addOn ? ADDON_PAY : minApplied ? jobMin : rawPay;
+  const fullTimePay = addOn ? addOnPay(line) : minApplied ? jobMin : rawPay;
   const grouped = !addOn && !!line.bundled && billed > 0 && line.outcome !== "cancelled_late";
   const discount = grouped ? groupDiscount(line.bundleSize) : 0;
-  const groupMin = small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
+  const groupMin = v6(line) ? 0 : small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
   const timePay = grouped ? Math.max(groupMin, roundCents(rawPay * (1 - discount))) : fullTimePay;
   const bundleSaving = grouped ? roundCents(fullTimePay - timePay) : 0;
   const runSize = Math.max(2, Number(line.bundleSize) || 2);
@@ -189,4 +194,4 @@ function maxTotal(line) {
   return total;
 }
 
-module.exports = { TINY_BUDGET, TINY_FEE, V3_BASE_FEE, V3_SMALL_BASE_FEE, SMALL_BUDGET, SMALL_MIN_PAY, SMALL_BASE_FEE, ADDON_PAY, ADDON_FEE, isSmall, GROUP_DISCOUNT, groupDiscount, GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };
+module.exports = { V6_ADDON_PAY, jobMinPay, addOnPay, TINY_BUDGET, TINY_FEE, V3_BASE_FEE, V3_SMALL_BASE_FEE, SMALL_BUDGET, SMALL_MIN_PAY, SMALL_BASE_FEE, ADDON_PAY, ADDON_FEE, isSmall, GROUP_DISCOUNT, groupDiscount, GROUP_MAX_HOURLY, BUNDLE_RATE, BUNDLE_MIN_PAY, BASE_FEE, PCT_FEE, FEE_CAP, MIN_PAY, RUSH_FEE, PICKUP_BOOKING_FEE, bookingFeeFor, MIN_HOURS, billing, maxTotal, kindOf, FEE, BOOKING_FEE, ITEM_FEE, MAX_ITEM };

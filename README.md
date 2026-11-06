@@ -154,3 +154,5 @@ Pricing v4 (`pricing_v = 4`, Nov 2026): solo orders with item limit ≤ $12.50 a
 ASAP (Nov 2026): there's no ASAP button. The form's time wheels allow any time from the current 15-minute slot on; the server marks a request `rush` (the $4 ASAP fee, paid to the waiter, none at events) when its start is within 30 minutes of posting. Editing without changing the time keeps the original fee. The quote shows a one-line summary with "What are the fees?" and "Most it could cost" expanders.
 
 Rate and boost (Nov 2026, `pricing_v = 5`): bookers no longer pick an hourly rate; every request posts at STANDARD_RATE $17/hr (server ignores `rate` on create/edit). Waiters can still counter-offer a higher rate (MIN_RATE 17) and set a minimum rate filter. Boosts ($2/$5) were retired the same day; new requests always have `boost` 0 (billing still honors any older boosted request).
+
+Pricing v6 (Nov 5, 2026, `pricing_v = 6`): no job minimum beyond the first 15-minute step (15 min × rate, $4.25 at $17/hr) for solo and group orders; an add-on costs the booker $5 all-in ($3.51 to the waiter + the $1.49 fee). Older requests keep their own minimums and add-on pay.

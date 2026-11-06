@@ -378,6 +378,8 @@ const keysFor=j=>kindOf(j)==='pickup'?KEYS.pickup:['nearfront','handoff'].includ
 const stLabel=j=>STAGE_TXT[kindOf(j)][j.status][0], stShort=j=>STAGE_TXT[kindOf(j)][j.status][1];
 const GROUP_DISCOUNT={2:.1,3:.15,4:.2,5:.25},groupDisc=n=>GROUP_DISCOUNT[Math.min(5,Math.max(2,+n||2))],BUNDLE_RATE=0.75,BUNDLE_MIN_PAY=6,BASE_FEE=2.99,PCT_FEE=0.09,FEE_CAP=12,SMALL_BUDGET=25,SMALL_MIN_PAY=6,SMALL_BASE_FEE=1.49,ADDON_PAY=5,ADDON_FEE=1.49,v2=j=>+j.pricingV>=2,svcV2=(t,i,small,v=3)=>r2(Math.min(FEE_CAP,(+v>=3?(small?1.99:3.49):(small?SMALL_BASE_FEE:BASE_FEE))+PCT_FEE*(t+i)));
 const isSmallJ=j=>kindOf(j)==='pickup'&&+j.itemBudget>0&&+j.itemBudget<=SMALL_BUDGET;
+// Pricing v6: the job minimum is the first 15-minute step; an add-on is $5 in all ($3.51 to the waiter + the $1.49 fee).
+const v6=j=>+j.pricingV>=6,V6_ADDON_PAY=3.51,jminOf=j=>v6(j)?r2(0.25*j.rate):(isSmallJ(j)?SMALL_MIN_PAY:MIN_PAY),addonPayOf=j=>v6(j)?V6_ADDON_PAY:ADDON_PAY;
 const GROUP_MAX_HOURLY=32,MIN_PAY=8,RUSH_FEE=4,MIN_HOURS=0.25,FEE=0.15,BOOKING_FEE=2.5,PICKUP_BOOKING_FEE=4.99,ITEM_FEE=0.03,MAX_ITEM=150;
 const r2=n=>Math.round(n*100)/100;
 const bookingFeeFor=j=>kindOf(j)==='pickup'?PICKUP_BOOKING_FEE:BOOKING_FEE;
@@ -414,7 +416,7 @@ function steps(j){const keys=keysFor(j),i=keys.indexOf(j.status);return`<ol clas
 const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pick it up':'Save my spot'}</span>${j.event?` <span class="kindtag ev">${esc(j.event.name)}</span>`:''}`;
 // The most a job could cost the booker (time at the approved hours, fees, and for pickups the item limit and drop-off fee).
 function upTo(j,hours){const h=hours??(j.bill?j.bill.approvedHours:j.hours),time=h*j.rate;
-  if(v2(j)){const sm=isSmallJ(j),tm=Math.max(sm?SMALL_MIN_PAY:MIN_PAY,time),bud=kindOf(j)==="pickup"?+j.itemBudget||0:0;const tny=+j.pricingV>=4&&kindOf(j)==='pickup'&&!(j.extraItems||[]).length&&bud>0&&bud<=12.5?0.99:0;return tm+bud+svcV2(tm,bud,sm,j.pricingV)+tny+(j.rush?RUSH_FEE:0)+(+j.boost||0)}
+  if(v2(j)){const sm=isSmallJ(j),tm=Math.max(jminOf(j),time),bud=kindOf(j)==="pickup"?+j.itemBudget||0:0;const tny=+j.pricingV>=4&&kindOf(j)==='pickup'&&!(j.extraItems||[]).length&&bud>0&&bud<=12.5?0.99:0;return tm+bud+svcV2(tm,bud,sm,j.pricingV)+tny+(j.rush?RUSH_FEE:0)+(+j.boost||0)}
   let t=Math.max(MIN_PAY,time)*(1+FEE)+bookingFeeFor(j)+(j.rush?RUSH_FEE:0);if(kindOf(j)==='pickup'){t+=(+j.itemBudget||0)*(1+ITEM_FEE);if(j.handoff==='dropoff')t+=+j.dropoffFee||0}return t}
 const waiterUpTo=j=>(j.bill?j.bill.approvedHours:j.hours)*j.rate+(kindOf(j)==='pickup'&&j.handoff==='dropoff'?+j.dropoffFee||0:0)+(j.rush?RUSH_FEE:0)+(+j.boost||0);
 function facts(j,mode){
@@ -451,7 +453,7 @@ function billOf(j){
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
-  const small=isSmallJ(j),jmin=small?SMALL_MIN_PAY:MIN_PAY,addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?ADDON_PAY:minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
+  const small=isSmallJ(j),jmin=jminOf(j),addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?addonPayOf(j):minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(v6(j)?0:small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
   const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,boost=+j.boost>0&&billed>0?+j.boost:0,pay=r2(wtime+drop+rush+boost),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small,j.pricingV):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),tiny=+j.pricingV>=4&&billed>0&&!addOn&&!grp&&!(j.extraItems||[]).length&&+j.itemBudget>0&&+j.itemBudget<=12.5?0.99:0,fee=r2(svc+book+ifee+(time-wtime)+tiny);
   const live=!!ci&&!bought;
   return{approved,waited:w,billed,time,wtime,saved,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,boost,tiny,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
@@ -849,9 +851,9 @@ function standPicker(){const st=evStands(postEvent);if(!st.length)return'';
   <small id="h-stand">${standHint()}</small></div>`}
 function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x)return'Pick where to buy it. Orders at the same stand can be bought together, and everyone saves on waiter time.';
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
-function runTag(r,n){if(r.leavesAt&&new Date(r.leavesAt)>Date.now()&&!r.waiterInLine)return`waiter leaving in ${leftTxt(r.leavesAt)}: join, save ${Math.round(groupDisc(n+1)*100)}%`;return r.waiterInLine?'waiter in line now: add-on, $5 + $1.49 fee':r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
+function runTag(r,n){if(r.leavesAt&&new Date(r.leavesAt)>Date.now()&&!r.waiterInLine)return`waiter leaving in ${leftTxt(r.leavesAt)}: join, save ${Math.round(groupDisc(n+1)*100)}%`;return r.waiterInLine?'waiter in line now: add-on, just $5 on top of the item':r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
 function runChips(){const rs=STAND_RUNS.filter(r=>r.eventId===postEvent).sort((a,b)=>(b.waiterInLine-a.waiterInLine)||(b.waiterHeading-a.waiterHeading)||(b.orders-a.orders));if(!rs.length)return'';
-  return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–25% on waiter time, or pay just $5 + a $1.49 fee if a waiter is already in line.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
+  return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–25% on waiter time, or pay just $5 on top of the item if a waiter is already in line.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
 function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
   return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
 function setEvent(id){const was=postEvent;postEvent=id||null;if(!editing&&postDay==='today'&&!was!==!postEvent&&$('#w-hr')){setWhen(postEvent?nowSlot():firstNoFee());syncWheels()}const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
@@ -936,13 +938,13 @@ function updateQuote(){
   const h=approvedFor(),r=STANDARD_RATE,pk=postKind==='pickup';
   const qty=pk?QTYS[wheel.qty]:1,price=pk?Math.max(0,parseFloat($('#f-price').value)||0):0,xEst=pk?extrasEst():0,budget=price?Math.min(MAX_ITEM,limitFor(price,qty)+(xEst?limitFor(xEst,1):0)):0;
   const tiny=pk&&budget>0&&budget<=12.5&&!postExtras.length?0.99:0;
-  const small=pk&&budget>0&&budget<=SMALL_BUDGET,jmin=small?SMALL_MIN_PAY:MIN_PAY;
+  const small=pk&&budget>0&&budget<=SMALL_BUDGET,jmin=r2(0.25*STANDARD_RATE);
   const rush=isAsap()&&!postEvent?RUSH_FEE:0,boost=postBoost;
   // Worst case (what the card hold covers) and a typical 15-minute wait.
   const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small)+tiny,total=time+budget+fee+rush+boost;
   const likelyTime=Math.max(jmin,0.25*r),est=price*qty+xEst,likely=likelyTime+est+svcV2(likelyTime,est,small)+tiny+rush+boost;
   const st=evStands(postEvent).find(x=>x.id===postStand),run=st&&STAND_RUNS.find(x=>x.eventId===postEvent&&x.place.trim().toLowerCase()===st.name.trim().toLowerCase());
-  const addOn=run&&run.waiterInLine?ADDON_PAY+est+ADDON_FEE:0;
+  const addOn=run&&run.waiterInLine?V6_ADDON_PAY+est+ADDON_FEE:0;
   if(pk){$('#l-price').textContent=qty>1?'Estimated price each':'Estimated price';
     $('#h-price').textContent=price*qty>MAX_ITEM?`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`:price?`Your waiter can spend up to ${money(budget)}, which leaves room for tax and price changes. You're charged the receipt price.`:'Your waiter pays and is paid back from your card. You\'re charged the receipt price.';
     $('#h-meet').textContent='You meet your waiter to get it, within 4 hours of the purchase, so after the game or show works. For food, meet within 30 minutes so it stays fresh.'}
@@ -1021,8 +1023,8 @@ function waiterFind(){
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
      ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>${selBar}
-   ${bundleCards(open)}${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup',addon=pickup&&inLineAt.has(standKey(j));return`<article class="card${addon?' bundle':''}"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${addon?'+$5 add-on':fmtRate(j.rate)+'/hr'}</span>${+j.boost?`<span class="pill boost">+${money(+j.boost)} boost</span>`:''}</div>
-     ${addon?'<div class="note"><b>You\'re already in line at this stand.</b> Claim it and tap I\'m in line: it\'s a flat $5 add-on for you, with no time charge for the booker.</div>':''}
+   ${bundleCards(open)}${open.length?open.map(j=>{const pickup=kindOf(j)==='pickup',addon=pickup&&inLineAt.has(standKey(j));return`<article class="card${addon?' bundle':''}"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3><div class="meta">${pickup?'':esc(j.what)+' · '}Booker: ${ratingTxt(j.ownerRating)}</div>${near.on?`<div class="dist">${distTxt(j)}</div>`:''}</div><span class="pill open">${addon?'+'+money(addonPayOf(j))+' add-on':fmtRate(j.rate)+'/hr'}</span>${+j.boost?`<span class="pill boost">+${money(+j.boost)} boost</span>`:''}</div>
+     ${addon?'<div class="note"><b>You\'re already in line at this stand.</b> Claim it and tap I\'m in line: it\'s a flat '+money(addonPayOf(j))+' add-on for you, with no time charge for the booker.</div>':''}
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
      <div class="hint">${pickup?`Paid for your time from check-in to purchase, at least $8 a job. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
