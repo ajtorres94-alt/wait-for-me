@@ -127,7 +127,7 @@ function billing(line, now = Date.now()) {
   const fullTimePay = addOn ? addOnPay(line) : minApplied ? jobMin : rawPay;
   const grouped = !addOn && !!line.bundled && billed > 0 && line.outcome !== "cancelled_late";
   const discount = grouped ? groupDiscount(line.bundleSize) : 0;
-  const groupMin = v6(line) ? 0 : small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
+  const groupMin = v6(line) ? jobMin : small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
   const timePay = grouped ? Math.max(groupMin, roundCents(rawPay * (1 - discount))) : fullTimePay;
   const bundleSaving = grouped ? roundCents(fullTimePay - timePay) : 0;
   const runSize = Math.max(2, Number(line.bundleSize) || 2);

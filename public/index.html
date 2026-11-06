@@ -453,7 +453,7 @@ function billOf(j){
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
-  const small=isSmallJ(j),jmin=jminOf(j),addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?addonPayOf(j):minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(v6(j)?0:small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
+  const small=isSmallJ(j),jmin=jminOf(j),addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?addonPayOf(j):minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDisc(j.bundleSize):0,time=grp?Math.max(v6(j)?jmin:small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
   const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,boost=+j.boost>0&&billed>0?+j.boost:0,pay=r2(wtime+drop+rush+boost),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small,j.pricingV):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),tiny=+j.pricingV>=4&&billed>0&&!addOn&&!grp&&!(j.extraItems||[]).length&&+j.itemBudget>0&&+j.itemBudget<=12.5?0.99:0,fee=r2(svc+book+ifee+(time-wtime)+tiny);
   const live=!!ci&&!bought;
   return{approved,waited:w,billed,time,wtime,saved,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,boost,tiny,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
@@ -477,7 +477,7 @@ function meterInner(j,mode){
   const b=billOf(j),pct=Math.min(100,b.waited/b.approved*100);
   return`<div class="meter-top"><span>${kindOf(j)==='pickup'?'Time in line':'Time at the spot'}</span><b class="mono">${clockTxt(b.waited)}</b><span>of ${fmtShort(b.approved)} approved</span></div>
    <div class="bar${b.nearUp?' warn':''}"><i style="width:${pct}%"></i></div>
-   <div class="meter-bot"><span>${mode==='customer'?'Cost so far ($8 minimum)':'Earned so far ($8 minimum)'}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
+   <div class="meter-bot"><span>${(mode==='customer'?'Cost so far':'Earned so far')+(v6(j)?' (15-min steps)':' ($8 minimum)')}</span><b class="mono">${money(mode==='customer'?b.total:b.pay)}</b></div>`}
 const meterHTML=(j,mode)=>j.checkinAt&&j.status!=='done'&&!(kindOf(j)==='pickup'&&j.purchasedAt)?`<div class="meter" data-timer="${j.id}" data-mode="${mode}">${meterInner(j,mode)}</div>`:'';
 const leftTxt=t=>{const ms=new Date(t).getTime()-Date.now();if(!(ms>0))return'now';const m=Math.floor(ms/60000),sec=Math.floor(ms/1000)%60;return`${m}:${String(sec).padStart(2,'0')}`};
 setInterval(()=>{if($('#w-hr')&&postDay==='today'){snapToday();updateQuote()}},30000);
@@ -959,7 +959,7 @@ function updateQuote(){
     +frow('Service fee',money(likelyBase),`${small?'$1.99':'$3.49'} + 9% of the waiter's time and item, never more than $12. Covers card processing, payouts and support.`)
     +(tiny?frow('Small-order fee',money(tiny),'For solo orders an estimated $10 or less. Add a second item or join a group run and it goes away.'):'')
     +(rush?frow('ASAP fee',money(rush),'You picked a start within 30 minutes. All of it goes to your waiter.'):postEvent?'':frow('ASAP fee','$0.00',`Only if the start is within 30 minutes (before ${tLabel(firstNoFee())} today).`))
-    +`<small class="fnote">Joining a group run takes 10–25% off the waiter's time.${small?' Small orders have a $6 time minimum instead of $8.':''}</small></details>`
+    +`<small class="fnote">Joining a group run takes 10–25% off the waiter's time. Waiter time is $17/hr in 15-minute steps, so you pay at least one step ($4.25).</small></details>`
     +`<details class="feedet"><summary>Most it could cost: ${money(total)}</summary>`
     +row(`Waiter, up to ${h} hr × ${fmtRate(r)}/hr`,money(time))
     +(pk?row(postExtras.length?'Items, up to':qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')
@@ -1027,7 +1027,7 @@ function waiterFind(){
      ${addon?'<div class="note"><b>You\'re already in line at this stand.</b> Claim it and tap I\'m in line: it\'s a flat '+money(addonPayOf(j))+' add-on for you, with no time charge for the booker.</div>':''}
      ${itemBox(j,'browse')}
      ${facts(j,'waiter')}
-     <div class="hint">${pickup?`Paid for your time from check-in to purchase, at least $8 a job. You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
+     <div class="hint">${pickup?`${v6(j)?`Paid ${fmtRate(j.rate)}/hr for your time from check-in to purchase, in 15-minute steps (at least ${money(r2(.25*j.rate))}). On a group run you earn up to $${GROUP_MAX_HOURLY}/hr, and never less than this rate.`:'Paid for your time from check-in to purchase, at least $8 a job.'} You pay for the item (up to ${money(j.itemBudget)}) and get it back with your pay.`:`${SPOT_RULE_SHORT} Paid for your time from check-in to handover, at least $8 a job.`} You'll see the booker's name after you claim.</div>
      ${j.myOffer?`<div class="offer-row"><span class="meta">You offered <b class="mono">${fmtRate(j.myOffer.rate)}/hr</b>. Waiting for the booker to answer.</span><button class="btn ghost small" data-act="withdraw-offer" data-id="${j.id}">Withdraw</button></div>`
      :offerOpen===j.id?`<div class="counter"><label class="meta" for="offer-${j.id}">Your hourly rate</label>
         <div class="stepper"><button type="button" class="btn ghost small" data-step="-1" data-id="${j.id}" aria-label="Lower by $1">−$1</button><input id="offer-${j.id}" class="mono" type="number" inputmode="decimal" min="17" max="200" step="0.25" value="${(offerDraft[j.id]??j.rate).toFixed(2)}"><button type="button" class="btn ghost small" data-step="1" data-id="${j.id}" aria-label="Raise by $1">+$1</button></div>

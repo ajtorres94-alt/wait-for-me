@@ -37,7 +37,7 @@ The app creates its own tables on first start.
 
 ## How billing works
 
-The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up (waiters earn at least $8 per paid job), and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the job and is paid for the full approved time.
+The clock starts when the waiter checks in and stops at the purchase (pickups) or when the handover code is entered (saved spots). Time is billed in 15-minute steps, rounded up (pricing v6: at least one 15-minute step, $4.25 at $17/hr; older requests: at least $8 per paid job), and never more than the time the booker approved. Each request starts with 2 hours approved; the booker can add 30 minutes at a time. If the approved time runs out, the waiter can end the job and is paid for the full approved time.
 
 Fees (kept by the platform), pricing v2 for requests posted from Nov 1, 2026 (`pricing_v = 2`): one service fee of $2.99 + 9% of the waiter's time and the item, capped at $12. Older requests keep v1 pricing (15% of time, $4.99/$2.50 booking fee, 3% of item). ASAP requests add a $4 rush bonus paid to the waiter. Hourly rates start at $15 (`MIN_RATE`). The booker also pays the item at the receipt price and any drop-off fee, which goes to the waiter. No fees on late cancellations or sold-out pickups. The logic lives in `billing.js`.
 
@@ -134,7 +134,7 @@ On a host that allows SMTP, `SMTP_USER` and `SMTP_PASS` (a Gmail app password) w
 When a waiter checks in and has two or more unbought pickups at the same stand (same event and place name, ignoring case and spacing), those orders are marked `bundled`. Each bundled order gets a discount on the time charge by group size: 10% (2), 15% (3), 20% (4), 25% (5+), minimum $6 (`GROUP_DISCOUNT` / `BUNDLE_MIN_PAY` in billing.js). `/api/sync` returns `standRuns` (stands at live events with unbought orders) so the post form can offer "Join a group run"; the receipt shows the saving. Bookers with an open request see up to 3 runs that look like the same stand written differently (they share a distinctive word or number, like "112", at the same event, or within 150 m without an event; never a different stand) and can move their request onto one with `POST /api/lines/:id/join-run {targetId}`; waiters already on that run get an alert.
 
 
-Group-run pay: the waiter's share of a run is capped at $32/hr for the shared wait (`GROUP_MAX_HOURLY`; or the highest agreed rate if higher, never under the $8 minimum), split across the run's orders (`bundle_size`). The difference between what bookers pay for time and the waiter's share is added to the platform fee (`groupMargin`).
+Group-run pay: the waiter's share of a run is capped at $32/hr for the shared wait (`GROUP_MAX_HOURLY`; or the highest agreed rate if higher, never under the job minimum), split across the run's orders (`bundle_size`). The difference between what bookers pay for time and the waiter's share is added to the platform fee (`groupMargin`).
 
 Fake-receipt checks: recording a purchase needs the phone's location near the store (when the place has exact coordinates), and the receipt photo is fingerprinted (SHA-256 on the server plus a 64-bit difference hash from the phone). A photo matching one of the waiter's other jobs (outside the same group run) is refused and admins are alerted.
 
