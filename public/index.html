@@ -195,6 +195,22 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .tut-art{flex:1;min-height:230px;display:grid;place-items:center;border-radius:18px;padding:22px 16px;
   background:repeating-linear-gradient(-45deg,transparent 0 14px,color-mix(in srgb,var(--line) 45%,transparent) 14px 15px),var(--surface);border:1px solid var(--line)}
 .tut-art>*{width:100%;max-width:340px;pointer-events:none}
+.inst{position:fixed;inset:0;z-index:31;background:rgb(0 0 0 / .45);display:flex;align-items:flex-end;justify-content:center}
+.inst-in{background:var(--surface);color:var(--ink);width:100%;max-width:520px;border-radius:20px 20px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:14px}
+.inst-in h2{font-size:22px;font-weight:800;margin:0}
+.inst-in ol{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:8px;font-size:16px;line-height:1.4}
+.inst-in svg{vertical-align:-4px}
+.help{position:fixed;inset:0;z-index:32;background:var(--bg);display:flex;flex-direction:column}
+.help-top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--surface)}
+.help-top h2{font-size:18px;font-weight:800;margin:0}
+.help-msgs{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;max-width:640px;width:100%;margin:0 auto;box-sizing:border-box}
+.hm{max-width:85%;padding:10px 13px;border-radius:14px;font-size:15px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
+.hm.u{align-self:flex-end;background:var(--ink);color:var(--bg);border-bottom-right-radius:4px}
+.hm.a{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px}
+.hm.sys{align-self:center;background:none;color:var(--muted);font-size:13px;text-align:center}
+.help-act{align-self:flex-start;max-width:85%;border:1px dashed var(--ink);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:14px}
+.help-form{display:flex;gap:8px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);max-width:640px;width:100%;margin:0 auto;box-sizing:border-box}
+.help-form textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:inherit;font-size:16px;background:var(--bg);color:var(--ink);max-height:120px}
 .tut-art .card{box-shadow:0 10px 30px rgb(0 0 0 / .08)}
 .tut h2{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
 .tut p{margin:0;font-size:16px;line-height:1.5;color:var(--muted);max-width:44ch}
@@ -233,6 +249,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .intro-ticket span{font-family:var(--f-display);font-size:58px;line-height:1}
 .intro-word{font-family:var(--f-display);font-size:30px;margin-top:10px}
 .intro-tag{font-size:15px;color:#C9CEE6}
+.intro-price{font-size:14px;font-weight:800;color:#FFCD44;margin-top:-4px}
 .intro-tap{margin-top:22px;border:2px solid #FFCD44;background:transparent;color:#FFCD44;font-weight:800;border-radius:99px;padding:10px 24px;min-height:44px;visibility:hidden}
 .intro.needs-tap .intro-tap{visibility:visible}
 .intro.out{opacity:0;pointer-events:none}
@@ -345,6 +362,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
     <div class="intro-ticket" aria-hidden="true"><span>W!</span></div>
     <div class="intro-word">Wait For Me!</div>
     <div class="intro-tag">We wait. You don't.</div>
+    <div class="intro-price">Join a group run and save 10–20%</div>
     <button class="intro-tap" type="button" id="introTap">Tap to start</button>
   </div>
 </div>
@@ -362,6 +380,8 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 <nav class="tabbar" aria-label="Sections" id="tabbar" hidden><div class="tabbar-in gutter" role="tablist" id="tabs"></div></nav>
 <div class="toast" id="toast" role="status" hidden></div>
 <div class="tut" id="tut" role="dialog" aria-modal="true" aria-labelledby="tutTitle" hidden></div>
+<div class="inst" id="inst" role="dialog" aria-modal="true" aria-labelledby="instTitle" hidden></div>
+<div class="help" id="help" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden></div>
 
 
 <script>
@@ -632,7 +652,7 @@ function reportHTML(j,who){
   if(r)out+=`<div class="hint">${r.status==='open'?`You reported a problem (${esc(r.reason)}). We'll get back to you within 2 business days.`
     :`Your report was reviewed${r.refundCents?`, and ${money(r.refundCents/100)} was refunded`:''}. ${esc(r.resolution)}`}</div>`;
   if(!j.canReport)return out;
-  if(!reportOpen.has(j.id))return out+`<button class="linkbtn" data-act="report-open" data-id="${j.id}">Report a problem</button>`;
+  if(!reportOpen.has(j.id))return out+`<button class="linkbtn" data-act="report-open" data-id="${j.id}">Report a problem</button>${HELP_ON?` <button class="linkbtn" data-act="help-open" data-id="${j.id}">Get help with this job</button>`:''}`;
   const d=reportDraft[j.id]||{};
   return out+`<div class="confirm report"><b>Report a problem</b>
     <label class="meta" for="rr-${j.id}">What went wrong?</label><select id="rr-${j.id}">${REASONS[who].map(x=>`<option${d.reason===x?' selected':''}>${esc(x)}</option>`).join('')}</select>
@@ -758,10 +778,10 @@ function customerMine(){
       if(j.expired)extra=`<div class="warnnote">The start time has passed, so waiters can't see this anymore. Change the time to repost it, or remove it.</div>`;
       else if(j.offers&&j.offers.length)extra=`<div class="offers"><b>${j.offers.length===1?'1 waiter offered':j.offers.length+' waiters offered'} a different rate</b>${j.offers.map(o=>`
         <div class="offer">${whoCard(o.waiterName,ratingTxt(o.waiterRating),undefined,o.waiterAvatar)}
-          <div class="offer-row"><span><b class="mono">${fmtRate(o.rate)}/hr</b><span class="meta"> · up to ${money(upTo({...j,rate:o.rate}))}</span></span>
+          <div class="offer-row"><span><b class="mono">Up to ${money(upTo({...j,rate:o.rate}))} total</b><span class="meta"> · ${fmtRate(o.rate)}/hr waiter time, fees included</span></span>
           <span class="btns"><button class="btn small" data-act="accept-offer" data-id="${j.id}" data-offer="${o.id}">Accept</button><button class="btn ghost small" data-act="decline-offer" data-id="${j.id}" data-offer="${o.id}">Decline</button></span></div></div>`).join('')}
         <div class="hint">Accepting books that waiter at their rate. You listed ${fmtRate(j.rate)}/hr. Offers expire after 12 hours.</div></div>`;
-      if(!j.expired&&j.runs&&j.runs.length)extra+=`<div class="runs"><b>Same stand? Join the group run and save</b><div class="hint">Others are ordering from a stand with a similar name. If it's the same stand as yours, join their run: one waiter buys everything in one wait, and everyone saves on waiter time: 10% with 2 orders, 15% with 3, 20% with 4 or more.</div>${j.runs.map(g=>`<div class="offer-row"><span><b>${esc(g.place)}</b><span class="meta"> · ${g.orders} order${g.orders===1?'':'s'}${g.waiterOn?' · a waiter is on it':''}</span></span><button class="btn small" data-act="join-run" data-id="${j.id}" data-target="${g.targetId}">Same stand, join</button></div>`).join('')}</div>`;
+      if(!j.expired&&j.runs&&j.runs.length)extra+=`<div class="runs"><b>Same stand? Join the group run and save 10–20%</b><div class="hint">Others are ordering from a stand with a similar name. If it's the same stand as yours, join their run: one waiter buys everything in one wait, and everyone saves on waiter time: 10% with 2 orders, 15% with 3, 20% with 4 or more.</div>${j.runs.map(g=>`<div class="offer-row"><span><b>${esc(g.place)}</b><span class="meta"> · ${g.orders} order${g.orders===1?'':'s'}${g.waiterOn?' · a waiter is on it':''}</span></span><button class="btn small" data-act="join-run" data-id="${j.id}" data-target="${g.targetId}">Same stand, join</button></div>`).join('')}</div>`;
     }
     if(active){
       actions=bought?'':`<button class="btn ${b.nearUp?'':'ghost '}small" data-act="extend" data-id="${j.id}">Add 30 min (up to +${money(0.5*j.rate*(1+FEE))})</button>`;
@@ -859,7 +879,7 @@ function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
 function runTag(r,n){if(r.leavesAt&&new Date(r.leavesAt)>Date.now()&&!r.waiterInLine)return`waiter leaving in ${leftTxt(r.leavesAt)}: join, save ${Math.round(groupDisc(n+1)*100)}%`;return r.waiterInLine?`waiter in line now: join their run, save ${Math.round(groupDisc(n+1)*100)}%`:r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
 function runChips(){const rs=STAND_RUNS.filter(r=>r.eventId===postEvent).sort((a,b)=>(b.waiterInLine-a.waiterInLine)||(b.waiterHeading-a.waiterHeading)||(b.orders-a.orders));if(!rs.length)return'';
-  return`<div class="runs" style="margin:6px 0"><b>Join a run and save</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–20% on waiter time. If a waiter is already in line, your order joins their run at the same price as everyone in it.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
+  return`<div class="runs" style="margin:6px 0"><b>Join a run and save 10–20%</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–20% on waiter time. If a waiter is already in line, your order joins their run at the same price as everyone in it.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
 function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
   return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
 function setEvent(id){const was=postEvent;postEvent=id||null;if(!editing&&postDay==='today'&&!was!==!postEvent&&$('#w-hr')){setWhen(postEvent?nowSlot():firstNoFee());syncWheels()}const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
@@ -958,7 +978,7 @@ function updateQuote(){
   const likelyFee=svcV2(likelyTime,est,small)+tiny,likelyBase=svcV2(likelyTime,est,small);
   const parts=[`Waiter ${money(likelyTime)}`,pk?`Item${postExtras.length?'s':''} ${est?money(est):'—'}`:'',boost?`Boost ${money(boost)}`:'',`Fees ${money(likelyFee+rush)}`].filter(Boolean);
   const frow=(k,v,why)=>`<div class="frow"><div><span>${k}</span><span class="mono">${v}</span></div><small>${why}</small></div>`;
-  q.innerHTML=`<div class="total"><span>Estimated total</span><span class="mono">${price?money(likely):'—'}</span></div>`
+  q.innerHTML=`<div class="total"><span>Estimated total <small style="font-weight:600;color:var(--muted)">fees included</small></span><span class="mono">${price||!pk?money(likely):'—'}</span></div>`
     +`<div class="qline">${parts.join(' · ')}</div>`
     +(addOn?`<div class="note qnote"><b>A waiter is in line at ${esc(st.name)} now.</b> If they take your order, it joins their run and you get the group discount.</div>`:'')
     +`<details class="feedet"><summary>What are the fees?</summary>`
@@ -1121,6 +1141,7 @@ function account(){
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
   <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
   ${me.isAdmin?`<article class="card section"><h2>Admin</h2><div class="links"><a href="/dashboard" target="_blank" rel="noopener">Creator dashboard</a><a href="/admin" target="_blank" rel="noopener">Open the admin page</a></div></article>`:''}
+  ${HELP_ON?`<article class="card section"><h2>Need help?</h2><div class="meta">Ask our support assistant about a job, a charge, payouts, or how anything works. It can pass you to a person.</div><div class="btns"><button class="btn small" data-act="help-open">Chat with support</button></div></article>`:''}
   <article class="card section"><h2>Help and legal</h2>
     <div class="links"><a href="/support" target="_blank" rel="noopener">Support</a><a href="/privacy" target="_blank" rel="noopener">Privacy policy</a><a href="/terms" target="_blank" rel="noopener">Terms of service</a></div></article>
   <button class="btn ghost block" data-act="logout">Sign out</button>
@@ -1172,6 +1193,76 @@ document.addEventListener('keydown',e=>{if(!tut)return;
   if(e.key==='Escape')closeTut();
   if(e.key==='Tab'){const f=[...$('#tut').querySelectorAll('button')];const i=f.indexOf(document.activeElement);e.preventDefault();f[(i+(e.shiftKey?-1:1)+f.length)%f.length].focus()}});
 function maybeTut(){if(me&&!tut&&!store.get('wfm_tut_'+role))openTut(role)}
+// ---------- after an order: get pickup alerts onto this phone ----------
+// iPhone only shows web-app alerts once the app is on the Home Screen, so a booker who just scanned a
+// QR code would miss "your item was bought". Shown after posting, until alerts are on or they opt out.
+let installEvt=null;
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e});
+const SHARE_ICON='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 11v9h14v-9"/></svg>';
+function maybeInstall(){
+  const iosNeeds=isIOS&&!standalone(),canPrompt=!!installEvt&&!standalone();
+  if(alertState==='on'||(alertState==='blocked'&&!iosNeeds)||store.get('wfm_inst_never')==='1')return;
+  if(!iosNeeds&&!canPrompt&&alertState!=='off')return;
+  const body=iosNeeds
+    ?`<ol><li>Tap the Share button ${SHARE_ICON} at the bottom of Safari.</li><li>Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.</li><li>Open Wait For Me! from your Home Screen and tap <b>Turn on alerts</b>.</li></ol>`
+    :canPrompt?`<p style="margin:0;color:var(--muted)">Install the app, then turn on alerts. It takes a few seconds.</p>`
+    :`<p style="margin:0;color:var(--muted)">Turn on alerts so your phone buzzes the moment your waiter buys your item.</p>`;
+  const btn=iosNeeds?'<button class="btn" data-inst="ok">Got it</button>':canPrompt?'<button class="btn" data-inst="install">Install app</button>':'<button class="btn" data-inst="alerts">Turn on alerts</button>';
+  $('#inst').innerHTML=`<div class="inst-in"><h2 id="instTitle">Get pickup alerts</h2>${body}
+   <p style="margin:0;font-size:14px;color:var(--muted)">Until alerts are on, we'll email you when your order is claimed, bought, and ready to meet.</p>
+   <div class="btns">${btn}<button class="btn ghost" data-inst="later">Not now</button></div>
+   <button class="tut-skip" style="align-self:flex-start" data-inst="never">Don't show this again</button></div>`;
+  $('#inst').hidden=false;$('#inst').querySelector('.btn').focus()}
+function closeInstall(){$('#inst').hidden=true;$('#inst').innerHTML=''}
+$('#inst').addEventListener('click',async e=>{
+  if(e.target.id==='inst')return closeInstall();
+  const a=e.target.closest('[data-inst]')?.dataset.inst;if(!a)return;
+  if(a==='never')store.set('wfm_inst_never','1');
+  if(a==='install'&&installEvt){installEvt.prompt();try{await installEvt.userChoice}catch{}installEvt=null;closeInstall();
+    try{await enableAlerts();toast('Alerts are on for this phone.');render()}catch(err){toast(err.message)}return}
+  if(a==='alerts'){closeInstall();try{await enableAlerts();toast('Alerts are on for this phone.');render()}catch(err){toast(err.message)}return}
+  closeInstall()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#inst').hidden)closeInstall()});
+// ---------- support chat (AI assistant; it can draft a report you confirm, or pass you to a person) ----------
+let HELP_ON=false,help=null;
+function helpLoad(){try{return JSON.parse(sessionStorage.getItem('wfm_help')||'null')}catch{return null}}
+function helpSave(){try{sessionStorage.setItem('wfm_help',JSON.stringify({msgs:help.msgs.slice(-30)}))}catch{}}
+function openHelp(jobId){
+  const saved=helpLoad();help={msgs:saved&&saved.msgs||[],busy:false,back:document.activeElement};
+  if(!help.msgs.length)help.msgs.push({role:'assistant',content:`Hi ${esc(firstNameOf(me&&me.name))}! I'm the Wait For Me! support assistant. Ask me about a job, a charge, payouts, or how anything works.`,hello:true});
+  drawHelp(jobId?`I need help with job #${jobId}. `:'');$('#help').hidden=false;document.body.style.overflow='hidden';$('#help-in').focus()}
+const firstNameOf=n=>String(n||'there').split(' ')[0];
+function closeHelp(){if(!help)return;$('#help').hidden=true;$('#help').innerHTML='';document.body.style.overflow='';const b=help.back;help=null;b&&b.focus&&b.focus()}
+function helpActHTML(a,i){
+  if(a.type==='report')return a.sent?`<div class="help-act"><b>Report sent</b><span class="meta">Job #${a.jobId} · ${esc(a.reason)}. We'll get back to you within 2 business days.</span></div>`
+    :`<div class="help-act"><b>Report on job #${a.jobId}: ${esc(a.reason)}</b><span>${esc(a.details)}</span><div class="btns"><button class="btn small" data-help="send-report" data-i="${i}">Send report</button><button class="btn ghost small" data-help="drop-report" data-i="${i}">Don't send</button></div></div>`;
+  if(a.type==='escalated')return`<div class="hm sys">Passed to the Wait For Me! team. They'll reply to ${esc(me&&me.email||'your email')} within 2 business days.</div>`;
+  return''}
+function drawHelp(prefill){
+  const h=help,list=h.msgs.map((m,i)=>m.action?helpActHTML(m.action,i):`<div class="hm ${m.role==='user'?'u':'a'}">${m.role==='user'?esc(m.content):m.hello?m.content:esc(m.content)}</div>`).join('');
+  const cur=prefill!=null?prefill:($('#help-in')?$('#help-in').value:'');
+  $('#help').innerHTML=`<div class="help-top"><div><h2 id="helpTitle">Support chat</h2><div class="meta">AI assistant · can pass you to a person</div></div><button class="btn ghost small" data-help="close">Close</button></div>
+   <div class="help-msgs" id="help-msgs" aria-live="polite">${list}${h.busy?'<div class="hm a" aria-label="Typing">…</div>':''}
+   <div class="hm sys">In an emergency, contact venue security or call 911. Don't share card numbers, passwords, or your handover code here.</div></div>
+   <form class="help-form" id="help-form"><label for="help-in" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Message</label>
+   <textarea id="help-in" rows="1" maxlength="2000" placeholder="Type your question" ${h.busy?'disabled':''}>${esc(cur)}</textarea><button class="btn" type="submit" ${h.busy?'disabled':''}>Send</button></form>`;
+  const ms=$('#help-msgs');ms.scrollTop=ms.scrollHeight;
+  $('#help-in').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('#help-form').requestSubmit()}});
+  $('#help-form').onsubmit=e=>{e.preventDefault();sendHelp()}}
+async function sendHelp(){
+  const t=$('#help-in').value.trim();if(!t||help.busy)return;
+  help.msgs.push({role:'user',content:t});help.busy=true;$('#help-in').value='';drawHelp('');
+  try{const r=await api('/support/chat',{method:'POST',body:{messages:help.msgs.filter(m=>!m.action&&!m.hello).map(m=>({role:m.role,content:m.content}))}});
+    if(!help)return;help.msgs.push({role:'assistant',content:r.reply});(r.actions||[]).forEach(a=>help.msgs.push({action:a}))}
+  catch(err){if(!help)return;help.msgs.push({role:'assistant',content:err.message||'Something went wrong. Try again.',err:true})}
+  help.busy=false;helpSave();drawHelp('');$('#help-in').focus()}
+$('#help').addEventListener('click',async e=>{const b=e.target.closest('[data-help]');if(!b||!help)return;const a=b.dataset.help;
+  if(a==='close')return closeHelp();
+  const m=help.msgs[+b.dataset.i];if(!m||!m.action)return;
+  if(a==='drop-report'){help.msgs.splice(+b.dataset.i,1);helpSave();return drawHelp()}
+  if(a==='send-report'){b.disabled=true;try{await api(`/lines/${m.action.jobId}/report`,{method:'POST',body:{reason:m.action.reason,details:m.action.details}});m.action.sent=true;helpSave();drawHelp();load(true)}
+    catch(err){b.disabled=false;toast(err.message)}}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&help)closeHelp()});
 
 // ---------- opening sound: three rising bell notes, one per word of "Wait For Me" ----------
 let audioCtx=null,chimed=false;
@@ -1260,8 +1351,8 @@ function render(){
           handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value})}
         if(evStands(postEvent).length){if(!postStand)throw new Error('Choose a stand, or pick Other / not listed.');if(postStandChosen())body.standId=postStand}
         const res=await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});postExtras=[];postBoost=0;
-        if(res.joinedRun){editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(`Joined ${res.joinedRun.waiterName}'s run at ${res.line.place}. You'll get the group price.`);return}
-        const was=editing;editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.')}
+        if(res.joinedRun){editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(`Joined ${res.joinedRun.waiterName}'s run at ${res.line.place}. You'll get the group price.`);maybeInstall();return}
+        const was=editing;editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(was?'Changes saved.':'Posted. Waiters can claim it now.');if(!was)maybeInstall()}
       catch(err){if(payNeedsSetup(err))return;$('#formErr').textContent=err.message;btn.disabled=false}})}
   if(t==='account'&&cardOpen)mountCard();
   v.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{filter=b.dataset.cat;render()});
@@ -1345,6 +1436,7 @@ $('#view').addEventListener('click',async e=>{
     if(a==='report-open'||a==='report-close'){a==='report-open'?reportOpen.add(+id):reportOpen.delete(+id);b.disabled=false;render();return}
     if(a==='report-send'){const reason=document.getElementById('rr-'+id).value,details=document.getElementById('rd-'+id).value;
       await api(`/lines/${id}/report`,{method:'POST',body:{reason,details}});reportOpen.delete(+id);delete reportDraft[id];toast('Report sent. We\'ll get back to you within 2 business days.')}
+    if(a==='help-open'){b.disabled=false;openHelp(id?+id:null);return}
     if(a==='alerts-on'){await enableAlerts();toast('Alerts are on for this phone.');render();return}
     if(a==='alerts-off'){await disableAlerts();toast('Alerts are off for this phone.');render();return}
     if(a==='nudge-x'){store.set('wfm_nudge_alerts','1');render();return}
@@ -1424,7 +1516,7 @@ async function loadNow(force){
   EVENTS=sy.events||[];if(eventFilter&&!EVENTS.some(e=>e.id===eventFilter))eventFilter=null;
   clockSkew=sy.now-Math.round((t0+Date.now())/2);
   const mine=sy.mine,open=sy.open,shifts=sy.shifts;
-  if(sy.waiter)WSTATS=sy.waiter;STAND_RUNS=sy.standRuns||[];if(sy.user){me=sy.user;myRatings=sy.ratings;TAGS=sy.tags||TAGS;if(sy.payments)PAY=sy.payments}
+  if(sy.waiter)WSTATS=sy.waiter;STAND_RUNS=sy.standRuns||[];if(sy.user){me=sy.user;myRatings=sy.ratings;TAGS=sy.tags||TAGS;if(sy.payments)PAY=sy.payments;HELP_ON=!!sy.supportChat}
   await Promise.all([...chatOpen].map(loadChat));
   paintChats();
   notifyChanges(lastData,{mine,open,shifts});lastData={mine,open,shifts};
@@ -1449,7 +1541,7 @@ schedulePoll();
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')load(false).catch(()=>{})});
 
 (async()=>{
-  try{const info=await api('/me');me=info.user;if(info.payments)PAY=info.payments}catch{me=null}
+  try{const info=await api('/me');me=info.user;if(info.payments)PAY=info.payments;HELP_ON=!!info.supportChat}catch{me=null}
   // Coming back from Stripe (payout setup, or a card that needed bank confirmation).
   const q=new URLSearchParams(location.search);
   if(q.has('payouts')||q.has('setup_intent')||q.has('card'))history.replaceState(null,'',location.pathname);

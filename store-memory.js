@@ -45,7 +45,7 @@ module.exports = {
   async syncStripeMode(mode) {
     const prev = this._stripeMode || null;
     if (prev && prev !== mode) {
-      for (const u of users) Object.assign(u, { stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, payoutsReady: false });
+      for (const u of users) Object.assign(u, { stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, cardFp: null, payoutFps: null, payoutsReady: false });
       for (const l of lines) {
         if (l.status !== "done") Object.assign(l, { payIntent: null, payHeld: 0, payStatus: null, payError: null });
         else if (["held", "charge_failed"].includes(l.payStatus)) Object.assign(l, { payStatus: "void", payError: `Started in Stripe ${prev} mode` });
@@ -59,7 +59,7 @@ module.exports = {
   async createUser({ name, email, pwHash, birthDate = null }) {
     if (users.some((u) => u.email === email)) return null;
     const u = { id: nextUser++, name, email, pwHash, look: "", avatar: "", suspended: false, noshows: 0, createdAt: new Date(), lastSeenAt: null,
-      stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, payoutsReady: false, birthDate, contractorVersion: null, contractorAcceptedAt: null, minRate: null };
+      stripeCustomer: null, stripeAccount: null, cardPm: null, cardLabel: null, cardFp: null, payoutFps: null, payoutsReady: false, birthDate, contractorVersion: null, contractorAcceptedAt: null, minRate: null };
     users.push(u);
     return u;
   },
@@ -110,7 +110,7 @@ module.exports = {
       checkinVerified: null, checkinDist: null, handoffAt: null, claimedAt: null, createdAt: now, updatedAt: now,
       payIntent: null, payHeld: 0, payStatus: null, payError: null, payCaptured: 0,
       kind: "spot", item: "", itemDetails: "", qty: 1, itemBackup: "", itemBudget: null, handoff: null, dropoffFee: 0, dropoffAddr: "",
-      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, pricingV: 1, bundled: false, bundleSize: 0, receiptSha: null, receiptDhash: null, standId: null, seatSection: null, seatRow: null, seatNumber: null, meetSpot: null, addOn: false, extraItems: null, runLeavesAt: null, boost: 0, prepStatus: null, prepAt: null, ...f,
+      itemTotal: null, itemNote: "", purchasedAt: null, hasReceipt: false, meetWithin: null, meetReminded: false, eventId: null, rush: false, payRefunded: 0, pricingV: 1, bundled: false, bundleSize: 0, receiptSha: null, receiptDhash: null, standId: null, seatSection: null, seatRow: null, seatNumber: null, meetSpot: null, addOn: false, extraItems: null, runLeavesAt: null, boost: 0, prepStatus: null, prepAt: null, purchaseVerified: null, ...f,
     };
     lines.push(l);
     return withNames(l);

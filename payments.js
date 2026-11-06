@@ -108,6 +108,24 @@ function cardLabel(pm) {
   return pm.type;
 }
 
+// Stripe's fingerprint for the card or bank account behind a payment method: the same number gives the
+// same fingerprint, so one card used on two accounts can be spotted.
+function pmFingerprint(pm) {
+  return (pm && ((pm.card && pm.card.fingerprint) || (pm.us_bank_account && pm.us_bank_account.fingerprint))) || null;
+}
+// The booker's card fingerprint, looked up once for cards saved before fingerprints were kept.
+async function cardFingerprint(store, user) {
+  if (!user || !user.cardPm) return null;
+  if (user.cardFp) return user.cardFp;
+  try {
+    const fp = pmFingerprint(await stripe("GET", `/v1/payment_methods/${user.cardPm}`));
+    if (fp) { await store.updateUser(user.id, { cardFp: fp }); user.cardFp = fp; }
+    return fp;
+  } catch {
+    return null;
+  }
+}
+
 // Called after the browser confirms a SetupIntent. Checks it belongs to this user before saving.
 async function finishCardSetup(store, user, setupIntentId) {
   if (!/^seti_[A-Za-z0-9]+$/.test(String(setupIntentId || ""))) throw new PaymentError("That card setup wasn't found.", "bad_setup", 400);
@@ -117,7 +135,7 @@ async function finishCardSetup(store, user, setupIntentId) {
   const pm = await stripe("GET", `/v1/payment_methods/${si.payment_method}`);
   await stripe("POST", `/v1/customers/${user.stripeCustomer}`, { invoice_settings: { default_payment_method: pm.id } });
   const label = cardLabel(pm);
-  await store.updateUser(user.id, { cardPm: pm.id, cardLabel: label });
+  await store.updateUser(user.id, { cardPm: pm.id, cardLabel: label, cardFp: pmFingerprint(pm) });
   return label;
 }
 
@@ -185,6 +203,11 @@ async function refreshPayouts(store, user) {
   const ready = !minor && !!(a.capabilities && a.capabilities.transfers === "active");
   const due = (a.requirements && a.requirements.currently_due) || [];
   if (ready !== !!user.payoutsReady) await store.updateUser(user.id, { payoutsReady: ready });
+  // Fingerprints of the debit cards and bank accounts this waiter is paid to.
+  const ext = (a.external_accounts && a.external_accounts.data) || [];
+  const fps = [...new Set(ext.map((x) => x.fingerprint).filter(Boolean))].sort().join(",") || null;
+  if (fps !== (user.payoutFps || null)) await store.updateUser(user.id, { payoutFps: fps });
+  user.payoutFps = fps;
   user.payoutsReady = ready;
   return { ready, started: true, needsInfo: due.length > 0, detailsSubmitted: !!a.details_submitted, minor };
 }
@@ -369,6 +392,8 @@ async function checkKey() {
 }
 
 module.exports = {
+  pmFingerprint,
+  cardFingerprint,
   checkKey,
   enabled, publishableKey, testMode, PaymentError, HOLD_DAYS,
   startCardSetup, finishCardSetup, payoutLink, refreshPayouts,

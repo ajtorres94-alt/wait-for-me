@@ -104,6 +104,22 @@ Railway blocks outgoing SMTP ports, so on Railway email goes through Resend's we
 | `MAIL_REPLY_TO` | optional; defaults to `SUPPORT_EMAIL` |
 | `APP_URL` | optional; the address used in links, e.g. `https://waitforme.io` |
 
+Booker alerts that matter (claimed, bought, meet soon) also go by email to anyone without phone alerts turned on (`pingKey`), since iPhone only allows web alerts once the app is on the Home Screen. After posting, bookers see a "Get pickup alerts" sheet with Add to Home Screen steps (iPhone) or an Install app button (Chrome).
+
+### AI support assistant
+
+`support.js` runs an in-app support chat (Account → Chat with support, or Get help with this job) on Anthropic's Messages API with read-only tools scoped to the signed-in person: `list_my_jobs`, `get_job` (no handover codes, emails or other people's jobs), `draft_report` (shows a Send report button; the report is only filed through the normal `/report` endpoint when the person taps it), and `escalate_to_human` (phone alert to admins and an email with the chat to `SUPPORT_EMAIL`, 3 per person per day). It can't refund, cancel or change anything. The help page (`public/support.html`) is its knowledge base, so update that page and the assistant follows. Limits: 40 messages per person per hour, 5 tool rounds per reply.
+
+| Variable | Value |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | turns the assistant on (from console.anthropic.com) |
+| `SUPPORT_MODEL` | optional; defaults to `claude-haiku-5-5` |
+
+### Fraud and location checks
+
+- **Same card on both sides**: a waiter can't claim (or be accepted for) a job when the booker's card fingerprint matches the waiter's saved card or a payout card/bank on their Stripe account. Admins are alerted (`same_card`).
+- **GPS inside venues**: for event orders, a missing or very rough location fix (over 500 m) no longer blocks check-in or recording a purchase; the receipt photo is the proof, the purchase is marked `purchase_verified = false` (tagged on /admin), and admins are alerted when a waiter has 3+ such purchases in a week. Away from venues, location is still required.
+
 On a host that allows SMTP, `SMTP_USER` and `SMTP_PASS` (a Gmail app password) work instead. Without either, the reset screen tells people to email support. Use **Send test email** on the admin page to check the setup. `COMPANY_NAME` (default `ATowers Enterprises LLC`) is the company named on the privacy and terms pages.
 
 `/dashboard` (same admin emails) is the creator dashboard: bookings and revenue, completed jobs, fill rate, new and active users, a per-day chart, a weekday-by-hour heatmap of busy times, a map and table of top cities, top venues, line types, marketplace health, and top waiters and bookers. Pick 7, 30, 90 days, 1 year or all time; it refreshes every minute and shows times in your phone's or computer's time zone. City names come from OpenStreetMap when a line is posted; older lines are filled in when the server starts.

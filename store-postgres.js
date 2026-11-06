@@ -109,6 +109,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_account TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_pm TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_label TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS card_fp TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_fps TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS payouts_ready BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS contractor_version TEXT;
@@ -180,6 +182,7 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS extra_items TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS run_leaves_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS boost NUMERIC(6,2) NOT NULL DEFAULT 0;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_status TEXT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS purchase_verified BOOLEAN;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
@@ -223,7 +226,7 @@ function user(r) {
       id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "",
       suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at, lastSeenAt: r.last_seen_at || null,
       stripeCustomer: r.stripe_customer || null, stripeAccount: r.stripe_account || null, cardPm: r.card_pm || null,
-      cardLabel: r.card_label || null, payoutsReady: !!r.payouts_ready, birthDate: r.birth_date || null,
+      cardLabel: r.card_label || null, cardFp: r.card_fp || null, payoutFps: r.payout_fps || null, payoutsReady: !!r.payouts_ready, birthDate: r.birth_date || null,
       contractorVersion: r.contractor_version || null, contractorAcceptedAt: r.contractor_accepted_at || null, minRate: r.min_rate == null ? null : Number(r.min_rate),
     }
   );
@@ -283,7 +286,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null, purchaseVerified: r.purchase_verified ?? null,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -377,6 +380,7 @@ const COLS = {
   runLeavesAt: "run_leaves_at",
   boost: "boost",
   prepStatus: "prep_status",
+  purchaseVerified: "purchase_verified",
   prepAt: "prep_at",
   extraItems: "extra_items",
 };
@@ -389,6 +393,8 @@ const USER_COLS = {
   stripeAccount: "stripe_account",
   cardPm: "card_pm",
   cardLabel: "card_label",
+  cardFp: "card_fp",
+  payoutFps: "payout_fps",
   payoutsReady: "payouts_ready",
   birthDate: "birth_date",
   contractorVersion: "contractor_version",

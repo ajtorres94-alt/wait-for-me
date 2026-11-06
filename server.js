@@ -12,6 +12,7 @@ const { billing, kindOf, MAX_ITEM } = require("./billing");
 const { geocode } = require("./geocode");
 const { computeMetrics } = require("./metrics");
 const { sendMail, mailEnabled } = require("./mailer");
+const support = require("./support");
 const pay = require("./payments");
 const push = require("./push");
 
@@ -620,6 +621,21 @@ function startPaymentSweeper() {
 
 // ---------- phone notifications ----------
 const ping = (userId, title, body) => push.notify(store, userId, { title, body });
+// For the alerts a booker can't miss (claimed, bought, meet soon): phones without alerts turned on
+// (common on iPhone, where web alerts need the app on the Home Screen) get an email instead.
+async function pingKey(userId, title, body) {
+  ping(userId, title, body);
+  try {
+    if (!mailEnabled() || !userId || (await store.pushSubs(userId)).length) return;
+    const u = await store.userById(userId);
+    if (!u || !u.email) return;
+    const site = (process.env.APP_URL || "https://waitforme.io").replace(/\/+$/, "");
+    await sendMail({ to: u.email, subject: title, text: `${body}\n\nOpen Wait For Me!: ${site}\n\nTip: add the app to your Home Screen and turn on alerts to get these on your phone instead.`,
+      html: `<p>${escHtml(body)}</p><p><a href="${site}">Open Wait For Me!</a></p><p style="color:#666">Tip: add the app to your Home Screen and turn on alerts to get these on your phone instead.</p>` });
+  } catch (e) {
+    console.error("Email alert failed:", e.message);
+  }
+}
 
 const publicEvent = (e) => ({ id: e.id, name: e.name, venue: e.venue, startsAt: e.startsAt, endsAt: e.endsAt,
   live: new Date(e.startsAt).getTime() <= Date.now() + 2 * 3600e3, open: e.open || 0, here: e.here || 0, meHere: !!e.meHere,
@@ -655,9 +671,25 @@ async function eventFor(eventId) {
   return ev;
 }
 
+// One person with two accounts could book with a card and then be paid for the same job as the waiter
+// (a common way to cash out stolen cards). If the booker's card is also on the waiter's account, as their
+// card or the card or bank they're paid to, the waiter can't take the job, and admins are told.
+async function sameCardCheck(waiter, l) {
+  if (!pay.enabled()) return;
+  const owner = await store.userById(l.ownerId);
+  const fp = await pay.cardFingerprint(store, owner);
+  if (!fp) return;
+  const wfp = await pay.cardFingerprint(store, waiter);
+  const payouts = String(waiter.payoutFps || "").split(",").filter(Boolean);
+  if (fp !== wfp && !payouts.includes(fp)) return;
+  flagAdmins(`Same card on booker and waiter (job #${l.id})`, `${waiter.name} (${waiter.email}) tried to take job #${l.id} at ${l.place}, booked by ${owner.name} (${owner.email}). The booker's card is also on the waiter's account${fp === wfp ? " as their saved card" : " as their payout card or bank"}. The claim was refused. Check whether these are the same person.`);
+  fail(403, "This job can't be taken from your account. If you think that's a mistake, contact support.", "same_card");
+}
+
 // Claims one open request for this waiter (used by Claim and by claiming several at once).
 async function claimLine(me, l) {
   if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
+  await sameCardCheck(me, l);
   requireAdult(me);
   requireAgreement(me);
   if (isExpired(l)) fail(409, "This request's start time has passed.");
@@ -670,7 +702,7 @@ async function claimLine(me, l) {
   if (!updated) fail(409, "Someone else just claimed this request.");
   await store.closeOtherOffers(l.id, 0);
   updated = await holdIfDue(updated);
-  ping(l.ownerId, "Your request was claimed", `${firstName(me.name)} took your request at ${l.place}.`);
+  pingKey(l.ownerId, "Your request was claimed", `${firstName(me.name)} took your request at ${l.place}.`);
   return updated;
 }
 
@@ -710,15 +742,24 @@ function hamming(a, b) {
   return d;
 }
 // The waiter's phone must be near the store when it reports a location-checked step (like recording a purchase).
+// Inside an arena or stadium, GPS often can't get a fix. For orders at a venue event, a missing location
+// doesn't block the step: the receipt photo is the proof, and the step is marked unverified for review.
+// Returns true when the location was checked, false when it couldn't be.
+const atVenue = (l) => !!(l.eventId || l.standId);
 function checkAtPlace(l, b, where) {
   const exact = l.lat != null && l.lng != null && !l.geoApprox;
-  if (!exact) return;
+  if (!exact) return false;
   const lat = Number(b.lat), lng = Number(b.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng) || b.lat === null || b.lng === null)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || b.lat === null || b.lng === null) {
+    if (atVenue(l)) return false;
     fail(400, `Turn on location for this app so we can confirm you're at ${where}, then try again.`, "location_required");
+  }
+  // A very rough fix (over 500 m) inside a venue is treated like no fix rather than refused.
+  if (atVenue(l) && Number(b.accuracy) > 500) return false;
   const acc = Math.min(Math.max(Number(b.accuracy) || 0, 0), 500);
   const dist = metersBetween({ lat, lng }, { lat: l.lat, lng: l.lng });
   if (dist - acc > CHECKIN_RADIUS_M) fail(400, `You're about ${(dist / 1609.34).toFixed(1)} miles from ${where}. Record the purchase while you're there.`, "too_far");
+  return true;
 }
 // Orders at the same stand: same event (if any) and the same place name, ignoring case and extra spaces.
 const standKey = (l) => (l.eventId || "") + "|" + String(l.place || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -775,7 +816,7 @@ async function meetupSweep() {
       const end = new Date(l.purchasedAt).getTime() + meetMs(l);
       if (Date.now() < end - 20 * 60000) continue;
       await store.updateLineAny(l.id, { meetReminded: true });
-      ping(l.ownerId, "Meet your waiter soon", `${firstName(l.waiterName)} has your ${l.item || l.what}. Meet up in the next 20 minutes, or they can close the job and keep the item (you'd still pay for their time).`);
+      pingKey(l.ownerId, "Meet your waiter soon", `${firstName(l.waiterName)} has your ${l.item || l.what}. Meet up in the next 20 minutes, or they can close the job and keep the item (you'd still pay for their time).`);
     }
   } catch (e) {
     console.error("Meetup reminders failed:", e.message);
@@ -935,7 +976,7 @@ async function api(req, res, urlPath, query) {
     if (!me) return send(res, 200, { user: null });
     const sums = await store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS));
     const ratings = { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) };
-    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS, payments: paymentsInfo() });
+    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS, payments: paymentsInfo(), supportChat: support.enabled() });
   }
   if (!me) fail(401, "Sign in to continue.");
 
@@ -1080,6 +1121,77 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { results });
   }
 
+  // AI support chat. The assistant only reads this person's own jobs; it can draft a report (sent only
+  // when the person taps Send report) or hand the chat to the team.
+  if (urlPath === "/api/support/chat" && method === "POST") {
+    if (!support.enabled()) fail(503, "The support assistant isn't available right now. Email us from the Help page.", "support_off");
+    limit(`supportchat:${me.id}`, 40, 3600 * 1000, "That's a lot of messages this hour. Email us from the Help page and we'll pick it up.");
+    const b = await readBody(req);
+    const mineOf = async () => {
+      const [a, w] = await Promise.all([store.listLines({ ownerId: me.id }), store.listLines({ waiterId: me.id })]);
+      const m = new Map();
+      for (const l of [...a, ...w]) m.set(l.id, l);
+      return [...m.values()].sort((x, y) => new Date(y.createdAt) - new Date(x.createdAt));
+    };
+    const roleOf = (l) => (l.ownerId === me.id ? "booker" : "waiter");
+    const brief = (l) => ({ id: l.id, role: roleOf(l), kind: kindOf(l), status: l.status, outcome: l.outcome || null, place: l.place, item: l.item || l.what || null,
+      starts: l.startText || null, startAt: l.startAt || null, createdAt: l.createdAt });
+    const ctx = {
+      user: { firstName: firstName(me.name) },
+      listJobs: async (n) => ({ jobs: (await mineOf()).slice(0, n).map(brief) }),
+      getJob: async (id) => {
+        const l = await store.getLine(id);
+        if (!l || (l.ownerId !== me.id && l.waiterId !== me.id)) return null;
+        const bill = billing(l);
+        const iAmBooker = l.ownerId === me.id;
+        const rep = await store.countOpenReports(l.id, me.id);
+        return {
+          ...brief(l), qty: l.qty || 1, extraItems: (l.extraItems || []).map((x) => ({ item: x.item, qty: x.qty || 1 })), itemDetails: l.itemDetails || "", itemBackup: l.itemBackup || "",
+          itemLimit: l.itemBudget != null ? Number(l.itemBudget) : null, receiptTotal: l.itemTotal != null ? Number(l.itemTotal) : null, hasReceiptPhoto: !!l.hasReceipt,
+          event: !!l.eventId, groupRun: !!l.bundled, runSize: l.bundleSize || 0, asap: !!l.rush, approvedHours: bill.approvedHours,
+          times: { claimed: l.claimedAt || null, checkedIn: l.checkinAt || null, bought: l.purchasedAt || null, readyToHandOver: l.handoffAt || null, finished: l.doneAt || null },
+          otherPerson: iAmBooker ? (l.waiterName ? firstName(l.waiterName) : null) : firstName(l.ownerName),
+          meetSpot: l.meetSpot || null, standPrep: l.prepStatus || null,
+          bill: iAmBooker
+            ? { finished: l.status === "done", waiterTime: bill.timePay ?? bill.waiterPay, groupSaving: bill.bundleSaving || 0, item: bill.item || 0, serviceAndOtherFees: bill.fee, asapFee: bill.rushFee || 0, total: bill.total, billedHours: bill.billedHours }
+            : { finished: l.status === "done", yourTimePay: bill.waiterPay, itemPaidBack: bill.item || 0, payout: bill.payout, billedHours: bill.billedHours },
+          payment: { status: l.payStatus || null, refunded: Number(l.payRefunded || 0) },
+          openReportsByYou: rep,
+        };
+      },
+      canReport: async (id) => {
+        const l = await store.getLine(id);
+        if (!l || (l.ownerId !== me.id && l.waiterId !== me.id)) return "No job with that id on this account.";
+        if (!l.waiterId) return "Nobody has taken this job yet, so there's nothing to report. The person can cancel it from Requests.";
+        if (l.status === "done" && (!l.doneAt || Date.now() - new Date(l.doneAt).getTime() > REPORT_WINDOW_MS)) return "This job finished over 14 days ago, so it can't be reported in the app. Escalate to a human instead.";
+        if ((await store.countOpenReports(id, me.id)) >= 3) return "This person already has 3 open reports on this job; escalate instead.";
+        return true;
+      },
+      escalate: async (summary, jobId, transcript) => {
+        limit(`supportesc:${me.id}`, 3, 86400 * 1000, "You've already asked for a person a few times today. We'll reply by email soon.");
+        const title = `Support chat: ${firstName(me.name)} needs a person${jobId ? ` (job #${jobId})` : ""}`;
+        const body = `${me.name} (${me.email}), user #${me.id}${jobId ? `, job #${jobId}` : ""}\nSummary: ${summary}\n\nChat:\n${transcript.slice(-6000)}`;
+        for (const email of ADMIN_EMAILS) {
+          const u = await store.userByEmail(email);
+          if (u) ping(u.id, title, `${firstName(me.name)}: ${summary}`.slice(0, 200));
+        }
+        const to = process.env.SUPPORT_EMAIL;
+        if (to && mailEnabled()) await sendMail({ to, subject: title, text: body, html: body.split("\n").map((x) => `<p>${escHtml(x)}</p>`).join("") });
+        return { ok: true, note: "The team has the chat and will reply by email within 2 business days." };
+      },
+    };
+    let out;
+    try {
+      out = await support.chat(ctx, b.messages);
+    } catch (e) {
+      if (e && e.status) throw e;
+      console.error("Support chat failed:", e.message);
+      fail(502, "The support assistant had a problem. Try again, or email us from the Help page.", "support_error");
+    }
+    if (out.error) fail(400, out.error);
+    return send(res, 200, out);
+  }
+
   // Everything the app shows, in one request (the app refreshes with this instead of five calls).
   if (urlPath === "/api/sync" && method === "GET") {
     const [mineL, openL, shiftsL, sums, evs] = await Promise.all([
@@ -1115,7 +1227,7 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, {
       now: Date.now(), mine: pick(mineL), open: pick(openL), shifts: pick(shiftsL),
       user: publicUser(me), ratings: { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) },
-      tags: TAGS, payments: paymentsInfo(), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL), standRuns,
+      tags: TAGS, payments: paymentsInfo(), supportChat: support.enabled(), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL), standRuns,
     });
   }
 
@@ -1286,6 +1398,7 @@ async function api(req, res, urlPath, query) {
         return send(res, 200, { line: await one(me, l) });
       }
       if (l.status !== "open") fail(409, "This line was already claimed.");
+      await sameCardCheck(await store.userById(o.waiterId), l);
       updated = await store.updateLine(id, "open", { status: "claimed", waiterId: o.waiterId, rate: o.rate, claimedAt: new Date() });
       if (!updated) fail(409, "This line was just claimed.");
       await store.setOfferStatus(o.id, "accepted");
@@ -1447,10 +1560,11 @@ async function api(req, res, urlPath, query) {
         const acc = Math.min(Math.max(Number(b.accuracy) || 0, 0), 500);
         const hasPos = Number.isFinite(lat) && Number.isFinite(lng) && b.lat !== null && b.lng !== null;
         const exact = l.lat != null && l.lng != null && !l.geoApprox;
-        if (exact && !hasPos) fail(400, "Turn on location for this app so we can confirm you're at the line, then try again.");
+        if (exact && !hasPos && !atVenue(l)) fail(400, "Turn on location for this app so we can confirm you're at the line, then try again.");
         let verified = false;
         let dist = null;
-        if (hasPos && l.lat != null) {
+        const roughAtVenue = atVenue(l) && Number(b.accuracy) > 500;
+        if (hasPos && l.lat != null && !roughAtVenue) {
           dist = Math.round(metersBetween({ lat, lng }, { lat: l.lat, lng: l.lng }));
           if (exact && dist - acc > CHECKIN_RADIUS_M) {
             const mi = (dist / 1609.34).toFixed(1);
@@ -1506,7 +1620,7 @@ async function api(req, res, urlPath, query) {
         fail(400, `That's over the ${dollars(l.itemBudget)} limit for this item. Message ${l.ownerName || "the booker"} before buying anything over the limit.`);
       const img = receiptImage(b.receipt);
       // Fake-receipt checks: the waiter must be at the store, and the photo can't be one used on another job.
-      checkAtPlace(l, b, "the store");
+      const placeChecked = checkAtPlace(l, b, "the store");
       const sha = crypto.createHash("sha256").update(img.data).digest("hex");
       const dhash = /^[0-9a-f]{16}$/.test(String(b.receiptHash || "")) ? String(b.receiptHash) : null;
       const sameRun = (x) => x.bundled && l.bundled && standKey(x) === standKey(l) && x.purchasedAt && Date.now() - new Date(x.purchasedAt).getTime() < 3 * 3600e3;
@@ -1520,8 +1634,16 @@ async function api(req, res, urlPath, query) {
       updated = await store.updateLine(id, l.status, {
         status: "handoff", handoffAt: new Date(), purchasedAt: new Date(), pos: null, hasReceipt: true, receiptSha: sha, receiptDhash: dhash,
         itemTotal: Math.round(total * 100) / 100, itemNote: text(b.note, "the note", 200, { required: false }),
+        purchaseVerified: l.lat != null && l.lng != null && !l.geoApprox ? placeChecked : null,
       });
-      if (updated) ping(l.ownerId, "Your item was bought", `${firstName(me.name)} bought ${l.qty > 1 ? `${l.qty} × ` : ""}${l.item || l.what} for ${dollars(total)}. Meet up within ${meetTxt(l)}.`);
+      // A purchase recorded without a location fix (allowed inside venues): flag the waiter for review
+      // once it keeps happening.
+      if (updated && updated.purchaseVerified === false) {
+        const weekAgo = Date.now() - 7 * 864e5;
+        const n = (await store.listLines({ waiterId: me.id })).filter((x) => x.purchaseVerified === false && x.purchasedAt && new Date(x.purchasedAt).getTime() > weekAgo).length;
+        if (n >= 3) flagAdmins(`Review waiter: ${n} purchases without location`, `${me.name} (${me.email}) recorded ${n} purchases this week without a location fix (allowed inside venues; the receipt photo is the proof). Latest: job #${l.id} at ${l.place}. Check the receipts on the admin page.`);
+      }
+      if (updated) pingKey(l.ownerId, "Your item was bought", `${firstName(me.name)} bought ${l.qty > 1 ? `${l.qty} × ` : ""}${l.item || l.what} for ${dollars(total)}. Meet up within ${meetTxt(l)}.`);
     } else if (action === "soldout") {
       if (!pickup) fail(400, "Only pickups can be marked sold out.");
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the store first.");
@@ -1641,7 +1763,7 @@ async function api(req, res, urlPath, query) {
           id: l.id, kind: l.kind, place: l.place, what: l.what, status: l.status, outcome: l.outcome, startText: l.startText,
           itemTotal: l.itemTotal, hasReceipt: l.hasReceipt,
           startAt: l.startAt, rate: l.rate, ownerId: l.ownerId, ownerName: l.ownerName, waiterId: l.waiterId,
-          waiterName: l.waiterName, checkinVerified: l.checkinVerified, createdAt: l.createdAt, bill: billing(l),
+          waiterName: l.waiterName, checkinVerified: l.checkinVerified, purchaseVerified: l.purchaseVerified, createdAt: l.createdAt, bill: billing(l),
           payStatus: l.payStatus, payCaptured: l.payCaptured, payError: l.payError,
         })),
         users: users.map((u) => ({
