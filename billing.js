@@ -131,7 +131,10 @@ function billing(line, now = Date.now()) {
   const fullTimePay = addOn ? addOnPay(line) : minApplied ? jobMin : rawPay;
   const grouped = !addOn && !!line.bundled && billed > 0 && line.outcome !== "cancelled_late";
   const discount = grouped ? groupDiscountFor(line) : 0;
-  const groupMin = v6(line) ? jobMin : small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
+  // v8 (Nov 7, 2026): no per-booker floor in a run. Each booker pays the group price on the real time (at
+  // least one 15-minute step), and the run as a whole still pays the waiter at least $17/hr, because a run
+  // has 2+ bookers each paying 80-90% of the rate: 2 x 90% = 180% of $17/hr at the least.
+  const groupMin = Number(line.pricingV) >= 8 ? 0 : v6(line) ? jobMin : small ? roundCents(SMALL_MIN_PAY * BUNDLE_RATE) : BUNDLE_MIN_PAY;
   const timePay = grouped ? Math.max(groupMin, roundCents(rawPay * (1 - discount))) : fullTimePay;
   const bundleSaving = grouped ? roundCents(fullTimePay - timePay) : 0;
   const runSize = Math.max(2, Number(line.bundleSize) || 2);

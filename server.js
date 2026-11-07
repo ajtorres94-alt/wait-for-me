@@ -454,7 +454,7 @@ function lineFields(b, event = null) {
     eventId: event ? event.id : null,
     // A start within the next 30 minutes is ASAP: it adds a rush bonus for the waiter, except at events (where nearly everything is ASAP).
     rush: isAsapStart(startAt) && !event,
-    pricingV: 7,
+    pricingV: 8,
     standId: null,
     seatSection: text(b.seatSection, "your section", 12, { required: false }) || null,
     seatRow: text(b.seatRow, "your row", 8, { required: false }) || null,

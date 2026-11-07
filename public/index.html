@@ -372,7 +372,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
     <div class="intro-ticket" aria-hidden="true"><span>W!</span></div>
     <div class="intro-word">Wait For Me!</div>
     <div class="intro-tag">We wait. You don't.</div>
-    <div class="intro-price">Group runs cost less. Tap Wait &amp; save when you order.</div>
+    <div class="intro-price">Group runs save 10–20% on waiter time. Tap Wait &amp; save when you order.</div>
     <button class="intro-tap" type="button" id="introTap">Tap to start</button>
   </div>
 </div>
@@ -504,7 +504,7 @@ function billOf(j){
   const bought=kindOf(j)==='pickup'&&!!j.purchasedAt,end=bought?Date.parse(j.purchasedAt):nowS();
   const w=ci?Math.max(0,(end-ci)/3600e3):0;
   let billed=Math.min(approved,Math.max(MIN_HOURS,Math.ceil(w*4-1e-9)/4));if(!ci)billed=0;
-  const small=isSmallJ(j),jmin=jminOf(j),addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?addonPayOf(j):minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDiscOf(j):0,time=grp?Math.max(v6(j)?jmin:small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
+  const small=isSmallJ(j),jmin=jminOf(j),addOn=!!j.addOn&&billed>0,raw=r2(billed*j.rate),minApplied=!addOn&&billed>0&&raw<jmin,full=addOn?addonPayOf(j):minApplied?jmin:raw,grp=!addOn&&!!j.bundled&&billed>0,disc=grp?groupDiscOf(j):0,time=grp?Math.max(+j.pricingV>=8?0:v6(j)?jmin:small?r2(SMALL_MIN_PAY*.75):BUNDLE_MIN_PAY,r2(raw*(1-disc))):full,saved=grp?r2(full-time):0,item=bought&&j.outcome!=='pickup_noshow'?+j.itemTotal||0:0,drop=bought&&j.handoff==='dropoff'?+j.dropoffFee||0:0;
   const size=Math.max(2,+j.bundleSize||2),cap=Math.max(jmin,Math.max(GROUP_MAX_HOURLY,+j.rate)*billed),wtime=grp?Math.min(time,r2(cap/size)):time,rush=j.rush&&billed>0?RUSH_FEE:0,boost=+j.boost>0&&billed>0?+j.boost:0,pay=r2(wtime+drop+rush+boost),svc=addOn?ADDON_FEE:v2(j)?(billed>0?svcV2(time,item,small,j.pricingV):0):r2(time*FEE),book=!v2(j)&&billed>0?bookingFeeFor(j):0,ifee=v2(j)?0:r2(item*ITEM_FEE),tiny=+j.pricingV>=4&&billed>0&&!addOn&&!grp&&!(j.extraItems||[]).length&&+j.itemBudget>0&&+j.itemBudget<=12.5?0.99:0,fee0=r2(svc+book+ifee+(time-wtime)+tiny),promo=billed>0&&+j.promoOff>0?Math.min(+j.promoOff,fee0):0,fee=r2(fee0-promo);
   const live=!!ci&&!bought;
   return{approved,waited:w,billed,time,wtime,saved,bundled:grp,disc,addOn,minApplied,drop,item,pay,svc,book,ifee,rush,boost,tiny,promo,fee,payout:r2(pay+item),total:r2(pay+item+fee),timeUp:live&&w>=approved,nearUp:live&&w>=approved-0.25}}
@@ -810,7 +810,7 @@ function customerMine(){
           <div class="offer-row"><span><b class="mono">Up to ${money(upTo({...j,rate:o.rate}))} total</b><span class="meta"> · ${fmtRate(o.rate)}/hr waiter time, fees included</span></span>
           <span class="btns"><button class="btn small" data-act="accept-offer" data-id="${j.id}" data-offer="${o.id}">Accept</button><button class="btn ghost small" data-act="decline-offer" data-id="${j.id}" data-offer="${o.id}">Decline</button></span></div></div>`).join('')}
         <div class="hint">Accepting books that waiter at their rate. You listed ${fmtRate(j.rate)}/hr. Offers expire after 12 hours.</div></div>`;
-      if(!j.expired&&j.runs&&j.runs.length)extra+=`<div class="runs"><b>Same stand? Join the group run and pay less</b><div class="hint">Others are ordering from a stand with a similar name. If it's the same stand as yours, join their run: one waiter buys everything in one wait, and everyone saves on waiter time: 10% with 2 orders, 15% with 3, 20% with 4 or more.</div>${j.runs.map(g=>`<div class="offer-row"><span><b>${esc(g.place)}</b><span class="meta"> · ${g.orders} order${g.orders===1?'':'s'}${g.waiterOn?' · a waiter is on it':''}</span></span><button class="btn small" data-act="join-run" data-id="${j.id}" data-target="${g.targetId}">Same stand, join</button></div>`).join('')}</div>`;
+      if(!j.expired&&j.runs&&j.runs.length)extra+=`<div class="runs"><b>Same stand? Join the group run and save 10–20%</b><div class="hint">Others are ordering from a stand with a similar name. If it's the same stand as yours, join their run: one waiter buys everything in one wait, and everyone saves on waiter time: 10% with 2 orders, 15% with 3, 20% with 4 or more.</div>${j.runs.map(g=>`<div class="offer-row"><span><b>${esc(g.place)}</b><span class="meta"> · ${g.orders} order${g.orders===1?'':'s'}${g.waiterOn?' · a waiter is on it':''}</span></span><button class="btn small" data-act="join-run" data-id="${j.id}" data-target="${g.targetId}">Same stand, join</button></div>`).join('')}</div>`;
     }
     if(active){
       actions=bought?'':`<button class="btn ${b.nearUp?'':'ghost '}small" data-act="extend" data-id="${j.id}">Add 30 min (up to +${money(0.5*j.rate*(1+FEE))})</button>`;
@@ -910,7 +910,7 @@ function standHint(){const x=evStands(postEvent).find(s=>s.id===postStand);if(!x
   return[x.location&&`Where: ${esc(x.location)}`,x.sells&&`Sells: ${esc(x.sells)}`,x.notes&&esc(x.notes)].filter(Boolean).join(' · ')||'Your waiter will buy it here.'}
 function runTag(r,n){if(r.leavesAt&&new Date(r.leavesAt)>Date.now()&&!r.waiterInLine)return`waiter leaving in ${leftTxt(r.leavesAt)}: join, save ${Math.round(groupDisc(n+1)*100)}%`;return r.waiterInLine?`waiter in line now: join their run, save ${Math.round(groupDisc(n+1)*100)}%`:r.waiterHeading?`waiter heading there now: join, save ${Math.round(groupDisc(n+1)*100)}%`:`${n} ordering: join, save ${Math.round(groupDisc(n+1)*100)}%`}
 function runChips(){const rs=STAND_RUNS.filter(r=>r.eventId===postEvent).sort((a,b)=>(b.waiterInLine-a.waiterInLine)||(b.waiterHeading-a.waiterHeading)||(b.orders-a.orders));if(!rs.length)return'';
-  return`<div class="runs" style="margin:6px 0"><b>Join a run and pay less</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–20% on waiter time. If a waiter is already in line, your order joins their run at the same price as everyone in it.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
+  return`<div class="runs" style="margin:6px 0"><b>Join a run and save 10–20%</b><div class="hint">Others at this event are ordering from these stands right now. If yours is sold there, tap it: one waiter buys for everyone, so you save 10–20% on waiter time. If a waiter is already in line, your order joins their run at the same price as everyone in it.</div><div class="filters">${rs.map(r=>`<button type="button" class="chip" data-runplace="${esc(r.place)}">${esc(r.place)} · ${r.leavesAt&&!r.waiterInLine&&new Date(r.leavesAt)>Date.now()?`waiter leaving in <span data-leaves="${r.leavesAt}">${leftTxt(r.leavesAt)}</span>: join, save ${Math.round(groupDisc(r.orders+1)*100)}%`:runTag(r,r.orders)}</button>`).join('')}</div></div>`}
 function eventHint(){const ev=EVENTS.find(e=>e.id===postEvent);if(!ev)return'Pick the show or fair you\'re at, and waiters already inside get an alert.';
   return ev.here?`${ev.here} waiter${ev.here===1?' is':'s are'} at ${esc(ev.name)} right now and will get an alert.`:`Waiters who check in at ${esc(ev.name)} will see your request first.`}
 function setEvent(id){const was=postEvent;postEvent=id||null;if(!editing&&postDay==='today'&&!was!==!postEvent&&$('#w-hr')){setWhen(postEvent?nowSlot():firstNoFee());syncWheels()}const f=$('#postForm');f.querySelectorAll('[data-event]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.event||null)===String(postEvent)));
@@ -1002,8 +1002,8 @@ function updateQuote(){
   const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small)+tiny,total=time+budget+fee+rush+boost;
   const likelyTime=Math.max(jmin,0.25*r),est=price*qty+xEst,likelyRaw=likelyTime+est+svcV2(likelyTime,est,small)+tiny+rush+boost;
   const credit=!editing&&CREDIT?Math.min(CREDIT,svcV2(likelyTime,est,small)+tiny):0,likely=likelyRaw-credit;
-  // If Wait & save forms a run of 2: time at the group price (never under one 15-minute step), no small-order fee.
-  const runTime=Math.max(jmin,r2(likelyTime*(1-0.10))),runLikely=runTime+est+svcV2(runTime,est,small)+boost-(credit?Math.min(CREDIT,svcV2(runTime,est,small)):0);
+  // If Wait & save forms a run of 2: time at the group price (10% off), no small-order fee.
+  const runTime=r2(likelyTime*(1-0.10)),runLikely=runTime+est+svcV2(runTime,est,small)+boost-(credit?Math.min(CREDIT,svcV2(runTime,est,small)):0);
   const st=evStands(postEvent).find(x=>x.id===postStand),run=st&&STAND_RUNS.find(x=>x.eventId===postEvent&&x.place.trim().toLowerCase()===st.name.trim().toLowerCase());
   const addOn=!!(run&&run.waiterInLine);
   if(pk){$('#l-price').textContent=qty>1?'Estimated price each':'Estimated price';
@@ -1023,7 +1023,7 @@ function updateQuote(){
     +(tiny?frow('Small-order fee',money(tiny),'For solo orders an estimated $10 or less. Add a second item or join a group run and it goes away.'):'')
     +(credit?frow('First-order credit',`−${money(credit)}`,'New bookers get this off our fee on their first order. Your waiter\'s pay doesn\'t change.'):'')
     +(rush?frow('ASAP fee',money(rush),'You picked a start within 30 minutes. All of it goes to your waiter.'):postEvent?'':frow('ASAP fee','$0.00',ws?'No ASAP fee with Wait & save.':`Only if the start is within 30 minutes (before ${tLabel(firstNoFee())} today).`))
-    +`<small class="fnote">Joining a group run takes 10–20% off the waiter's time. Waiter time is $17/hr in 15-minute steps, so you pay at least one step ($4.25).</small></details>`
+    +`<small class="fnote">Waiter time is $17/hr in 15-minute steps, so a solo order pays at least one step ($4.25). In a group run that step costs 10–20% less, and your waiter still earns at least $17/hr.</small></details>`
     +`<details class="feedet"><summary>Most it could cost: ${money(total)}</summary>`
     +row(`Waiter, up to ${h} hr × ${fmtRate(r)}/hr`,money(time))
     +(pk?row(postExtras.length?'Items, up to':qty>1?`${qty} items, up to`:'Item, up to',budget?money(budget):'—'):'')
