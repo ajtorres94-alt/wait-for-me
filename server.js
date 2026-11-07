@@ -466,6 +466,22 @@ function lineFields(b, event = null) {
     checkVenue(place, f.what, notes);
     return f;
   }
+  Object.assign(f, itemFields(b));
+  f.handoff = "meet"; // drop-off was retired in Nov 2026: the booker meets the waiter
+  // The waiter holds the item for 4 hours after buying it, so meeting after a show works.
+  // (Bookers are asked to meet within 30 minutes for food; the app can't tell what's food.)
+  f.meetWithin = b.meetWithin === undefined ? 240 : Number(b.meetWithin);
+  if (!MEET_CHOICES.includes(f.meetWithin)) fail(400, "Pick when you'll meet your waiter.");
+  f.what = f.item;
+  checkVenue(place, f.item, notes);
+  checkRestricted(f, notes);
+  return f;
+}
+
+// What to buy: the main item, quantity, details, backup, limit, and up to 4 more items from the same stand.
+// Shared by posting a request and by changing the order while the waiter is in line.
+function itemFields(b) {
+  const f = {};
   f.item = text(b.item, "what to buy", 120);
   f.itemDetails = text(b.itemDetails, "the item details", 200, { required: false });
   f.itemBackup = text(b.itemBackup, "a backup choice", 120, { required: false });
@@ -482,17 +498,14 @@ function lineFields(b, event = null) {
     if (price !== null && !(price > 0 && price <= MAX_ITEM)) fail(400, `Check the estimated price for item ${i + 2}.`);
     return { item: text(x.item, `item ${i + 2}`, 80), details: text(x.details, `item ${i + 2}'s details`, 80, { required: false }), qty, price };
   });
-  f.handoff = "meet"; // drop-off was retired in Nov 2026: the booker meets the waiter
-  // The waiter holds the item for 4 hours after buying it, so meeting after a show works.
-  // (Bookers are asked to meet within 30 minutes for food; the app can't tell what's food.)
-  f.meetWithin = b.meetWithin === undefined ? 240 : Number(b.meetWithin);
-  if (!MEET_CHOICES.includes(f.meetWithin)) fail(400, "Pick when you'll meet your waiter.");
-  f.what = f.item;
-  checkVenue(place, f.item, notes);
-  if ([f.item, f.itemDetails, f.itemBackup, notes, ...f.extraItems.flatMap((x) => [x.item, x.details])].some((t) => RESTRICTED.test(t || "")))
-    fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, tickets or admission (including wristbands and parking passes), lottery tickets, gift cards, or money orders.");
   return f;
 }
+function checkRestricted(f, notes = "") {
+  if ([f.item, f.itemDetails, f.itemBackup, notes, ...(f.extraItems || []).flatMap((x) => [x.item, x.details])].some((t) => RESTRICTED.test(t || "")))
+    fail(400, "Waiters can't buy alcohol, tobacco or vapes, cannabis, prescriptions, weapons, tickets or admission (including wristbands and parking passes), lottery tickets, gift cards, or money orders.");
+}
+const orderSummary = (l) => [`${l.qty > 1 ? l.qty + " × " : ""}${l.item}${l.itemDetails ? " (" + l.itemDetails + ")" : ""}`, ...(l.extraItems || []).map((x) => `${x.qty > 1 ? x.qty + " × " : ""}${x.item}${x.details ? " (" + x.details + ")" : ""}`)].join(", ");
+const MAX_ORDER_CHANGES = 3;
 
 // A stand picked from the venue's list: the request's place becomes the stand's exact name, so
 // everyone ordering from it lands in the same group run.
@@ -1447,7 +1460,7 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot|run-window|walking)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot|run-window|walking|change-order|change-seen)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
@@ -1639,6 +1652,42 @@ async function api(req, res, urlPath, query) {
           ping(x.waiterId, "New order at your stand", `Someone added ${moved.item || "an order"} at ${moved.place}. Claim it in Find jobs to buy it on the same run.`);
         }
       return send(res, 200, { line: await one(me, moved) });
+    }
+
+    // The booker changes what to buy while the waiter is on the way or in line (not after buying).
+    // The waiter is alerted and taps Got it; the booker sees whether they've seen it.
+    if (action === "change-order") {
+      if (l.ownerId !== me.id) fail(403, "Only the person who posted this can change the order.");
+      if (kindOf(l) !== "pickup") fail(400, "Only pickups have an order to change.");
+      if (l.status === "open") fail(409, "No one has taken it yet, so use Edit instead.");
+      if (!["claimed", "enroute", "inline", "nearfront"].includes(l.status) || l.purchasedAt) fail(409, "Your waiter already bought it, so the order can't change now.");
+      if ((l.changeCount || 0) >= MAX_ORDER_CHANGES) fail(409, `You've changed this order ${MAX_ORDER_CHANGES} times. Message your waiter for anything else.`);
+      const f = itemFields(b);
+      checkRestricted(f);
+      const owedElsewhere = outOfPocket(await store.listLines({ waiterId: l.waiterId })) - Number(l.itemBudget);
+      if (f.itemBudget > Number(l.itemBudget) && owedElsewhere + f.itemBudget > FLOAT_MAX)
+        fail(409, `Your waiter can't cover more than ${dollars(FLOAT_MAX)} of items at once, so the most this limit can be is ${dollars(Math.max(Number(l.itemBudget), FLOAT_MAX - owedElsewhere))}.`, "float_cap");
+      const before = orderSummary(l);
+      // A bigger limit needs a bigger card hold before the waiter can spend it.
+      if (pay.enabled() && l.payStatus === "held" && pay.maxCharge({ ...l, ...f }) > l.payHeld) {
+        const held = await pay.placeHold(store, { ...l, ...f }, { replace: true });
+        if (held && held.payStatus === "failed") fail(402, "Your card didn't cover the higher limit, so the order wasn't changed. Update your card in Account or keep the limit the same.");
+      }
+      updated = await store.updateLine(id, l.status, {
+        ...f, what: f.item, changeCount: (l.changeCount || 0) + 1, changeAt: new Date(), changeSeenAt: null, changeFrom: before.slice(0, 400),
+        ...(l.prepStatus && l.prepStatus !== "new" ? { prepStatus: "new", prepAt: new Date() } : {}),
+      });
+      if (!updated) fail(409, "Your waiter just bought it, so the order can't change now.");
+      const after = orderSummary(updated);
+      ping(l.waiterId, "Order changed", `${firstName(me.name)} changed their order. Now: ${after}. Limit ${dollars(updated.itemBudget)}. Open the job and tap Got it.`.slice(0, 230));
+      return send(res, 200, { line: await one(me, updated) });
+    }
+    if (action === "change-seen") {
+      if (l.waiterId !== me.id) fail(403, "Only your waiter can do that.");
+      if (!l.changeAt || l.changeSeenAt) return send(res, 200, { line: await one(me, l) });
+      updated = await store.updateLine(id, l.status, { changeSeenAt: new Date() });
+      if (updated) ping(l.ownerId, "Your waiter saw your change", `${firstName(me.name)} has your updated order.`);
+      return send(res, 200, { line: await one(me, updated || l) });
     }
 
     if (action === "raise-limit") {

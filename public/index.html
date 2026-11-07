@@ -833,6 +833,8 @@ function customerMine(){
     return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3>${pickup?'':`<div class="meta">${esc(j.what)}</div>`}</div>${pill}</div>
       ${j.status==='open'&&j.flexUntil&&Date.parse(j.flexUntil)>nowS()?`<div class="note"><b>Wait &amp; save:</b> looking for others at this stand until ${clockOf(Date.parse(j.flexUntil))}. If a group run forms you get the group price; if not, it goes out at the regular price.</div>`:''}
       ${j.status!=='open'?(pickup&&j.waiterId?tracker(j):steps(j)):''}
+      ${pickup&&j.changeAt&&!j.purchasedAt?`<div class="hint">${j.changeSeenAt?`${esc(firstOf(j.waiterName))} saw your change.`:`Change sent ${agoTxt(Date.parse(j.changeAt))}. Waiting for ${esc(firstOf(j.waiterName))} to see it.`}</div>`:''}
+      ${pickup&&['claimed','enroute','inline','nearfront'].includes(j.status)&&!j.purchasedAt&&(j.changeCount||0)<3?`<div class="btns"><button class="btn ghost small" data-act="edit" data-id="${j.id}">Change order</button></div>`:''}
       <div class="stepnote"><span><b>${j.status==='open'&&j.expired?'Start time passed':stLabel(j)}</b></span><span>${j.waiterId?'Your waiter':j.expired?'Hidden from waiters':'Visible to waiters now'}</span></div>
       ${itemBox(j,'customer')}
       ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active||j.chatOpen?chatHTML(j,j.waiterName):''}${reportHTML(j,'customer')}</article>`}).join('')}</div>`}
@@ -857,7 +859,7 @@ function setWhen(d){const now=new Date(),day=x=>new Date(x.getFullYear(),x.getMo
   wheel.hr=((d.getHours()%12)||12)-1;wheel.mn=Math.floor(d.getMinutes()/15);wheel.ap=d.getHours()>=12?1:0}
 let postDate='';
 function customerPost(){
-  const e=editing,pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d);
+  const e=editing,pk=postKind==='pickup',v=(k,d='')=>esc(e&&e[k]!=null?e[k]:d),chg=!!(e&&e.status!=='open'),hid=chg?' hidden':'';
   if(e){const st=e.startAt?new Date(e.startAt):null;setWhen(st&&st>new Date()?st:nowSlot())}
   else{setWhen(postEvent?nowSlot():firstNoFee());wheel.qty=0}
   const xe=e?(e.extraItems||[]).reduce((s,x)=>s+(+x.price||0)*(+x.qty||1),0):0,price=e&&e.itemBudget?Math.max(1,Math.round((e.itemBudget-(xe?limitFor(xe,1):0))/PRICE_BUFFER/(e.qty||1))):'';
@@ -865,12 +867,13 @@ function customerPost(){
   const dayBtn=(k,t)=>`<button type="button" class="chip" aria-pressed="${postDay===k}" data-day="${k}">${t}</button>`;
   const minDate=localInput(new Date()).slice(0,10);
   return`<form class="post" id="postForm" novalidate>
-   ${EVENTS.length?`<div class="field"><span class="wlabel" id="l-event">At an event?</span><div class="filters" role="group" aria-labelledby="l-event">
+   ${chg?`<div class="note"><b>Change your order.</b> ${esc(firstOf(e.waiterName))} gets an alert and confirms they've seen it. Changes can't be made once it's bought${e.status==='nearfront'?`, and ${esc(firstOf(e.waiterName))} is almost at the register, so message them too`:''}.</div>`:''}
+   ${EVENTS.length&&!chg?`<div class="field"><span class="wlabel" id="l-event">At an event?</span><div class="filters" role="group" aria-labelledby="l-event">
      <button type="button" class="chip" aria-pressed="${!postEvent}" data-event="">No</button>${EVENTS.map(ev=>`<button type="button" class="chip" aria-pressed="${postEvent===ev.id}" data-event="${ev.id}">${esc(ev.name)} · ${evWhen(ev)} · ${ev.here} waiter${ev.here===1?'':'s'} here</button>`).join('')}</div>
      <small id="h-event">${eventHint()}</small></div>`:''}
-   <div id="h-runs">${runChips()}</div>
-   <div id="stand-pick">${standPicker()}</div>
-   <div class="field" id="place-field"${postStandChosen()?' hidden':''}><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
+   <div id="h-runs"${hid}>${chg?'':runChips()}</div>
+   <div id="stand-pick"${hid}>${chg?'':standPicker()}</div>
+   <div class="field" id="place-field"${postStandChosen()||chg?' hidden':''}><label for="f-place" id="l-place">${pk?'Where should they buy it?':'Where is the spot?'}</label><input id="f-place" maxlength="120" placeholder="${pk?'e.g. Merch stand, Kia Forum, Inglewood':'e.g. Rose Parade route, Pasadena'}" value="${v('place')}"><small id="h-place">${pk?'Include the city. For concert merch, say if the stand is outside the gates; inside, your waiter needs a ticket.':'Include the city so waiters nearby can find it.'}</small></div>
    <div class="grp" data-for="pickup"${pk?'':' hidden'}>
      <div class="field"><label for="f-item">What should they buy?</label><input id="f-item" maxlength="120" placeholder="e.g. Tour hoodie" value="${v('item')}"><small>Up to ${MAX_QTY} of the same item. Some drops limit 1 per person.</small></div>
      <div class="field"><label for="f-details">Size, flavor, or other details <span class="meta">(optional)</span></label><input id="f-details" maxlength="200" placeholder="e.g. Size L, black" value="${v('itemDetails')}"></div>
@@ -878,20 +881,20 @@ function customerPost(){
      <div class="qtyrow"><div class="wheels one">${wheelHTML('qty','How many?',QTYS,String,wheel.qty)}</div>
        <div class="field"><label for="f-price" id="l-price">${QTYS[wheel.qty]>1?'Estimated price each':'Estimated price'}</label><div class="money-in"><span aria-hidden="true">$</span><input id="f-price" type="number" inputmode="decimal" min="1" max="${MAX_ITEM}" step="1" placeholder="40" value="${price}"></div><small id="h-price">Your waiter pays and is paid back from your card. You're charged the receipt price.</small></div></div>
      <div id="extras">${extrasHTML()}</div>
-     <div class="field"><span class="wlabel">Handover</span><small id="h-meet"></small></div>
-     <div class="field"><span class="wlabel">Where you're sitting <span class="meta">(optional)</span></span>
+     <div class="field"${hid}><span class="wlabel">Handover</span><small id="h-meet"></small></div>
+     <div class="field"${hid}><span class="wlabel">Where you're sitting <span class="meta">(optional)</span></span>
        <div class="seatrow"><label class="sr" for="f-sec">Section</label><input id="f-sec" maxlength="12" placeholder="Section" value="${v('seatSection')}"><label class="sr" for="f-row">Row</label><input id="f-row" maxlength="8" placeholder="Row" value="${v('seatRow')}"></div>
        <small>Only your waiter sees it, so they can find you or meet you near your section.</small></div>
    </div>
-   <div class="field"><span class="wlabel" id="l-when">When should they get there?</span>
+   <div class="field"${hid}><span class="wlabel" id="l-when">When should they get there?</span>
      <div class="filters" role="group" aria-labelledby="l-when">${dayBtn('today','Today')}${dayBtn('tomorrow','Tomorrow')}${dayBtn('date','Pick a date')}</div>
      <input id="f-date" type="date" min="${minDate}" value="${postDate}" aria-label="Date"${postDay==='date'?'':' hidden'} style="background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px">
      <div class="wheels three" id="when-wheels">${wheelHTML('hr','Hour',HRS,String,wheel.hr)}${wheelHTML('mn','Minute',MINS,fmtMin,wheel.mn)}${wheelHTML('ap','AM or PM',AMPM,String,wheel.ap)}</div>
      <small id="h-when"></small></div>
-   <div class="field"><small id="h-rate">Waiters are paid ${money(STANDARD_RATE)}/hr for their time, in 15-minute steps.</small></div>
+   <div class="field"${hid}><small id="h-rate">Waiters are paid ${money(STANDARD_RATE)}/hr for their time, in 15-minute steps.</small></div>
    ${e?'':`<label class="check waitsave"><input type="checkbox" id="f-waitsave"${postWaitSave?' checked':''}> <span><b>Wait &amp; save</b><br><small>Let your order wait up to 10 minutes for others at the same stand. If a group run forms you pay less, and there's no ASAP fee. If not, it goes out at the regular price.</small></span></label>`}
    <div class="quote" id="quote"></div>
-   <button class="btn block" type="submit">${e?'Save changes':'Post request'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">Cancel editing</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
+   <button class="btn block" type="submit">${chg?'Send change to your waiter':e?'Save changes':'Post request'}</button>${e?`<button class="btn ghost block" type="button" data-act="edit-cancel">${chg?'Keep my order as is':'Cancel editing'}</button>`:''}<span class="meta" id="formErr" role="alert"></span></form>`}
 function evWhen(ev){const s=new Date(ev.startsAt);if(ev.live)return'Now';const t=s.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}),d=s.toDateString()===new Date().toDateString()?'Today':s.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});return`${d} ${t}`}
 // Stands at this event with orders waiting: posting at one of them joins that group run.
 let STAND_RUNS=[],postStand='';
@@ -1140,6 +1143,9 @@ function waiterShifts(){
      if(j.status==='claimed'||j.status==='enroute')extra=`<div class="hint">Tap <b>${pickup?'I\'m in line':'I\'m at the spot'}</b> once you're there. We check your phone's location to confirm it, and that starts the clock you're paid on.</div>`;
      if(!pickup&&j.status!=='done')extra+=`<div class="rule">${SPOT_RULE_SHORT}</div>`;
      if(pickup&&(j.status==='inline'||j.status==='nearfront'))ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span><div class="etas"><span class="meta">Time left:</span>${[2,5,10,15].map(m=>`<button class="chip${j.etaMin===m?' on':''}" data-act="eta" data-id="${j.id}" data-min="${m}" aria-pressed="${j.etaMin===m}">${m===15?'15+':'~'+m} min</button>`).join('')}</div>`;
+     let chgTop='';if(pickup&&j.changeAt&&!bought)chgTop=j.changeSeenAt?`<div class="hint">Order changed ${agoTxt(Date.parse(j.changeAt))}. Was: ${esc(j.changeFrom||'')}</div>`
+       :`<div class="warnnote" role="alert"><b>${O} changed the order ${agoTxt(Date.parse(j.changeAt))}.</b> Now: ${esc([`${j.qty>1?j.qty+' × ':''}${j.item||''}${j.itemDetails?' ('+j.itemDetails+')':''}`,...(j.extraItems||[]).map(x=>`${x.qty>1?x.qty+' × ':''}${x.item}${x.details?' ('+x.details+')':''}`)].join(', '))}. Limit ${money(j.itemBudget)}.<br><span class="meta">Was: ${esc(j.changeFrom||'')}</span>
+         <div class="btns"><button class="btn small" data-act="change-seen" data-id="${j.id}">Got it</button></div></div>`;
      if(pickup&&(j.status==='inline'||j.status==='nearfront')){
        const d=buyDraft[j.id]||{};
        if(!secured)extra+=`<div class="warnnote">Don't buy anything yet. ${j.payProblem==='waiter'?'Your payout account needs an update with Stripe first (Account → Finish payout setup).':'The booker\'s payment isn\'t secured, so you might not be paid back. We\'ve asked them to update their card.'}</div>`;
@@ -1177,7 +1183,7 @@ function waiterShifts(){
      const outfit=j.status!=='done'?`<div class="codebox"><label class="meta" for="outfit-${j.id}" style="width:100%">Optional: what you're wearing, so ${O} can spot you.</label><input id="outfit-${j.id}" style="flex:1;min-width:0;letter-spacing:0;text-align:left;font-family:var(--f-body);font-weight:500;font-size:14px" maxlength="120" value="${esc(me.look)}" placeholder="e.g. Red cap, blue jacket"><button class="btn ghost small" data-act="outfit" data-id="${j.id}">Save</button></div>`:'';
      return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3>${pickup?'':`<div class="meta">${esc(j.what)}</div>`}</div>${pillFor(j)}</div>
        ${steps(j)}<div class="stepnote"><span><b>${stShort(j)}</b></span>${j.pos&&j.status!=='done'&&pickup?`<span>Place in line: <b class="mono">${j.pos}</b></span>`:''}</div>
-       ${itemBox(j,'waiter')}
+       ${chgTop}${itemBox(j,'waiter')}
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
        ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'||j.chatOpen?chatHTML(j,j.ownerName):''}${reportHTML(j,'waiter')}</article>`}).join(''):`<div class="empty">No jobs yet. Claim a job from <b>Find jobs</b>.</div>`}</div>`}
 
@@ -1410,6 +1416,7 @@ function render(){
           const xe=xs.reduce((s,x)=>s+x.price*x.qty,0);if(p*q+xe>MAX_ITEM)throw new Error(`Orders over ${money(MAX_ITEM)} in total aren't supported yet.`);
           Object.assign(body,{item:$('#f-item').value,itemDetails:$('#f-details').value,itemBackup:$('#f-backup').value,qty:q,itemBudget:Math.min(MAX_ITEM,limitFor(p,q)+(xe?limitFor(xe,1):0)),extraItems:xs.map(x=>({item:x.item,details:x.details||'',qty:+x.qty||1,price:+x.price})),
           handoff:'meet',seatSection:$('#f-sec').value,seatRow:$('#f-row').value})}
+        if(editing&&editing.status!=='open'){await api(`/lines/${editing.id}/change-order`,{method:'POST',body});postExtras=[];editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast('Change sent. Your waiter gets an alert.');return}
         if(evStands(postEvent).length){if(!postStand)throw new Error('Choose a stand, or pick Other / not listed.');if(postStandChosen())body.standId=postStand}
         const res=await api(editing?`/lines/${editing.id}/edit`:'/lines',{method:'POST',body});postExtras=[];postBoost=0;postWaitSave=false;
         if(res.joinedRun){editing=null;postEvent=null;postStand='';tab.customer='mine';await load(true);window.scrollTo(0,0);toast(`Joined ${res.joinedRun.waiterName}'s run at ${res.line.place}. You'll get the group price.`);maybeInstall();return}
@@ -1513,6 +1520,7 @@ $('#view').addEventListener('click',async e=>{
       const pos=await getPos();const r=await api(`/lines/${id}/purchase`,{method:'POST',body:{total,receipt:d.photo,receiptHash:d.hash,note:document.getElementById('bnote-'+id).value,...(pos||{})}});
       delete buyDraft[id];toast(`Purchase recorded: ${money(r.line.itemTotal)}. ${r.line.ownerName} can see the receipt.`)}
     if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});if(lastData)lastData.shifts=lastData.shifts.filter(x=>x.id!==+id);toast('Line released. Other waiters can claim it now.')}
+    if(a==='change-seen'){await api(`/lines/${id}/change-seen`,{method:'POST'});toast('Your booker knows you saw the change.');load(true);return}
     if(a==='eta'){await api(`/lines/${id}/position`,{method:'POST',body:{etaMin:+b.dataset.min}});toast('Your booker can see the update.');load(true);return}
     if(a==='walking'){await api(`/lines/${id}/walking`,{method:'POST'});toast('Your booker knows you\'re on the way.');load(true);return}
     if(a==='position'){const r=await api(`/lines/${id}/position`,{method:'POST',body:{pos:+document.getElementById('pos-'+id).value}});toast(`Place in line updated to ${r.line.pos}.`)}
