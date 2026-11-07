@@ -188,6 +188,8 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS eta_min INT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS eta_at TIMESTAMPTZ;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS walking_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS flex_until TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS promo_off NUMERIC(6,2);
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -290,7 +292,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null, purchaseVerified: r.purchase_verified ?? null, etaMin: r.eta_min ?? null, etaAt: r.eta_at || null, walkingAt: r.walking_at || null,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null, purchaseVerified: r.purchase_verified ?? null, etaMin: r.eta_min ?? null, etaAt: r.eta_at || null, walkingAt: r.walking_at || null, flexUntil: r.flex_until || null, promoOff: r.promo_off == null ? null : Number(r.promo_off),
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -389,6 +391,8 @@ const COLS = {
   etaMin: "eta_min",
   etaAt: "eta_at",
   walkingAt: "walking_at",
+  flexUntil: "flex_until",
+  promoOff: "promo_off",
   extraItems: "extra_items",
 };
 const USER_COLS = {

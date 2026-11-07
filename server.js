@@ -408,6 +408,32 @@ function parseStart(v) {
 const RESTRICTED =
   /\b(alcohol|alcoholic|liquor|vodka|tequila|whiske?y|bourbon|wine|champagne|six[- ]?pack|tobacco|cigars?|cigarettes?|vapes?|vaping|nicotine|juul|cannabis|marijuana|thc|edibles|dispensary|prescriptions?|rx|firearms?|handguns?|rifles?|shotguns?|ammo|ammunition|lottery|scratchers?|gift ?cards?|prepaid (debit |visa |credit )?cards?|money orders?|tickets?|wristbands?|parking (pass(es)?|permits?)|admission)\b|(?<!root )\bbeers?\b/i;
 
+// Wait & save: the booker lets their order wait up to this long for a group run. Until then it can only be
+// taken as part of a run (with another order at the same stand); after that it's a normal order.
+const WAIT_SAVE_MIN = 10;
+// First-order credit for new bookers, off our fee on their first paid order.
+const FIRST_ORDER_CREDIT = process.env.FIRST_ORDER_CREDIT != null ? Math.max(0, Number(process.env.FIRST_ORDER_CREDIT) || 0) : 2;
+const flexOpen = (l) => !!(l.flexUntil && new Date(l.flexUntil).getTime() > Date.now() && l.status === "open");
+// One credit per person and per card: a card that already got it on another account doesn't again.
+async function creditFor(me) {
+  if (!FIRST_ORDER_CREDIT) return 0;
+  const mine = await store.listLines({ ownerId: me.id });
+  if (mine.some((l) => l.status === "done" && billing(l).total > 0)) return 0;
+  if (mine.some((l) => l.status !== "done" && Number(l.promoOff) > 0)) return 0;
+  let used = {};
+  try { used = JSON.parse((await store.getSetting("promo_cards")) || "{}"); } catch {}
+  const fp = me.cardPm ? await pay.cardFingerprint(store, me).catch(() => null) : null;
+  if (fp && used[fp] && used[fp] !== me.id) return 0;
+  return FIRST_ORDER_CREDIT;
+}
+async function markCreditCard(me) {
+  const fp = me.cardPm ? await pay.cardFingerprint(store, me).catch(() => null) : null;
+  if (!fp) return;
+  let used = {};
+  try { used = JSON.parse((await store.getSetting("promo_cards")) || "{}"); } catch {}
+  if (!used[fp]) { used[fp] = me.id; await store.setSetting("promo_cards", JSON.stringify(used)); }
+}
+
 function lineFields(b, event = null) {
   // Save my spot was retired in Nov 2026; existing spot requests still finish normally.
   if (b.kind === "spot") fail(400, "Save my spot is no longer offered. Post a pickup instead.", "spot_retired");
@@ -732,8 +758,12 @@ async function sameCardCheck(waiter, l) {
 }
 
 // Claims one open request for this waiter (used by Claim and by claiming several at once).
-async function claimLine(me, l) {
+async function claimLine(me, l, { asRun = false } = {}) {
   if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
+  if (flexOpen(l) && !asRun) {
+    const at = new Date(l.flexUntil).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles" });
+    fail(409, `This booker chose Wait & save, so until ${at} it can only be taken with another order at the same stand (one trip, group price). Claim it with another order there, or after ${at}.`, "wait_save");
+  }
   requireNotPaused(me);
   await sameCardCheck(me, l);
   requireAdult(me);
@@ -856,6 +886,19 @@ async function locateLine(id, place, event) {
 }
 const firstName = (n) => String(n || "Someone").split(" ")[0];
 // Every 5 minutes: remind bookers 20 minutes before their pickup meetup window ends.
+// Wait & save orders whose window ended without a run go out as normal orders; the booker is told once.
+async function flexSweep() {
+  try {
+    for (const l of await store.activePickups()) {
+      if (l.status !== "open" || !l.flexUntil || new Date(l.flexUntil).getTime() > Date.now()) continue;
+      const moved = await store.updateLine(l.id, "open", { flexUntil: null });
+      if (moved) ping(l.ownerId, "No group run this time", `Nobody else ordered from ${l.place} in the last ${WAIT_SAVE_MIN} minutes, so your order is now open to any waiter at the regular price. You can cancel for free until it's claimed.`);
+    }
+  } catch (e) {
+    console.error("Wait & save sweep failed:", e.message);
+  }
+}
+
 async function meetupSweep() {
   try {
     for (const l of await store.linesAwaitingMeetup()) {
@@ -1022,7 +1065,7 @@ async function api(req, res, urlPath, query) {
     if (!me) return send(res, 200, { user: null });
     const sums = await store.ratingSummaries([me.id], new Date(Date.now() - RATING_DELAY_MS));
     const ratings = { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) };
-    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS, payments: paymentsInfo(), supportChat: support.enabled() });
+    return send(res, 200, { user: publicUser(me), ratings, tags: TAGS, payments: paymentsInfo(), supportChat: support.enabled(), firstOrderCredit: await creditFor(me).catch(() => 0) });
   }
   if (!me) fail(401, "Sign in to continue.");
 
@@ -1166,14 +1209,20 @@ async function api(req, res, urlPath, query) {
     if (!ids.length) fail(400, "Pick the requests to claim.");
     if (ids.length > BATCH_MAX) fail(400, `You can claim up to ${BATCH_MAX} at a time.`);
     await requirePayouts(me);
-    if (ids.length > 1 && !waiterStats(me, await store.listLines({ waiterId: me.id })).canBatch)
-      fail(403, `Claiming several at once opens up after you finish ${BATCH_MIN_JOBS} jobs. You can still claim them one at a time.`, "batch_locked");
+    // A small run at one stand (up to 3 orders) is open to every waiter; more than that, or several
+    // stands at once, needs the experience threshold.
+    const picks = (await Promise.all(ids.map((id) => store.getLine(id)))).filter(Boolean);
+    const oneStand = picks.length > 1 && picks.every((x) => x.kind === "pickup" && standKey(x) === standKey(picks[0]));
+    if (ids.length > 1 && !(oneStand && ids.length <= 3) && !waiterStats(me, await store.listLines({ waiterId: me.id })).canBatch)
+      fail(403, `Claiming several at once opens up after you finish ${BATCH_MIN_JOBS} jobs (you can already claim up to 3 at the same stand). You can still claim them one at a time.`, "batch_locked");
+    // Wait & save orders only go out as part of a run: if this pick can't form one, claim none of them.
+    if (picks.some(flexOpen) && !oneStand) fail(409, "Wait & save orders have to be claimed with another order at the same stand.", "wait_save");
     const results = [];
     for (const id of ids) {
       try {
         const l = await store.getLine(id);
         if (!l) fail(404, "That request no longer exists.");
-        results.push({ id, ok: true, line: await one(me, await claimLine(me, l)) });
+        results.push({ id, ok: true, line: await one(me, await claimLine(me, l, { asRun: oneStand })) });
       } catch (e) {
         results.push({ id, ok: false, error: e.message });
       }
@@ -1287,7 +1336,7 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, {
       now: Date.now(), mine: pick(mineL), open: pick(openL), shifts: pick(shiftsL),
       user: publicUser(me), ratings: { waiter: summarize(sums[me.id].waiter), booker: summarize(sums[me.id].booker) },
-      tags: TAGS, payments: paymentsInfo(), supportChat: support.enabled(), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL), standRuns,
+      tags: TAGS, payments: paymentsInfo(), supportChat: support.enabled(), firstOrderCredit: await creditFor(me).catch(() => 0), events: evs.map(publicEvent), waiter: waiterStats(me, shiftsL), standRuns,
     });
   }
 
@@ -1309,7 +1358,14 @@ async function api(req, res, urlPath, query) {
     const f = lineFields(b, event);
     await applyStand(f, b, event);
     await requireCard(me);
+    if (b.waitSave === true && f.kind === "pickup") {
+      f.flexUntil = new Date(Date.now() + WAIT_SAVE_MIN * 60000);
+      f.rush = false; // they chose to wait, so no ASAP fee
+    }
+    const credit = await creditFor(me);
+    if (credit) f.promoOff = credit;
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
+    if (credit) await markCreditCard(me);
     // A waiter holding a run open at this stand takes the new order automatically (it joins their group run).
     let joinedRun = null;
     if (line.kind === "pickup") {
@@ -1321,7 +1377,7 @@ async function api(req, res, urlPath, query) {
         const w = await store.userById(wid);
         if (!w || w.suspended || conductOf(w).hold || !w.payoutsReady || (w.minRate != null && line.rate < w.minRate)) continue;
         try {
-          const claimed = await claimLine(w, line);
+          const claimed = await claimLine(w, line, { asRun: true });
           await store.updateLineAny(line.id, { runLeavesAt: xs[0].runLeavesAt });
           ping(wid, "Added to your run", `${line.item} at ${line.place} joined your group run.`);
           joinedRun = { waiterName: firstName(w.name), leavesAt: xs[0].runLeavesAt, line: claimed };
@@ -1436,6 +1492,7 @@ async function api(req, res, urlPath, query) {
       requireAgreement(me);
       if (l.ownerId === me.id) fail(400, "You can't make an offer on your own line.");
       requireNotPaused(me);
+      if (flexOpen(l)) fail(409, "This booker chose Wait & save, so it can only be taken as part of a group run for a few more minutes.", "wait_save");
       if (l.status !== "open" || isExpired(l)) fail(409, "This line is no longer open.");
       if ((await store.countOffersSince(me.id, new Date(Date.now() - 3600 * 1000))) >= 30)
         fail(429, "You've sent a lot of offers this hour. Try again later.");
@@ -2105,9 +2162,15 @@ async function api(req, res, urlPath, query) {
   if (process.env.WFM_TEST_HOOKS === "1" && process.env.WFM_SEED_FILE && urlPath === "/api/test/seed-metrics" && method === "POST" && store._seedMetrics) {
     return send(res, 200, { users: await store._seedMetrics(require(process.env.WFM_SEED_FILE)()) });
   }
+  if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/flex-end" && method === "POST") {
+    const b = await readBody(req);
+    await store.updateLineAny(Number(b.id), { flexUntil: new Date(Date.now() - 1000) });
+    return send(res, 200, { ok: true });
+  }
   if (process.env.WFM_TEST_HOOKS === "1" && urlPath === "/api/test/sweep" && method === "POST") {
     await paymentSweep();
     await meetupSweep();
+    await flexSweep();
     return send(res, 200, { ok: true });
   }
   // Test-only hook for automated tests (never enabled in production).
@@ -2219,6 +2282,7 @@ store
     if (pay.enabled()) pay.registerDomains(["waitforme.io", "www.waitforme.io"]);
     push.initPush(store).catch((e) => console.error("Couldn't set up notifications:", e.message));
     setInterval(meetupSweep, 5 * 60 * 1000);
+    setInterval(flexSweep, 60 * 1000);
     // Fill in map coordinates and city names for lines posted before those existed.
     // Event requests in progress get the venue's location (earlier versions geocoded the stand name).
     store.activePickups().then(async (rows) => {

@@ -122,6 +122,11 @@ Booker alerts that matter (claimed, bought, meet soon) also go by email to anyon
 - **Waiter conduct** (stored as JSON in `users.conduct`): a waiter's first no-show gives an automatic warning (alert and email); admins can warn, pause waiter access (needs a warning in the last 90 days unless ticked serious), and lift a pause on /admin. A pause stops claims and offers but not booking or jobs already in progress. Waiters appeal from Account; admins decide under Waiter appeals, and every decision is sent to the waiter with the reason.
 - **Scorecard** on /dashboard: fill rate, median minutes to claim, share of jobs with a problem reported, and waiter earnings per hour actually worked (overlapping run time counted once), plus one row per event.
 
+### Wait & save and the first-order credit
+
+- **Wait & save** (`waitSave: true` on `POST /api/lines`): the order waits up to 10 minutes (`flex_until`) for other orders at the same stand. During the window it can only be claimed as part of a run (claim-batch with another order at the same stand, or joining a waiter's open run); solo claims and offers get `wait_save`. It never has an ASAP fee. `flexSweep` (every minute) reopens expired ones as normal orders and tells the booker. Any waiter can now claim up to 3 orders at one stand at once; more, or several stands, still needs 10 finished jobs.
+- **First-order credit**: $2 off our fee on a booker's first paid order (`promo_off`, shown as `promo` in the bill; never more than the fee, never touches waiter pay). One per person and per card fingerprint (`promo_cards` setting). Set `FIRST_ORDER_CREDIT=0` to turn it off, or another amount to change it.
+
 ### Fraud and location checks
 
 - **Same card on both sides**: a waiter can't claim (or be accepted for) a job when the booker's card fingerprint matches the waiter's saved card or a payout card/bank on their Stripe account. Admins are alerted (`same_card`).

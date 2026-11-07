@@ -150,7 +150,10 @@ function billing(line, now = Date.now()) {
   const bookingFee = !v2(line) && charged ? bookingFeeFor(line) : 0;
   const itemFee = v2(line) ? 0 : roundCents(item * ITEM_FEE);
   const tinyFee = Number(line.pricingV) >= 4 && charged && !addOn && !grouped && kindOf(line) === "pickup" && !(line.extraItems || []).length && Number(line.itemBudget) > 0 && Number(line.itemBudget) <= TINY_BUDGET ? TINY_FEE : 0;
-  const fee = roundCents(serviceFee + bookingFee + itemFee + groupMargin + tinyFee);
+  const feeBefore = roundCents(serviceFee + bookingFee + itemFee + groupMargin + tinyFee);
+  // First-order credit: comes off Wait For Me!'s fee only (never the waiter's pay), and only when there's a fee.
+  const promo = charged && Number(line.promoOff) > 0 ? Math.min(roundCents(Number(line.promoOff)), feeBefore) : 0;
+  const fee = roundCents(feeBefore - promo);
   return {
     approvedHours: approved,
     waitedHours: Math.round(waited * 100) / 100,
@@ -173,6 +176,7 @@ function billing(line, now = Date.now()) {
     itemFee,
     rushFee,
     boost,
+    promo,
     fee,
     payout: roundCents(waiterPay + item), // what the waiter receives
     total: roundCents(waiterPay + item + fee),
