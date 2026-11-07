@@ -116,6 +116,12 @@ Booker alerts that matter (claimed, bought, meet soon) also go by email to anyon
 | `ANTHROPIC_WORKSPACE_ID` | only if the key isn't scoped to a workspace |
 | `SUPPORT_MODEL` | optional; defaults to `claude-haiku-5-5` |
 
+### Live order status, waiter conduct, and the operations scorecard
+
+- **Live status**: a booker's pickup shows a 5-step tracker (Booked, In line, Bought, On the way, Handed over) with time in line, place in line, the waiter's estimate of time left (`POST /api/lines/:id/position` with `etaMin` 2/5/10/15), stand prep status, and "walking to the meet spot" (`POST /api/lines/:id/walking`, which alerts the booker).
+- **Waiter conduct** (stored as JSON in `users.conduct`): a waiter's first no-show gives an automatic warning (alert and email); admins can warn, pause waiter access (needs a warning in the last 90 days unless ticked serious), and lift a pause on /admin. A pause stops claims and offers but not booking or jobs already in progress. Waiters appeal from Account; admins decide under Waiter appeals, and every decision is sent to the waiter with the reason.
+- **Scorecard** on /dashboard: fill rate, median minutes to claim, share of jobs with a problem reported, and waiter earnings per hour actually worked (overlapping run time counted once), plus one row per event.
+
 ### Fraud and location checks
 
 - **Same card on both sides**: a waiter can't claim (or be accepted for) a job when the booker's card fingerprint matches the waiter's saved card or a payout card/bank on their Stripe account. Admins are alerted (`same_card`).

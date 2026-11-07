@@ -107,6 +107,9 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:10px
   <div id="msg" role="status"></div>
 
   <section class="grid g-tiles" id="tiles" aria-label="Key numbers"></section>
+  <section class="card"><div class="card-h"><h2>Operations scorecard</h2><span class="sub">the four numbers to review after every game</span></div>
+    <div class="stats" id="ops"></div>
+    <div class="scroll" id="events" style="margin-top:14px"></div></section>
   <section class="card"><div class="card-h"><h2>Averages and rates</h2><span class="sub">for the selected period</span></div><div class="stats" id="stats"></div></section>
 
   <section class="card">
@@ -205,6 +208,17 @@ function render() {
     ["Paid out to waiters", money(k.waiterPayouts)], ["Completion rate", pct(k.completionRate)],
     ["Cancellation rate", pct(k.cancelRate)], ["Active bookers / waiters", `${num(k.activeBookers)} / ${num(k.activeWaiters)}`],
   ]);
+
+  // Operations scorecard: did orders get taken, how fast, how often something went wrong, what waiters really earned.
+  const target = (v, ok, txt) => v == null ? "" : `<div class="sub" style="font-size:12px;margin-top:2px">${ok ? "On target" : "Below target"} · ${txt}</div>`;
+  $("#ops").innerHTML = [
+    ["Orders taken (fill rate)", pct(k.fillRate) + delta(k.fillRate, p.fillRate, "rate") + target(k.fillRate, k.fillRate >= 0.9, "aim for 90%+")],
+    ["Median time to claim", dur(k.medianClaimMinutes) + delta(k.medianClaimMinutes, p.medianClaimMinutes, null, true) + target(k.medianClaimMinutes, k.medianClaimMinutes <= 5, "aim for 5 min or less")],
+    ["Jobs with a problem reported", pct(k.problemRate) + delta(k.problemRate, p.problemRate, "rate", true) + target(k.problemRate, k.problemRate <= 0.05, "aim for 5% or less")],
+    ["Waiter earnings per hour worked", money(k.waiterHourly) + delta(k.waiterHourly, p.waiterHourly) + target(k.waiterHourly, k.waiterHourly >= 17, "floor is $17")],
+  ].map(([key, v]) => `<div class="stat"><div class="k">${key}</div><div class="v">${v}</div></div>`).join("");
+  const E = M.byEvent || [];
+  $("#events").innerHTML = E.length ? `<table><caption style="text-align:left;font-weight:700;padding-bottom:6px">By event</caption><thead><tr><th>Event</th><th class="n">Orders</th><th class="n">Done</th><th class="n">Fill rate</th><th class="n">Time to claim</th><th class="n">Problems</th><th class="n">Waiter $/hr</th><th class="n">Waiters</th><th class="n">Your revenue</th></tr></thead><tbody>${E.map((e) => `<tr><td>${esc(e.name)}${e.startsAt ? `<div class="sub">${esc(e.venue)} · ${new Date(e.startsAt).toLocaleDateString([], { month: "short", day: "numeric" })}</div>` : ""}</td><td class="n">${num(e.posted)}</td><td class="n">${num(e.completed)}</td><td class="n">${pct(e.fillRate)}</td><td class="n">${dur(e.medianClaimMinutes)}</td><td class="n">${pct(e.problemRate)}</td><td class="n">${money(e.waiterHourly)}</td><td class="n">${num(e.waiters)}</td><td class="n">${money(e.revenue)}</td></tr>`).join("")}</tbody></table>` : empty("No event orders in this period yet. Each game you add on the admin page gets a row here.");
 
   renderTrend(); renderHeat(); renderPlaces();
 

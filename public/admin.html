@@ -39,6 +39,10 @@ input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8
 <main>
   <div class="top"><span class="stub">No.1</span><h1>Wait For Me! admin</h1><a href="/dashboard" class="muted">Creator dashboard</a><button id="testMail" type="button">Send test email</button><button id="stripeCheck" type="button">Check Stripe</button><a href="/" class="muted">Back to the app</a></div>
   <div id="msg" role="status"></div>
+  <section class="card"><h2>Waiter appeals</h2>
+    <p class="muted">Waiters who were warned or paused can appeal from the app. Decide each one here; they're told by alert and email.</p>
+    <div id="appeals" class="muted">Loading…</div>
+  </section>
   <section class="card"><h2>Problem reports</h2>
     <div id="reports" class="muted">Loading…</div>
   </section>
@@ -76,7 +80,7 @@ input{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8
   </section>
   <section class="card" id="usersCard"><h2>People</h2>
     <div class="row"><label class="sr" for="uq">Search people</label><input id="uq" placeholder="Search name or email"></div>
-    <div class="scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Posted</th><th>Worked</th><th>No-shows</th><th>Status</th><th></th></tr></thead><tbody id="users"></tbody></table></div>
+    <div class="scroll"><table><thead><tr><th>Name</th><th>Email</th><th>Joined</th><th>Posted</th><th>Worked</th><th>No-shows</th><th>Waiter standing</th><th>Status</th><th></th></tr></thead><tbody id="users"></tbody></table></div>
   </section>
   <section class="card"><h2>Recent lines</h2>
     <div class="scroll"><table><thead><tr><th>#</th><th>Line</th><th>Starts</th><th>Booker</th><th>Waiter</th><th>Status</th><th>Total</th><th></th></tr></thead><tbody id="lines"></tbody></table></div>
@@ -135,6 +139,19 @@ $('#evForm').addEventListener('submit',async e=>{e.preventDefault();const st=$('
     await post('events',{name:$('#evName').value,venueId:$('#evVenueId').value||undefined,venue:$('#evVenue').value,startsAt:new Date(st).toISOString(),endsAt:new Date(en).toISOString()});
     e.target.reset();say('Event added. Bookers can tag requests with it now.');loadExtra()}catch(err){say(err.message)}});
 function say(t){$('#msg').textContent=t}
+let conductForm=null;
+function standing(u){const c=u.conduct||{};const bits=[];
+  if(c.hold)bits.push(`<span class="tag warn" title="${esc(c.hold.reason)}">Paused</span>`);
+  if(c.warnings)bits.push(`<span class="tag" title="${c.lastWarning?esc(c.lastWarning.reason):''}">${c.warnings} warning${c.warnings===1?'':'s'}</span>`);
+  if(c.appeal&&c.appeal.status==='open')bits.push('<span class="tag warn">Appeal open</span>');
+  return bits.join(' ')||'Good'}
+function renderAppeals(){const list=(data.users||[]).filter(u=>u.conduct&&u.conduct.appeal&&u.conduct.appeal.status==='open');
+  $('#appeals').innerHTML=list.length?list.map(u=>{const c=u.conduct,a=c.appeal;return`<div class="card" style="margin:8px 0;padding:12px">
+    <b>${esc(u.name)}</b> <span class="muted">${esc(u.email)} · appealed ${day(a.at)} · about their ${a.about==='pause'?'pause':'latest warning'}</span>
+    <div class="muted" style="margin-top:4px">${a.about==='pause'&&c.hold?'Paused for: '+esc(c.hold.reason):c.lastWarning?'Warning: '+esc(c.lastWarning.reason):''}</div>
+    <blockquote style="margin:8px 0;white-space:pre-wrap">${esc(a.text)}</blockquote>
+    <div class="row" style="flex-wrap:wrap;gap:8px"><label class="sr" for="an-${u.id}">Note to them</label><input id="an-${u.id}" style="flex:1;min-width:240px" maxlength="500" placeholder="Note to them (needed if you keep the decision)">
+    <button data-ap="${u.id}" data-d="reinstate">${a.about==='pause'?'Reinstate':'Remove warning'}</button><button class="bad" data-ap="${u.id}" data-d="uphold">Keep decision</button></div></div>`}).join(''):'No open appeals.'}
 async function call(path,method='GET'){
   const r=await fetch('/api/admin/'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json'}});
   const j=await r.json().catch(()=>({}));
@@ -143,9 +160,17 @@ function render(){
   const q=$('#uq').value.trim().toLowerCase();
   $('#users').innerHTML=data.users.filter(u=>!q||u.name.toLowerCase().includes(q)||u.email.toLowerCase().includes(q)).map(u=>`<tr>
     <td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${day(u.createdAt)}</td><td>${u.posted}</td><td>${u.worked}</td>
-    <td>${u.noshows?`<span class="tag warn">${u.noshows}</span>`:'0'}</td><td>${u.suspended?'<span class="tag warn">Suspended</span>':'Active'}</td>
+    <td>${u.noshows?`<span class="tag warn">${u.noshows}</span>`:'0'}</td>
+    <td>${standing(u)}</td><td>${u.suspended?'<span class="tag warn">Suspended</span>':'Active'}</td>
     <td class="row">${u.suspended?`<button data-u="${u.id}" data-a="unsuspend">Restore</button>`:`<button class="bad" data-u="${u.id}" data-a="suspend">${confirmKey==='suspend'+u.id?'Confirm suspend':'Suspend'}</button>`}
-      <button data-u="${u.id}" data-a="reset-password">${confirmKey==='reset-password'+u.id?'Confirm reset':'Reset password'}</button></td></tr>`).join('');
+      <button data-u="${u.id}" data-a="reset-password">${confirmKey==='reset-password'+u.id?'Confirm reset':'Reset password'}</button>
+      <button data-cw="${u.id}">Warn</button>${u.conduct&&u.conduct.hold?`<button data-cl="${u.id}">Lift pause</button>`:`<button class="bad" data-cp="${u.id}">Pause waiting</button>`}</td></tr>
+    ${conductForm&&conductForm.id===u.id?`<tr><td colspan="9"><div class="row" style="flex-wrap:wrap;gap:8px;align-items:center">
+      <label class="sr" for="cf-r">Reason</label><input id="cf-r" style="flex:1;min-width:260px" maxlength="300" placeholder="${conductForm.mode==='lift'?'Note to them (optional)':'Reason, in words they will see'}">
+      ${conductForm.mode==='pause'?`<label><input type="checkbox" id="cf-s"> Serious (safety, fraud, theft): pause without a prior warning</label>`:''}
+      <button data-cfgo="${u.id}">${conductForm.mode==='warn'?'Send warning':conductForm.mode==='pause'?'Pause waiter access':'Lift pause'}</button><button data-cfx="1">Cancel</button></div>
+      <div class="muted">${conductForm.mode==='pause'?'They can still book, keep jobs they are on, and appeal. A pause needs a warning in the last 90 days unless it is serious.':conductForm.mode==='warn'?'They can keep working. They get an alert and an email with the reason and how to appeal.':'They can take jobs again right away.'}</div></td></tr>`:''}`).join('');
+  renderAppeals();
   $('#lines').innerHTML=data.lines.map(l=>`<tr>
     <td>${l.id}</td><td class="wrap"><b>${esc(l.place)}</b><div class="muted">${l.kind==='pickup'?'Pickup: ':'Spot: '}${esc(l.what)}${l.itemTotal!=null?` · bought $${Number(l.itemTotal).toFixed(2)}`:''}${l.hasReceipt?` · <a href="/api/lines/${l.id}/receipt" target="_blank" rel="noopener">receipt</a>`:''}</div></td><td>${esc(l.startText||'')}</td>
     <td>${esc(l.ownerName)}</td><td>${esc(l.waiterName||'—')}${l.checkinVerified===false?' <span class="tag warn">unverified check-in</span>':''}${l.purchaseVerified===false?' <span class="tag warn">purchase without location</span>':''}</td>
@@ -167,6 +192,13 @@ document.addEventListener('click',async e=>{
     if(b.dataset.rp){const id=b.dataset.rp,amt=parseFloat($('#ra-'+id).value)||0;b.disabled=true;
       try{await post(`reports/${id}/resolve`,{note:$('#rn-'+id).value,refund:amt,fromWaiter:$('#rw-'+id).checked});say(amt?`Refunded ${money(amt)} and resolved. The reporter got an alert.`:'Resolved. The reporter got an alert.');await loadExtra()}
       catch(err){say(err.message);b.disabled=false}return}
+    if(b.dataset.cw||b.dataset.cp||b.dataset.cl){const id=+(b.dataset.cw||b.dataset.cp||b.dataset.cl);conductForm={id,mode:b.dataset.cw?'warn':b.dataset.cp?'pause':'lift'};render();setTimeout(()=>$('#cf-r')&&$('#cf-r').focus(),0);return}
+    if(b.dataset.cfx){conductForm=null;render();return}
+    if(b.dataset.cfgo){const id=b.dataset.cfgo,m=conductForm.mode,r=$('#cf-r').value;
+      await post(`users/${id}/${m}`,m==='lift'?{note:r}:{reason:r,serious:m==='pause'&&$('#cf-s').checked});
+      conductForm=null;say(m==='warn'?'Warning sent. They got an alert and an email.':m==='pause'?'Waiter access paused. They were told why and how to appeal.':'Pause lifted. They were told.');await load2();return}
+    if(b.dataset.ap){const id=b.dataset.ap;await post(`users/${id}/appeal`,{decision:b.dataset.d,note:$('#an-'+id).value});
+      say(b.dataset.d==='reinstate'?'Appeal accepted. They were told.':'Decision kept. They were told, with your note.');await load2();return}
     if(b.dataset.l){const k='line'+b.dataset.l;if(confirmKey!==k){confirmKey=k;render();return}
       await call(`lines/${b.dataset.l}/remove`,'POST');confirmKey=null;say(`Line #${b.dataset.l} removed.`)}
     if(b.dataset.u){const a=b.dataset.a,k=a+b.dataset.u;

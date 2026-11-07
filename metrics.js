@@ -53,6 +53,33 @@ function bucketKey(ms, zone, weekly) {
   return zone(ms - z.dow * DAY).day; // the Monday that starts the week
 }
 
+// What waiters actually earn per hour: their time pay over the time they actually spent on jobs, from
+// check-in (or the start time) to handover. Overlapping jobs (a group run) count the shared time once.
+function waiterHourly(jobs) {
+  const per = new Map();
+  for (const l of jobs) {
+    if (!l.waiterId || !l.bill || !(l.bill.waiterPay > 0)) continue;
+    const a = t(l.checkinAt) ?? t(l.startAt), b = t(l.doneAt);
+    if (a == null || b == null || b <= a) continue;
+    const w = per.get(l.waiterId) || { pay: 0, spans: [] };
+    w.pay += l.bill.waiterPay;
+    w.spans.push([a, b]);
+    per.set(l.waiterId, w);
+  }
+  let pay = 0, ms = 0;
+  for (const w of per.values()) {
+    w.spans.sort((x, y) => x[0] - y[0]);
+    let [s, e] = w.spans[0];
+    for (const [a, b] of w.spans.slice(1)) {
+      if (a <= e) e = Math.max(e, b);
+      else (ms += e - s), ([s, e] = [a, b]);
+    }
+    ms += e - s;
+    pay += w.pay;
+  }
+  return ms >= 60000 ? round(pay / (ms / 3600000)) : null;
+}
+
 const areaOf = (l) => l.area || (l.lat != null ? "Unnamed area" : "Location not found yet");
 const venueOf = (l) => String(l.place || "").split(",")[0].trim();
 
@@ -72,6 +99,7 @@ function computeMetrics(data, opts = {}) {
     return { ...l, _c: t(l.createdAt), _d: t(l.doneAt), _s: t(l.startAt) ?? t(l.createdAt), _cl: t(l.claimedAt), bill: b };
   });
   const names = new Map(data.users.map((u) => [u.id, u.name]));
+  const reported = new Set((data.reports || []).map((r) => r.lineId));
 
   // ---- one period's headline numbers (used for this period and the one before, for the change arrows) ----
   function period(a, b) {
@@ -100,6 +128,9 @@ function computeMetrics(data, opts = {}) {
       avgBilledHours: completed.length ? round(sum(completed, (l) => l.bill.billedHours) / completed.length) : null,
       avgRate: posted.length ? round(sum(posted, (l) => l.rate) / posted.length) : null,
       medianClaimMinutes: round(median(claimMins), 0),
+      // Jobs with a problem reported, out of jobs finished with a waiter.
+      problemRate: ratio(completed.filter((l) => reported.has(l.id)).length, completed.length),
+      waiterHourly: waiterHourly(completed),
       newUsers: signups.length, activeUsers: active.size, activeBookers: bookers.size, activeWaiters: waiters.size,
     };
   }
@@ -230,6 +261,32 @@ function computeMetrics(data, opts = {}) {
     messages: data.messages.filter((m) => inP(t(m.createdAt))).length,
   };
 
+  // ---- one row per event: the scorecard to review after each game ----
+  const evNames = new Map((data.events || []).map((e) => [e.id, e]));
+  const evs = new Map();
+  for (const l of lines) {
+    if (!l.eventId) continue;
+    const e = evNames.get(l.eventId);
+    const when = e ? t(e.startsAt) : l._s;
+    if (!inP(when) && !inP(l._c)) continue;
+    const x = evs.get(l.eventId) || { eventId: l.eventId, name: e ? e.name : "Deleted event", venue: e ? String(e.venue).split(",")[0] : "", startsAt: e ? e.startsAt : null, all: [] };
+    x.all.push(l);
+    evs.set(l.eventId, x);
+  }
+  const byEvent = [...evs.values()].map((x) => {
+    const decided = x.all.filter((l) => l.status !== "open" || l._s < now);
+    const claimed = decided.filter((l) => l.status !== "open" || l._cl);
+    const done = x.all.filter((l) => l.status === "done" && PAID_OUTCOMES.has(l.outcome));
+    const mins = x.all.filter((l) => l._cl).map((l) => (l._cl - l._c) / 60000).filter((m) => m >= 0);
+    return {
+      eventId: x.eventId, name: x.name, venue: x.venue, startsAt: x.startsAt, posted: x.all.length, completed: done.length,
+      fillRate: ratio(claimed.length, decided.length), medianClaimMinutes: round(median(mins), 0),
+      problemRate: ratio(done.filter((l) => reported.has(l.id)).length, done.length),
+      waiterHourly: waiterHourly(done), revenue: round(sum(done.filter((l) => l.bill), (l) => l.bill.fee)),
+      waiters: new Set(x.all.filter((l) => l.waiterId).map((l) => l.waiterId)).size,
+    };
+  }).sort((a, b) => (t(b.startsAt) || 0) - (t(a.startsAt) || 0)).slice(0, 30);
+
   // ---- leaders ----
   const tally = (key, val) => {
     const m = new Map();
@@ -248,7 +305,7 @@ function computeMetrics(data, opts = {}) {
     kpis: cur, previous: prev, people, trend,
     times: { whenLines, whenBooked, days: DOW, peaks: peaks.slice(0, 5), byDow, byHour },
     places: { byArea, topVenues, points: [...points.values()].sort((a, b) => b.lines - a.lines).slice(0, 1500) },
-    byCategory, funnel, health,
+    byCategory, funnel, health, byEvent,
     leaders: { waiters: tally("waiterId", "waiterPay"), bookers: tally("ownerId", "total") },
   };
 }

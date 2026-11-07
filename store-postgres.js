@@ -111,6 +111,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS card_pm TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_label TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS card_fp TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS payout_fps TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS conduct TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS payouts_ready BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_date TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS contractor_version TEXT;
@@ -184,6 +185,9 @@ ALTER TABLE lines ADD COLUMN IF NOT EXISTS boost NUMERIC(6,2) NOT NULL DEFAULT 0
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_status TEXT;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS purchase_verified BOOLEAN;
 ALTER TABLE lines ADD COLUMN IF NOT EXISTS prep_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS eta_min INT;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS eta_at TIMESTAMPTZ;
+ALTER TABLE lines ADD COLUMN IF NOT EXISTS walking_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS event_presence (
   event_id INT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -226,7 +230,7 @@ function user(r) {
       id: r.id, email: r.email, name: r.name, pwHash: r.pw_hash, look: r.look, avatar: r.avatar || "",
       suspended: !!r.suspended, noshows: r.noshows || 0, createdAt: r.created_at, lastSeenAt: r.last_seen_at || null,
       stripeCustomer: r.stripe_customer || null, stripeAccount: r.stripe_account || null, cardPm: r.card_pm || null,
-      cardLabel: r.card_label || null, cardFp: r.card_fp || null, payoutFps: r.payout_fps || null, payoutsReady: !!r.payouts_ready, birthDate: r.birth_date || null,
+      cardLabel: r.card_label || null, cardFp: r.card_fp || null, payoutFps: r.payout_fps || null, conduct: r.conduct || null, payoutsReady: !!r.payouts_ready, birthDate: r.birth_date || null,
       contractorVersion: r.contractor_version || null, contractorAcceptedAt: r.contractor_accepted_at || null, minRate: r.min_rate == null ? null : Number(r.min_rate),
     }
   );
@@ -286,7 +290,7 @@ function line(r) {
       eventId: r.event_id || null,
       rush: !!r.rush,
       payRefunded: r.pay_refunded || 0,
-      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null, purchaseVerified: r.purchase_verified ?? null,
+      meetReminded: !!r.meet_reminded, unclaimedPinged: !!r.unclaimed_pinged, pricingV: r.pricing_v || 1, bundled: !!r.bundled, bundleSize: r.bundle_size || 0, receiptSha: r.receipt_sha || null, receiptDhash: r.receipt_dhash || null, standId: r.stand_id || null, seatSection: r.seat_section || null, seatRow: r.seat_row || null, seatNumber: r.seat_number || null, meetSpot: r.meet_spot || null, addOn: !!r.add_on, extraItems: parseJson(r.extra_items), runLeavesAt: r.run_leaves_at || null, boost: Number(r.boost) || 0, prepStatus: r.prep_status || null, prepAt: r.prep_at || null, purchaseVerified: r.purchase_verified ?? null, etaMin: r.eta_min ?? null, etaAt: r.eta_at || null, walkingAt: r.walking_at || null,
       doneAt: r.done_at,
       outcome: r.outcome,
       approvedHours: r.approved_hours == null ? Number(r.hours) : Number(r.approved_hours),
@@ -382,6 +386,9 @@ const COLS = {
   prepStatus: "prep_status",
   purchaseVerified: "purchase_verified",
   prepAt: "prep_at",
+  etaMin: "eta_min",
+  etaAt: "eta_at",
+  walkingAt: "walking_at",
   extraItems: "extra_items",
 };
 const USER_COLS = {
@@ -395,6 +402,7 @@ const USER_COLS = {
   cardLabel: "card_label",
   cardFp: "card_fp",
   payoutFps: "payout_fps",
+  conduct: "conduct",
   payoutsReady: "payouts_ready",
   birthDate: "birth_date",
   contractorVersion: "contractor_version",
@@ -899,21 +907,20 @@ module.exports = {
   async metricsData() {
     const [u, l, r, o, m] = await Promise.all([
       pool.query("SELECT id, created_at, last_seen_at, suspended, noshows, name FROM users WHERE email NOT LIKE '%@deleted.invalid'"),
-      pool.query(`SELECT id, owner_id, waiter_id, place, cat, status, outcome, start_at, created_at, claimed_at, checkin_at,
-        done_at, hours, approved_hours, rate, lat, lng, area, checkin_verified, kind, item_total, purchased_at, handoff, dropoff_fee FROM lines`),
+      pool.query(LINE_SELECT),
       pool.query("SELECT stars, ratee_role, created_at FROM ratings"),
       pool.query("SELECT status, created_at FROM offers"),
       pool.query("SELECT created_at FROM messages"),
     ]);
+    const [rp, ev] = await Promise.all([
+      pool.query("SELECT line_id, reason, created_at FROM reports"),
+      pool.query("SELECT id, name, venue, starts_at FROM events"),
+    ]);
     return {
       users: u.rows.map((x) => ({ id: x.id, name: x.name, createdAt: x.created_at, lastSeenAt: x.last_seen_at, suspended: !!x.suspended, noshows: x.noshows || 0 })),
-      lines: l.rows.map((x) => ({
-        id: x.id, ownerId: x.owner_id, waiterId: x.waiter_id, place: x.place, cat: x.cat, status: x.status, outcome: x.outcome,
-        startAt: x.start_at, createdAt: x.created_at, claimedAt: x.claimed_at, checkinAt: x.checkin_at, doneAt: x.done_at,
-        hours: Number(x.hours), approvedHours: x.approved_hours == null ? Number(x.hours) : Number(x.approved_hours),
-        rate: Number(x.rate), lat: x.lat, lng: x.lng, area: x.area, checkinVerified: x.checkin_verified,
-        kind: x.kind || "spot", itemTotal: x.item_total == null ? null : Number(x.item_total), purchasedAt: x.purchased_at, handoff: x.handoff, dropoffFee: Number(x.dropoff_fee || 0),
-      })),
+      lines: l.rows.map(line),
+      reports: rp.rows.map((x) => ({ lineId: x.line_id, reason: x.reason, createdAt: x.created_at })),
+      events: ev.rows.map((x) => ({ id: x.id, name: x.name, venue: x.venue, startsAt: x.starts_at })),
       ratings: r.rows.map((x) => ({ stars: x.stars, rateeRole: x.ratee_role, createdAt: x.created_at })),
       offers: o.rows.map((x) => ({ status: x.status, createdAt: x.created_at })),
       messages: m.rows.map((x) => ({ createdAt: x.created_at })),

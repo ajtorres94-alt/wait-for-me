@@ -131,12 +131,57 @@ const CONTRACTOR_VERSION = "2026-11-01b"; // b: adds the waiter code of conduct
 function requireAgreement(u) {
   if (u.contractorVersion !== CONTRACTOR_VERSION) fail(403, "Accept the waiter agreement in Account first.", "agreement_required");
 }
+// ---- waiter conduct: warnings first, then a pause on waiting (not the whole account), always with an appeal ----
+// Stored as JSON on the user: { warnings: [{id, at, reason, by}], hold: {at, reason, by} | null,
+//   appeal: {at, text, status: "open" | "reinstated" | "upheld", decidedAt, note} | null }
+function conductOf(u) {
+  let c = null;
+  try { c = JSON.parse((u && u.conduct) || "null"); } catch {}
+  c = c || {};
+  return { warnings: Array.isArray(c.warnings) ? c.warnings : [], hold: c.hold || null, appeal: c.appeal || null };
+}
+const saveConduct = (id, c) => store.updateUser(id, { conduct: JSON.stringify(c) });
+const WARN_WINDOW_MS = 90 * 86400 * 1000; // warnings older than this don't count toward a pause
+const recentWarnings = (c) => c.warnings.filter((w) => Date.now() - Date.parse(w.at) < WARN_WINDOW_MS);
+const publicConduct = (u) => {
+  const c = conductOf(u);
+  return {
+    warnings: recentWarnings(c).map((w) => ({ at: w.at, reason: w.reason })),
+    hold: c.hold ? { at: c.hold.at, reason: c.hold.reason } : null,
+    appeal: c.appeal ? { at: c.appeal.at, status: c.appeal.status, note: c.appeal.note || "" } : null,
+  };
+};
+// Tells the waiter by phone alert and by email, since these change whether they can work.
+async function tellWaiter(u, title, body) {
+  ping(u.id, title, body);
+  try {
+    if (mailEnabled() && u.email) {
+      const site = (process.env.APP_URL || "https://waitforme.io").replace(/\/+$/, "");
+      await sendMail({ to: u.email, subject: `Wait For Me!: ${title}`, text: `${body}\n\nSee details or appeal in the app: ${site} (Account)\nCode of conduct: ${site}/terms`,
+        html: `<p>${escHtml(body)}</p><p><a href="${site}">Open the app</a> to see details or appeal (Account). <a href="${site}/terms">Code of conduct</a></p>` });
+    }
+  } catch (e) {
+    console.error("Conduct email failed:", e.message);
+  }
+}
+async function warnWaiter(u, reason, by) {
+  const c = conductOf(u);
+  c.warnings.push({ id: crypto.randomBytes(4).toString("hex"), at: new Date().toISOString(), reason, by });
+  await saveConduct(u.id, c);
+  await tellWaiter(u, "A warning on your waiter account", `${reason} This is a warning, not a penalty: you can keep taking jobs. Another problem within 90 days can pause your waiter access. If you think this is wrong, you can appeal from Account.`);
+  return c;
+}
+function requireNotPaused(u) {
+  const c = conductOf(u);
+  if (c.hold) fail(403, `Your waiter access is paused: ${c.hold.reason} You can still book requests. See Account to appeal.`, "waiter_paused");
+}
+
 const publicUser = (u) =>
   u && {
     id: u.id, name: u.name, email: u.email, look: u.look, avatar: u.avatar || "", isAdmin: isAdmin(u),
     card: u.cardPm ? u.cardLabel || "Card on file" : null, birthDateSet: !!u.birthDate,
     contractorAgreed: u.contractorVersion === CONTRACTOR_VERSION, contractorAcceptedAt: u.contractorVersion === CONTRACTOR_VERSION ? u.contractorAcceptedAt : null,
-    minRate: u.minRate ?? null,
+    minRate: u.minRate ?? null, conduct: publicConduct(u),
     payouts: u.payoutsReady ? "ready" : u.stripeAccount ? "started" : "none",
   };
 const paymentsInfo = () => ({ enabled: pay.enabled(), publishableKey: pay.publishableKey(), testMode: pay.testMode() });
@@ -689,6 +734,7 @@ async function sameCardCheck(waiter, l) {
 // Claims one open request for this waiter (used by Claim and by claiming several at once).
 async function claimLine(me, l) {
   if (l.ownerId === me.id) fail(400, "You can't claim your own request.");
+  requireNotPaused(me);
   await sameCardCheck(me, l);
   requireAdult(me);
   requireAgreement(me);
@@ -1019,6 +1065,20 @@ async function api(req, res, urlPath, query) {
     return send(res, 200, { user: publicUser(u) });
   }
   // The lowest hourly rate a waiter wants to see and be alerted about (null for any rate).
+  // A waiter appeals a pause (or their latest warning). One open appeal at a time; a person reviews it.
+  if (urlPath === "/api/me/appeal" && method === "POST") {
+    const b = await readBody(req);
+    const c = conductOf(me);
+    if (!c.hold && !recentWarnings(c).length) fail(400, "There's nothing on your account to appeal.");
+    if (c.appeal && c.appeal.status === "open") fail(409, "Your appeal is already with us. We'll reply within 2 business days.");
+    const txt = text(b.text, "your appeal", 1000);
+    if (txt.length < 20) fail(400, "Tell us a little more about what happened (at least a sentence or two).");
+    c.appeal = { at: new Date().toISOString(), text: txt, status: "open", about: c.hold ? "pause" : "warning" };
+    await saveConduct(me.id, c);
+    flagAdmins(`Appeal from ${me.name}`, `${me.name} (${me.email}) appealed their ${c.appeal.about}: "${txt.slice(0, 300)}". Decide on the admin page under Appeals.`);
+    return send(res, 200, { user: publicUser(await store.userById(me.id)) });
+  }
+
   if (urlPath === "/api/me/min-rate" && method === "POST") {
     const b = await readBody(req);
     const rate = b.rate === null || b.rate === "" || b.rate === undefined ? null : num(b.rate, "Your minimum rate", MIN_RATE, 200);
@@ -1259,7 +1319,7 @@ async function api(req, res, urlPath, query) {
       for (const [wid, xs] of byWaiter) {
         if (xs.length >= BATCH_MAX) continue;
         const w = await store.userById(wid);
-        if (!w || w.suspended || !w.payoutsReady || (w.minRate != null && line.rate < w.minRate)) continue;
+        if (!w || w.suspended || conductOf(w).hold || !w.payoutsReady || (w.minRate != null && line.rate < w.minRate)) continue;
         try {
           const claimed = await claimLine(w, line);
           await store.updateLineAny(line.id, { runLeavesAt: xs[0].runLeavesAt });
@@ -1331,7 +1391,7 @@ async function api(req, res, urlPath, query) {
   }
 
   const m = urlPath.match(
-    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot|run-window)$/
+    /^\/api\/lines\/(\d+)\/(cancel|edit|claim|advance|position|release|swap|extend|leave|rate|offer|withdraw-offer|accept-offer|decline-offer|cancel-booking|report-noshow|purchase|soldout|raise-limit|report|join-run|meet-spot|run-window|walking)$/
   );
   if (m && method === "POST") {
     const id = Number(m[1]);
@@ -1375,6 +1435,7 @@ async function api(req, res, urlPath, query) {
       requireAdult(me);
       requireAgreement(me);
       if (l.ownerId === me.id) fail(400, "You can't make an offer on your own line.");
+      requireNotPaused(me);
       if (l.status !== "open" || isExpired(l)) fail(409, "This line is no longer open.");
       if ((await store.countOffersSince(me.id, new Date(Date.now() - 3600 * 1000))) >= 30)
         fail(429, "You've sent a lot of offers this hour. Try again later.");
@@ -1398,7 +1459,9 @@ async function api(req, res, urlPath, query) {
         return send(res, 200, { line: await one(me, l) });
       }
       if (l.status !== "open") fail(409, "This line was already claimed.");
-      await sameCardCheck(await store.userById(o.waiterId), l);
+      const ow = await store.userById(o.waiterId);
+      if (conductOf(ow).hold) fail(409, "That waiter can't take jobs right now. Pick another offer or wait for someone else.");
+      await sameCardCheck(ow, l);
       updated = await store.updateLine(id, "open", { status: "claimed", waiterId: o.waiterId, rate: o.rate, claimedAt: new Date() });
       if (!updated) fail(409, "This line was just claimed.");
       await store.setOfferStatus(o.id, "accepted");
@@ -1446,6 +1509,12 @@ async function api(req, res, urlPath, query) {
       await store.incNoShows(waiterId);
       updated = await releaseIfHeld(updated);
       ping(waiterId, "Removed from a job", `You didn't check in at ${l.place} on time, so the booker reopened it.`);
+      const nw = await store.userById(waiterId);
+      if (nw) {
+        const had = recentWarnings(conductOf(nw)).length;
+        await warnWaiter(nw, `You didn't check in on time for job #${l.id} at ${l.place}, so the booker reopened it.`, "automatic");
+        if (had) flagAdmins(`Waiter has ${had + 1} warnings: ${nw.name}`, `${nw.name} (${nw.email}) missed job #${l.id} at ${l.place} and now has ${had + 1} warnings in 90 days. Review on the admin page and decide whether to pause their waiter access.`);
+      }
       return send(res, 200, { line: await one(me, updated) });
     }
 
@@ -1471,6 +1540,17 @@ async function api(req, res, urlPath, query) {
       const moved = await store.updateLine(id, l.status, { meetSpot: spot });
       if (!moved) fail(409, "This job just changed. Try again.");
       ping(l.ownerId, "Meetup spot", `${firstName(me.name)} will meet you at: ${spot}`);
+      return send(res, 200, { line: await one(me, moved) });
+    }
+
+    // The waiter has the item and is walking to the meetup spot; the booker sees it live and gets a ping.
+    if (action === "walking") {
+      if (l.waiterId !== me.id) fail(403, "Only your waiter can do that.");
+      if (l.status !== "handoff") fail(409, "Record the purchase first.");
+      if (l.walkingAt) return send(res, 200, { line: await one(me, l) });
+      const moved = await store.updateLine(id, l.status, { walkingAt: new Date() });
+      if (!moved) fail(409, "This job just changed. Try again.");
+      ping(l.ownerId, "Your waiter is on the way", `${firstName(me.name)} has your ${l.item || "order"} and is heading to ${l.meetSpot ? l.meetSpot : "the meetup spot"}. Have your handoff code ready.`);
       return send(res, 200, { line: await one(me, moved) });
     }
 
@@ -1603,9 +1683,17 @@ async function api(req, res, urlPath, query) {
         nearfront: pickup ? `${who} is almost at the register.` : `${who} is almost at the front.`, handoff: `${who} is at the front.` }[next];
       if (updated && say) ping(l.ownerId, "Update on your request", say);
     } else if (action === "position") {
+      // Place in line and/or the waiter's estimate of minutes left, shown live to the booker.
       if (!["inline", "nearfront"].includes(l.status)) fail(409, "Check in at the line before updating your place.");
-      const pos = Math.round(num(b.pos, "Place in line", 1, 100000));
-      updated = await store.updateLine(id, l.status, { pos });
+      const f = {};
+      if (b.pos != null && b.pos !== "") f.pos = Math.round(num(b.pos, "Place in line", 1, 100000));
+      if (b.etaMin != null) {
+        const m = Math.round(Number(b.etaMin));
+        if (![2, 5, 10, 15].includes(m)) fail(400, "Pick how long you think is left.");
+        Object.assign(f, { etaMin: m, etaAt: new Date() });
+      }
+      if (!Object.keys(f).length) fail(400, "Enter your place in line or how long is left.");
+      updated = await store.updateLine(id, l.status, f);
     } else if (action === "release") {
       if (!["claimed", "enroute"].includes(l.status)) fail(409, "You can only release a line before you're in it.");
       updated = await store.updateLine(id, l.status, { status: "open", waiterId: null, pos: null, claimedAt: null, runLeavesAt: null });
@@ -1768,6 +1856,7 @@ async function api(req, res, urlPath, query) {
         })),
         users: users.map((u) => ({
           id: u.id, name: u.name, email: u.email, suspended: u.suspended, noshows: u.noshows,
+          conduct: (() => { const c = conductOf(u); return { warnings: recentWarnings(c).length, lastWarning: c.warnings.slice(-1)[0] || null, hold: c.hold, appeal: c.appeal }; })(),
           posted: u.posted, worked: u.worked, createdAt: u.createdAt,
         })),
       });
@@ -1935,6 +2024,53 @@ async function api(req, res, urlPath, query) {
     if (urlPath === "/api/admin/metrics" && method === "GET") {
       const q = new URL(req.url, "http://x").searchParams;
       return send(res, 200, computeMetrics(await store.metricsData(), { days: q.get("days"), tz: q.get("tz") }));
+    }
+    // Waiter conduct: warn, pause waiter access (needs a recent warning first unless it's serious), lift, decide appeals.
+    const cm = urlPath.match(/^\/api\/admin\/users\/(\d+)\/(warn|pause|lift|appeal)$/);
+    if (cm && method === "POST") {
+      const u = await store.userById(Number(cm[1]));
+      if (!u) fail(404, "That user doesn't exist.");
+      if (u.id === me.id) fail(400, "You can't do that to your own account.");
+      const b = await readBody(req);
+      const c = conductOf(u);
+      if (cm[2] === "warn") {
+        const reason = text(b.reason, "the reason", 300);
+        await warnWaiter(u, reason, me.email);
+        return send(res, 200, { ok: true });
+      }
+      if (cm[2] === "pause") {
+        const reason = text(b.reason, "the reason", 300);
+        if (c.hold) fail(409, "Their waiter access is already paused.");
+        if (!recentWarnings(c).length && !b.serious) fail(409, "Give a warning first. Pause right away only for something serious (safety, fraud, theft); tick the box if so.", "needs_warning");
+        c.hold = { at: new Date().toISOString(), reason, by: me.email, serious: !!b.serious };
+        if (c.appeal && c.appeal.status === "open") c.appeal = null;
+        await saveConduct(u.id, c);
+        await tellWaiter(u, "Your waiter access is paused", `${reason} You can still book requests, and any job you're already on stays with you. If you think this is wrong, appeal from Account and a person will review it within 2 business days.`);
+        return send(res, 200, { ok: true });
+      }
+      if (cm[2] === "lift") {
+        if (!c.hold) fail(409, "Their waiter access isn't paused.");
+        const note = text(b.note, "a note", 300, { required: false });
+        c.hold = null;
+        if (c.appeal && c.appeal.status === "open") Object.assign(c.appeal, { status: "reinstated", decidedAt: new Date().toISOString(), note });
+        await saveConduct(u.id, c);
+        await tellWaiter(u, "Your waiter access is back", `You can take jobs again.${note ? " " + note : ""}`);
+        return send(res, 200, { ok: true });
+      }
+      if (cm[2] === "appeal") {
+        if (!c.appeal || c.appeal.status !== "open") fail(409, "There's no open appeal for this person.");
+        const decision = b.decision === "reinstate" ? "reinstated" : b.decision === "uphold" ? "upheld" : fail(400, "Pick reinstate or uphold.");
+        const note = text(b.note, "a note to them", 500, { required: decision === "upheld" });
+        Object.assign(c.appeal, { status: decision, decidedAt: new Date().toISOString(), note });
+        if (decision === "reinstated") {
+          if (c.appeal.about === "warning") c.warnings.pop();
+          c.hold = null;
+        }
+        await saveConduct(u.id, c);
+        await tellWaiter(u, decision === "reinstated" ? "Your appeal was accepted" : "Your appeal was reviewed",
+          decision === "reinstated" ? `We reviewed your appeal and ${c.appeal.about === "warning" ? "removed the warning" : "restored your waiter access"}.${note ? " " + note : ""}` : `We reviewed your appeal and kept the decision. ${note}`);
+        return send(res, 200, { ok: true });
+      }
     }
     const am = urlPath.match(/^\/api\/admin\/(lines|users)\/(\d+)\/(remove|suspend|unsuspend|reset-password)$/);
     if (am && method === "POST") {

@@ -106,6 +106,15 @@ button{cursor:pointer}
 .steps{display:flex;gap:4px;list-style:none;padding:0;margin:0}
 .steps li{flex:1;height:6px;border-radius:3px;background:var(--line)}
 .steps li.on{background:var(--ticket)}
+.track{list-style:none;padding:0;margin:4px 0 0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px}
+.track li{display:flex;flex-direction:column;gap:5px;font-size:11.5px;font-weight:700;color:var(--muted);line-height:1.2}
+.track li::before{content:"";height:6px;border-radius:3px;background:var(--line)}
+.track li.on{color:var(--ink)} .track li.on::before{background:var(--ticket)}
+.track li.now::before{animation:trk 1.6s ease-in-out infinite}
+@keyframes trk{50%{opacity:.45}}
+@media (prefers-reduced-motion:reduce){.track li.now::before{animation:none}}
+.live{font-size:14px;line-height:1.45;margin-top:2px} .live .ago{color:var(--muted);font-size:12.5px}
+.etas{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%}
 .stepnote{font-size:13px;color:var(--muted);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
 .stepnote b{color:var(--ink)}
 
@@ -433,6 +442,24 @@ function pillFor(j){
   if(s==='done')return'<span class="pill done">Done</span>';
   return`<span class="pill active">${stShort(j)}</span>`}
 // Accepts a line, or {kind, status} for the walkthrough pictures.
+// Live tracker for a booker's pickup: where the order is right now, in words, with when it last changed.
+const agoTxt=ms=>{const m=Math.max(0,Math.round((nowS()-ms)/60000));return m<1?'just now':m===1?'1 min ago':m<60?`${m} min ago`:`${Math.round(m/6)/10} hr ago`};
+function trackStage(j){if(j.status==='done')return 4;if(j.status==='handoff')return j.walkingAt?3:2;if(['inline','nearfront'].includes(j.status))return 1;return 0}
+const firstOf=n=>String(n||'Your waiter').split(' ')[0];
+function tracker(j){
+  const at=trackStage(j),W=esc(firstOf(j.waiterName)),labels=['Booked','In line','Bought','On the way','Handed over'];
+  const ol=`<ol class="track" aria-label="Order progress: ${labels[at]}">${labels.map((t,i)=>`<li class="${i<=at?'on':''}${i===at&&j.status!=='done'?' now':''}"${i===at?' aria-current="step"':''}>${t}</li>`).join('')}</ol>`;
+  let live='';
+  if(at===0)live=j.status==='enroute'?`${W} is heading to the line.`:`${W} has your order and will check in at the line${j.startAt&&Date.parse(j.startAt)>nowS()?` around ${clockOf(Date.parse(j.startAt))}`:''}.`;
+  else if(at===1){const bits=[];if(j.checkinAt)bits.push(`in line for ${Math.max(1,Math.round((nowS()-Date.parse(j.checkinAt))/60000))} min`);if(j.pos)bits.push(`place ${j.pos}`);
+    live=`${W} is ${bits.join(', ')||'in line'}.`;
+    if(j.etaMin&&j.etaAt)live+=` They think <b>${j.etaMin>=15?'15+ min':'about '+j.etaMin+' min'}</b> left <span class="ago">(${agoTxt(Date.parse(j.etaAt))})</span>.`;
+    else if(j.status==='nearfront')live+=' Almost at the register.'}
+  else if(at===2)live=`${W} bought it${j.purchasedAt?` <span class="ago">${agoTxt(Date.parse(j.purchasedAt))}</span>`:''}. ${j.meetSpot?`Meet at <b>${esc(j.meetSpot)}</b>.`:'They\'ll tell you where to meet.'}`;
+  else if(at===3)live=`${W} is walking to ${j.meetSpot?`<b>${esc(j.meetSpot)}</b>`:'the meetup spot'} <span class="ago">(left ${agoTxt(Date.parse(j.walkingAt))})</span>. Have your handoff code ready.`;
+  else live='Handed over.';
+  if(j.prepStatus&&at<=1)live+=` Stand: ${j.prepStatus==='ready'?'your order is ready':j.prepStatus==='preparing'?'preparing your order':j.prepStatus==='unavailable'?'item unavailable':'order received'}.`;
+  return ol+`<div class="live" aria-live="polite">${live}</div>`}
 function steps(j){const keys=keysFor(j),i=keys.indexOf(j.status);return`<ol class="steps" aria-label="Progress: ${stLabel(j)}">${keys.slice(1).map((k,n)=>`<li class="${n+1<=i?'on':''}" title="${STAGE_TXT[kindOf(j)][k][1]}"></li>`).join('')}</ol>`}
 const kindTag=j=>`<span class="kindtag ${kindOf(j)}">${kindOf(j)==='pickup'?'Pick it up':'Save my spot'}</span>${j.event?` <span class="kindtag ev">${esc(j.event.name)}</span>`:''}`;
 // The most a job could cost the booker (time at the approved hours, fees, and for pickups the item limit and drop-off fee).
@@ -802,7 +829,7 @@ function customerMine(){
       extra=`${billRows(b,'customer')}${txt?`<div class="hint">${txt(W)}</div>`:''}${rateHTML(j,j.waiterName,'waiter')}`}
     const pill=j.status==='open'&&j.expired?'<span class="pill expired">Expired</span>':j.status==='done'&&/^cancelled/.test(j.outcome||'')?'<span class="pill expired">Cancelled</span>':pillFor(j);
     return`<article class="card"><div class="row"><div>${kindTag(j)}<h3>${esc(j.place)}</h3>${pickup?'':`<div class="meta">${esc(j.what)}</div>`}</div>${pill}</div>
-      ${j.status!=='open'?steps(j):''}
+      ${j.status!=='open'?(pickup&&j.waiterId?tracker(j):steps(j)):''}
       <div class="stepnote"><span><b>${j.status==='open'&&j.expired?'Start time passed':stLabel(j)}</b></span><span>${j.waiterId?'Your waiter':j.expired?'Hidden from waiters':'Visible to waiters now'}</span></div>
       ${itemBox(j,'customer')}
       ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active||j.chatOpen?chatHTML(j,j.waiterName):''}${reportHTML(j,'customer')}</article>`}).join('')}</div>`}
@@ -1026,6 +1053,24 @@ function eventCards(){
    <div class="meta">${e.open} open request${e.open===1?'':'s'} · ${e.here} waiter${e.here===1?'':'s'} here${e.meHere?' (including you)':''}</div>
    <div class="btns"><button class="btn ${e.meHere?'ghost ':''}small" data-act="here" data-id="${e.id}" data-here="${e.meHere?'0':'1'}">${e.meHere?'I left':'I\'m here'}</button>${e.open||eventFilter===e.id?`<button class="btn ghost small" data-act="ev-filter" data-id="${e.id}">${eventFilter===e.id?'Show all jobs':'Show its requests'}</button>`:''}</div>
    ${e.meHere?'<div class="hint">You\'ll get an alert for each new request posted for this event.</div>':''}</article>`).join('')}</div>`}
+// Waiter standing: warnings, a pause, and the appeal, all in plain words with a way to respond.
+let appealOpen=false;
+function conductCard(){
+  const c=me&&me.conduct;if(!c||(!c.hold&&!c.warnings.length&&!c.appeal))return'';
+  const when=d=>new Date(d).toLocaleDateString([],{month:'short',day:'numeric'});
+  let h=`<article class="card section" id="conduct"><h2>Your waiter standing</h2>`;
+  if(c.hold)h+=`<div class="warnnote"><b>Waiter access paused</b> since ${when(c.hold.at)}. ${esc(c.hold.reason)} You can still book requests.</div>`;
+  else h+=`<div class="meta">You can take jobs. Warnings drop off after 90 days.</div>`;
+  if(c.warnings.length)h+=`<ul class="meta" style="margin:6px 0 0;padding-left:18px">${c.warnings.map(w=>`<li>${when(w.at)}: ${esc(w.reason)}</li>`).join('')}</ul>`;
+  const ap=c.appeal;
+  if(ap&&ap.status==='open')h+=`<div class="hint">Your appeal from ${when(ap.at)} is with us. A person will reply within 2 business days.</div>`;
+  else{
+    if(ap)h+=`<div class="hint">Appeal from ${when(ap.at)}: ${ap.status==='reinstated'?'accepted':'reviewed, decision kept'}.${ap.note?' '+esc(ap.note):''}</div>`;
+    if(c.hold||c.warnings.length)h+=appealOpen?`<label class="meta" for="appealTxt">Tell us what happened</label><textarea id="appealTxt" rows="4" maxlength="1000" placeholder="What happened, and anything we should know"></textarea>
+      <div class="btns"><button class="btn small" data-act="appeal-send">Send appeal</button><button class="btn ghost small" data-act="appeal-close">Cancel</button></div>`
+      :`<div class="btns"><button class="btn ghost small" data-act="appeal-open">Appeal ${c.hold?'the pause':'the latest warning'}</button></div>`}
+  return h+`<div class="meta" style="margin-top:6px"><a href="/terms#conduct" target="_blank" rel="noopener">Waiter code of conduct</a></div></article>`}
+
 function waiterFind(){
   const inLineAt=new Set(data.shifts.filter(j=>kindOf(j)==='pickup'&&['inline','nearfront'].includes(j.status)&&!j.purchasedAt).map(standKey));
   const cats=['All','Pickups','Spots'];
@@ -1045,7 +1090,7 @@ function waiterFind(){
   const evName=eventFilter&&(EVENTS.find(e=>e.id===eventFilter)||{}).name;
   const selBar=open.length>1&&WSTATS.canBatch?(selecting?`<div class="selbar"><span><b>${picked.size}</b> selected${picked.size>=5?' (most at once)':''}</span><span class="btns"><button class="btn small" data-act="claim-batch"${picked.size?'':' disabled'}>Claim ${picked.size||''}</button><button class="btn ghost small" data-act="select-off">Cancel</button></span></div>`
     :`<div class="btns"><button class="btn ghost small" data-act="select-on">Claim several at once</button></div>`):'';
-  return`<div class="list">${eventCards()}${evName?`<div class="note">Showing requests for <b>${esc(evName)}</b>.</div>`:''}${me.minRate&&(belowRate||showAllRates)?`<div class="note">${showAllRates?'Showing all rates.':`Showing jobs at $${me.minRate}/hr or more. ${belowRate} below your rate ${belowRate===1?'is':'are'} hidden.`} <button class="linkbtn" data-act="rates-all">${showAllRates?`Only $${me.minRate}/hr+`:'Show all'}</button></div>`:''}
+  return`<div class="list">${me.conduct&&me.conduct.hold?`<div class="warnnote"><b>Your waiter access is paused.</b> ${esc(me.conduct.hold.reason)} You can still book requests. <button class="linkbtn" data-act="go-account">See details or appeal</button></div>`:''}${eventCards()}${evName?`<div class="note">Showing requests for <b>${esc(evName)}</b>.</div>`:''}${me.minRate&&(belowRate||showAllRates)?`<div class="note">${showAllRates?'Showing all rates.':`Showing jobs at $${me.minRate}/hr or more. ${belowRate} below your rate ${belowRate===1?'is':'are'} hidden.`} <button class="linkbtn" data-act="rates-all">${showAllRates?`Only $${me.minRate}/hr+`:'Show all'}</button></div>`:''}
    <div class="filters" role="group" aria-label="Distance">
      <button class="chip near" aria-pressed="${near.on}" data-near="toggle"${near.busy?' disabled':''}>${near.busy?'Finding you…':near.on?'◉ Near me':'◎ Near me'}</button>
      ${near.on?radii.map(([r,l])=>`<button class="chip" aria-pressed="${near.radius===r}" data-radius="${r}">${l}</button>`).join(''):''}</div>${selBar}
@@ -1082,7 +1127,7 @@ function waiterShifts(){
      if(j.status==='claimed'||j.status==='enroute')ctl+=`<button class="btn ghost small" data-act="release" data-id="${j.id}">Release</button>`;
      if(j.status==='claimed'||j.status==='enroute')extra=`<div class="hint">Tap <b>${pickup?'I\'m in line':'I\'m at the spot'}</b> once you're there. We check your phone's location to confirm it, and that starts the clock you're paid on.</div>`;
      if(!pickup&&j.status!=='done')extra+=`<div class="rule">${SPOT_RULE_SHORT}</div>`;
-     if(pickup&&(j.status==='inline'||j.status==='nearfront'))ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span>`;
+     if(pickup&&(j.status==='inline'||j.status==='nearfront'))ctl+=`<span class="pos"><label class="meta" for="pos-${j.id}">Place in line</label><input class="mono" id="pos-${j.id}" type="number" min="1" inputmode="numeric" value="${j.pos??''}"><button class="btn ghost small" data-act="position" data-id="${j.id}">Update</button></span><div class="etas"><span class="meta">Time left:</span>${[2,5,10,15].map(m=>`<button class="chip${j.etaMin===m?' on':''}" data-act="eta" data-id="${j.id}" data-min="${m}" aria-pressed="${j.etaMin===m}">${m===15?'15+':'~'+m} min</button>`).join('')}</div>`;
      if(pickup&&(j.status==='inline'||j.status==='nearfront')){
        const d=buyDraft[j.id]||{};
        if(!secured)extra+=`<div class="warnnote">Don't buy anything yet. ${j.payProblem==='waiter'?'Your payout account needs an update with Stripe first (Account → Finish payout setup).':'The booker\'s payment isn\'t secured, so you might not be paid back. We\'ve asked them to update their card.'}</div>`;
@@ -1095,6 +1140,8 @@ function waiterShifts(){
          <div class="btns"><label class="photo-btn">${sp?`<img class="thumb" src="${sp}" alt="Sold-out photo">Retake`:'📷 Sold-out photo'}<input type="file" accept="image/*" capture="environment" data-soldphoto="${j.id}"></label></div>
          <div class="btns"><button class="btn danger-btn small" data-act="soldout" data-id="${j.id}"${sp?'':' disabled'}>Yes, it's sold out</button><button class="btn ghost small" data-act="sold-close" data-id="${j.id}">Not yet</button></div></div>`}}
      if(bought&&j.status==='handoff'){
+       if(!j.walkingAt)ctl+=`<button class="btn small" data-act="walking" data-id="${j.id}">I'm heading to the meet spot</button>`;
+       else extra+=`<div class="hint">${O} was told you're on the way.</div>`;
        extra+=billRows(b,'waiter');
        if(j.graceEndsAt&&nowS()>=j.graceEndsAt)extra+=`<div class="warnnote">${O} hasn't met you within the meetup window. Message them in the chat below first. If they still don't reply, you can close the job: you're paid for your time, the booker isn't charged for the item, and you keep it.</div><button class="btn ghost small" data-act="leave" data-id="${j.id}">Close job (booker didn't meet)</button>`;
        else if(j.graceEndsAt)extra+=`<div class="hint">If ${O} hasn't met you by ${clockOf(j.graceEndsAt)}, you can close the job and be paid for your time, and keep the item (the booker won't be charged for it). Message them below.</div>`}
@@ -1141,6 +1188,7 @@ function account(){
     <div class="mini-btns"><button class="btn ghost" data-act="tut-customer">Show the booking walkthrough</button><button class="btn ghost" data-act="tut-waiter">Show the earning walkthrough</button></div></article>
   <article class="card section"><div class="toggle"><label for="sound-toggle"><b>Opening sound</b><div class="meta">Plays a short chime when you open the app.</div></label><input type="checkbox" id="sound-toggle" ${soundOn()?'checked':''}></div></article>
   ${me.isAdmin?`<article class="card section"><h2>Admin</h2><div class="links"><a href="/dashboard" target="_blank" rel="noopener">Creator dashboard</a><a href="/admin" target="_blank" rel="noopener">Open the admin page</a></div></article>`:''}
+  ${conductCard()}
   ${HELP_ON?`<article class="card section"><h2>Need help?</h2><div class="meta">Ask our support assistant about a job, a charge, payouts, or how anything works. It can pass you to a person.</div><div class="btns"><button class="btn small" data-act="help-open">Chat with support</button></div></article>`:''}
   <article class="card section"><h2>Help and legal</h2>
     <div class="links"><a href="/support" target="_blank" rel="noopener">Support</a><a href="/privacy" target="_blank" rel="noopener">Privacy policy</a><a href="/terms" target="_blank" rel="noopener">Terms of service</a></div></article>
@@ -1436,6 +1484,9 @@ $('#view').addEventListener('click',async e=>{
     if(a==='report-open'||a==='report-close'){a==='report-open'?reportOpen.add(+id):reportOpen.delete(+id);b.disabled=false;render();return}
     if(a==='report-send'){const reason=document.getElementById('rr-'+id).value,details=document.getElementById('rd-'+id).value;
       await api(`/lines/${id}/report`,{method:'POST',body:{reason,details}});reportOpen.delete(+id);delete reportDraft[id];toast('Report sent. We\'ll get back to you within 2 business days.')}
+    if(a==='appeal-open'||a==='appeal-close'){appealOpen=a==='appeal-open';b.disabled=false;render();if(appealOpen)setTimeout(()=>{const t=document.getElementById('appealTxt');t&&t.focus()},0);return}
+    if(a==='appeal-send'){const r=await api('/me/appeal',{method:'POST',body:{text:document.getElementById('appealTxt').value}});me=r.user;appealOpen=false;toast('Appeal sent. A person will reply within 2 business days.');render();return}
+    if(a==='go-account'){b.disabled=false;goAccount();setTimeout(()=>{const c=document.getElementById('conduct');c&&c.scrollIntoView({block:'start'})},50);return}
     if(a==='help-open'){b.disabled=false;openHelp(id?+id:null);return}
     if(a==='alerts-on'){await enableAlerts();toast('Alerts are on for this phone.');render();return}
     if(a==='alerts-off'){await disableAlerts();toast('Alerts are off for this phone.');render();return}
@@ -1449,6 +1500,8 @@ $('#view').addEventListener('click',async e=>{
       const pos=await getPos();const r=await api(`/lines/${id}/purchase`,{method:'POST',body:{total,receipt:d.photo,receiptHash:d.hash,note:document.getElementById('bnote-'+id).value,...(pos||{})}});
       delete buyDraft[id];toast(`Purchase recorded: ${money(r.line.itemTotal)}. ${r.line.ownerName} can see the receipt.`)}
     if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});if(lastData)lastData.shifts=lastData.shifts.filter(x=>x.id!==+id);toast('Line released. Other waiters can claim it now.')}
+    if(a==='eta'){await api(`/lines/${id}/position`,{method:'POST',body:{etaMin:+b.dataset.min}});toast('Your booker can see the update.');load(true);return}
+    if(a==='walking'){await api(`/lines/${id}/walking`,{method:'POST'});toast('Your booker knows you\'re on the way.');load(true);return}
     if(a==='position'){const r=await api(`/lines/${id}/position`,{method:'POST',body:{pos:+document.getElementById('pos-'+id).value}});toast(`Place in line updated to ${r.line.pos}.`)}
     if(a==='swap'){const r=await api(`/lines/${id}/swap`,{method:'POST',body:{code:document.getElementById('code-'+id).value}});toast(`Handed over. You'll receive ${money(r.line.bill.payout)}.`)}
     if(a==='extend'){const r=await api(`/lines/${id}/extend`,{method:'POST'});toast(`Added 30 minutes. ${fmtShort(r.line.bill.approvedHours)} approved in total.`)}
