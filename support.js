@@ -83,7 +83,13 @@ async function callClaude(body) {
   try {
     const r = await fetch(`${API}/v1/messages`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.ANTHROPIC_API_KEY}`,
+        "anthropic-version": "2023-06-01",
+        // Only needed for a key that isn't scoped to a workspace.
+        ...(process.env.ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } : {}),
+      },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });

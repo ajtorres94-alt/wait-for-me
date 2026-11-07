@@ -112,7 +112,8 @@ Booker alerts that matter (claimed, bought, meet soon) also go by email to anyon
 
 | Variable | Value |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | turns the assistant on (from console.anthropic.com) |
+| `ANTHROPIC_API_KEY` | turns the assistant on (create it at platform.claude.com/settings/keys, scoped to a workspace) |
+| `ANTHROPIC_WORKSPACE_ID` | only if the key isn't scoped to a workspace |
 | `SUPPORT_MODEL` | optional; defaults to `claude-haiku-5-5` |
 
 ### Fraud and location checks
