@@ -219,6 +219,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 .hm.sys{align-self:center;background:none;color:var(--muted);font-size:13px;text-align:center}
 .help-act{align-self:flex-start;max-width:85%;border:1px dashed var(--ink);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;font-size:14px}
 .help-form{display:flex;gap:8px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line);background:var(--surface);max-width:640px;width:100%;margin:0 auto;box-sizing:border-box}
+.rv-img{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:16px;background:var(--bg)} .rv-img img{max-width:100%;height:auto;border-radius:10px;box-shadow:0 2px 12px rgb(0 0 0 / .15)}
 .help-form textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:inherit;font-size:16px;background:var(--bg);color:var(--ink);max-height:120px}
 .tut-art .card{box-shadow:0 10px 30px rgb(0 0 0 / .08)}
 .tut h2{font-size:28px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
@@ -392,6 +393,7 @@ form.post{background:var(--surface);border:1px solid var(--line);border-radius:1
 <div class="tut" id="tut" role="dialog" aria-modal="true" aria-labelledby="tutTitle" hidden></div>
 <div class="inst" id="inst" role="dialog" aria-modal="true" aria-labelledby="instTitle" hidden></div>
 <div class="help" id="help" role="dialog" aria-modal="true" aria-labelledby="helpTitle" hidden></div>
+<div class="help" id="rview" role="dialog" aria-modal="true" aria-labelledby="rviewTitle" hidden></div>
 
 
 <script>
@@ -490,7 +492,7 @@ function itemBox(j,mode){
   if(sx&&(sx.location||sx.notes))rows.push(`<div><span>Stand</span><span>${esc([sx.location,sx.notes].filter(Boolean).join(' · '))}</span></div>`);
   if((mode==='waiter'||mode==='customer')&&(j.seatSection||j.seatRow))rows.push(`<div><span>${mode==='waiter'?'Booker sits at':'You sit at'}</span><span>${esc([j.seatSection&&'Section '+j.seatSection,j.seatRow&&'Row '+j.seatRow].filter(Boolean).join(' · '))}</span></div>`);
   if(j.meetSpot&&(mode==='waiter'||mode==='customer'))rows.push(`<div><span>Meet at</span><b>${esc(j.meetSpot)}</b></div>`);
-  return`<div class="itembox">${rows.join('')}${j.hasReceipt?`<a class="rcpt" href="/api/lines/${j.id}/receipt" target="_blank" rel="noopener">${bought?'View receipt photo':'View sold-out photo'}</a>${bought&&mode==='customer'&&j.status!=='done'?'<div class="hint">Check the receipt photo before you share your code. If the item or price doesn\'t match, don\'t hand over the code; tap Report a problem.</div>':''}${bought&&j.itemNote&&/together with other orders/.test(j.itemNote)?'<div class="hint">Your waiter bought several orders at once, so this receipt also shows other people\'s items.</div>':''}`:''}</div>`}
+  return`<div class="itembox">${rows.join('')}${j.receiptShared>1&&mode==='customer'?`<div class="hint">One receipt covered ${j.receiptShared} orders in this group run. Your share is the item price above, entered by your waiter.</div>`:''}${j.hasReceipt?`<button type="button" class="rcpt linkbtn" data-act="receipt-view" data-id="${j.id}" data-kind="${bought?'receipt':'sold'}">${bought?'View receipt':'View sold-out photo'}</button>${bought&&mode==='customer'&&j.status!=='done'?'<div class="hint">Check the receipt photo before you share your code. If the item or price doesn\'t match, don\'t hand over the code; tap Report a problem.</div>':''}${bought&&j.itemNote&&/together with other orders/.test(j.itemNote)?'<div class="hint">Your waiter bought several orders at once, so this receipt also shows other people\'s items.</div>':''}`:''}</div>`}
 const MEET_TXT={45:'45 min',120:'2 hours',240:'4 hours'};
 const SPOT_RULE='Save my spot is only for places where saving a spot is normal, like a parade route or the lawn at an outdoor show. Wait For Me! does not condone or endorse line-cutting, so it can\'t be used to hold a place in a line.';
 const SPOT_RULE_SHORT='Saving a spot only, not a place in a line. Wait For Me! does not condone or endorse line-cutting.';
@@ -834,7 +836,7 @@ function customerMine(){
       ${j.status==='open'&&j.flexUntil&&Date.parse(j.flexUntil)>nowS()?`<div class="note"><b>Wait &amp; save:</b> looking for others at this stand until ${clockOf(Date.parse(j.flexUntil))}. If a group run forms you get the group price; if not, it goes out at the regular price.</div>`:''}
       ${j.status!=='open'?(pickup&&j.waiterId?tracker(j):steps(j)):''}
       ${pickup&&j.changeAt&&!j.purchasedAt?`<div class="hint">${j.changeSeenAt?`${esc(firstOf(j.waiterName))} saw your change.`:`Change sent ${agoTxt(Date.parse(j.changeAt))}. Waiting for ${esc(firstOf(j.waiterName))} to see it.`}</div>`:''}
-      ${pickup&&['claimed','enroute','inline','nearfront'].includes(j.status)&&!j.purchasedAt&&(j.changeCount||0)<3?`<div class="btns"><button class="btn ghost small" data-act="edit" data-id="${j.id}">Change order</button></div>`:''}
+      ${pickup&&['claimed','enroute','inline'].includes(j.status)&&!j.purchasedAt&&(j.changeCount||0)<3?`<div class="btns"><button class="btn ghost small" data-act="edit" data-id="${j.id}">Change order</button></div>`:''}
       <div class="stepnote"><span><b>${j.status==='open'&&j.expired?'Start time passed':stLabel(j)}</b></span><span>${j.waiterId?'Your waiter':j.expired?'Hidden from waiters':'Visible to waiters now'}</span></div>
       ${itemBox(j,'customer')}
       ${active?whoCard(j.waiterName,'Your waiter · '+ratingTxt(j.waiterRating),j.waiterLook||'',j.waiterAvatar):''}${ticket}${checkinNote(j)}${meterHTML(j,'customer')}${extra}${payNote(j,'customer')}${facts(j,'customer')}${actions?`<div class="btns">${actions}</div>`:''}${active||j.chatOpen?chatHTML(j,j.waiterName):''}${reportHTML(j,'customer')}</article>`}).join('')}</div>`}
@@ -867,7 +869,7 @@ function customerPost(){
   const dayBtn=(k,t)=>`<button type="button" class="chip" aria-pressed="${postDay===k}" data-day="${k}">${t}</button>`;
   const minDate=localInput(new Date()).slice(0,10);
   return`<form class="post" id="postForm" novalidate>
-   ${chg?`<div class="note"><b>Change your order.</b> ${esc(firstOf(e.waiterName))} gets an alert and confirms they've seen it. Changes can't be made once it's bought${e.status==='nearfront'?`, and ${esc(firstOf(e.waiterName))} is almost at the register, so message them too`:''}.</div>`:''}
+   ${chg?`<div class="note"><b>Change your order.</b> ${esc(firstOf(e.waiterName))} gets an alert and confirms they've seen it. You can change it until they reach the register.</div>`:''}
    ${EVENTS.length&&!chg?`<div class="field"><span class="wlabel" id="l-event">At an event?</span><div class="filters" role="group" aria-labelledby="l-event">
      <button type="button" class="chip" aria-pressed="${!postEvent}" data-event="">No</button>${EVENTS.map(ev=>`<button type="button" class="chip" aria-pressed="${postEvent===ev.id}" data-event="${ev.id}">${esc(ev.name)} · ${evWhen(ev)} · ${ev.here} waiter${ev.here===1?'':'s'} here</button>`).join('')}</div>
      <small id="h-event">${eventHint()}</small></div>`:''}
@@ -1129,9 +1131,9 @@ function waiterShifts(){
   const verbs={enroute:'I\'m on my way',inline:'I\'m in line',nearfront:'I\'m near the register',handoff:'I\'m at the front'};
   const groups={};mine.filter(j=>['claimed','enroute'].includes(j.status)).forEach(j=>{const k=standKey(j);(groups[k]=groups[k]||[]).push(j)});
   const buyGroups={};mine.filter(j=>kindOf(j)==='pickup'&&['inline','nearfront'].includes(j.status)&&!j.purchasedAt&&(!PAY.enabled||j.payStatus==='held')).forEach(j=>{const k=standKey(j);(buyGroups[k]=buyGroups[k]||[]).push(j)});
-  const buyAll=Object.entries(buyGroups).filter(([,g])=>g.length>1).map(([k,g])=>{const gd=groupBuy[k]||{};return`<div class="buybox"><b>Bought all ${g.length} on one receipt?</b><div class="hint">Enter what each order cost (its share of the total, tax included) and take one photo of the receipt. Every booker sees the receipt. Paying for each order separately also works; use the boxes on each job below.</div>
+  const buyAll=Object.entries(buyGroups).filter(([,g])=>g.length>1).map(([k,g])=>{const gd=groupBuy[k]||{};return`<div class="buybox"><b>Bought all ${g.length} on one receipt?</b><div class="hint">Enter what each order cost (its share of the total, tax included) and add one photo of the receipt. No paper receipt? Use a screenshot of the digital receipt or a photo of the register screen. Every booker sees the receipt and their own share. Paying for each order separately also works; use the boxes on each job below.</div>
     ${g.map(j=>`<div class="row2"><label class="meta" for="gbuy-${j.id}" style="flex:1">${j.qty>1?`${j.qty} × `:''}${esc(j.item||j.what)} for ${esc(j.ownerName)} (limit ${money(j.itemBudget)})</label><input id="gbuy-${j.id}" type="number" inputmode="decimal" min="0.5" max="${j.itemBudget}" step="0.01" placeholder="$" value="${esc((gd.totals||{})[j.id]??'')}"></div>`).join('')}
-    <div class="row2"><label class="photo-btn">${gd.photo?`<img class="thumb" src="${gd.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo'}<input type="file" accept="image/*" capture="environment" data-gphoto="${esc(k)}"></label></div>
+    <div class="row2"><label class="photo-btn">${gd.photo?`<img class="thumb" src="${gd.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo or screenshot'}<input type="file" accept="image/*" data-gphoto="${esc(k)}"></label></div>
     <div class="btns"><button class="btn small" data-act="buy-all" data-key="${esc(k)}" data-ids="${g.map(j=>j.id).join(',')}">Record all ${g.length} purchases</button></div></div>`}).join('');
   const allBtns=buyAll+Object.values(groups).filter(g=>g.length>1).map(g=>`<div class="note"><b>${g.length} jobs at ${esc(g[0].event?g[0].event.name:g[0].place)}</b><div class="btns" style="margin-top:8px"><button class="btn small" data-act="checkin-all" data-ids="${g.map(j=>j.id).join(',')}">I'm there for all ${g.length}</button></div></div>`).join('');
   return`<div class="list">${alertsNudge(mine,'waiter')}${allBtns}<div class="earn"><div><div class="meta">Earned so far</div><b class="mono">${money(earned)}</b></div><div class="meta">Up to ${money(upToSum)} on active jobs</div></div>
@@ -1149,9 +1151,9 @@ function waiterShifts(){
      if(pickup&&(j.status==='inline'||j.status==='nearfront')){
        const d=buyDraft[j.id]||{};
        if(!secured)extra+=`<div class="warnnote">Don't buy anything yet. ${j.payProblem==='waiter'?'Your payout account needs an update with Stripe first (Account → Finish payout setup).':'The booker\'s payment isn\'t secured, so you might not be paid back. We\'ve asked them to update their card.'}</div>`;
-       else ctl+=`<div class="buybox"><b>Bought it?</b><div class="hint">Pay at the register (up to ${money(j.itemBudget)}, tax included), then enter the total and take a photo of the receipt. You're paid back with your earnings.</div>
+       else ctl+=`<div class="buybox"><b>Bought it?</b><div class="hint">Pay at the register (up to ${money(j.itemBudget)}, tax included), then enter the total and add the receipt. You're paid back with your earnings.</div><div class="hint">No paper receipt? Add a screenshot of the digital receipt (email, text or app), or a photo of the register screen showing the total.</div>
          <div class="row2"><label class="sr" for="buy-${j.id}">Receipt total</label><input id="buy-${j.id}" type="number" inputmode="decimal" min="0.5" max="${j.itemBudget}" step="0.01" placeholder="Total $" value="${d.total??''}">
-           <label class="photo-btn">${d.photo?`<img class="thumb" src="${d.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo'}<input type="file" accept="image/*" capture="environment" data-photo="${j.id}"></label></div>
+           <label class="photo-btn">${d.photo?`<img class="thumb" src="${d.photo}" alt="Receipt photo">Retake`:'📷 Receipt photo or screenshot'}<input type="file" accept="image/*" data-photo="${j.id}"></label></div>
          <div class="row2"><label class="sr" for="bnote-${j.id}">Note</label><input type="text" id="bnote-${j.id}" maxlength="200" placeholder="Note (optional)" value="${esc(d.note||'')}"></div>
          <div class="btns"><button class="btn small" data-act="purchase" data-id="${j.id}">Record purchase</button>${soldOpen.has(j.id)?'':`<button class="btn ghost small" data-act="sold-open" data-id="${j.id}">It's sold out</button>`}</div></div>`;
        if(soldOpen.has(j.id)){const sp=soldPhoto[j.id];extra+=`<div class="confirm"><b>Mark it sold out?</b><div class="meta">${j.itemBackup?`Check the backup (${esc(j.itemBackup)}) first. `:''}Take a photo that shows it's gone, like the empty shelf or a sold-out sign. The job ends and you're paid for the time you waited.</div>
@@ -1289,6 +1291,16 @@ $('#inst').addEventListener('click',async e=>{
   if(a==='alerts'){closeInstall();try{await enableAlerts();toast('Alerts are on for this phone.');render()}catch(err){toast(err.message)}return}
   closeInstall()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#inst').hidden)closeInstall()});
+// ---------- receipt viewer: opens over the app with a Back button (and the phone's back gesture) ----------
+let rvBack=null;
+function openReceipt(id,kind){rvBack=document.activeElement;
+  $('#rview').innerHTML=`<div class="help-top"><button class="btn ghost small" data-rv="close" aria-label="Back to the job">← Back</button><h2 id="rviewTitle">${kind==='sold'?'Sold-out photo':'Receipt'}</h2><span></span></div>
+   <div class="rv-img"><img src="/api/lines/${id}/receipt" alt="${kind==='sold'?'Photo showing the item sold out':'Receipt for this order'}"></div>`;
+  $('#rview').hidden=false;document.body.style.overflow='hidden';try{history.pushState({rview:1},'')}catch{}$('#rview [data-rv]').focus()}
+function closeReceipt(fromPop){if($('#rview').hidden)return;$('#rview').hidden=true;$('#rview').innerHTML='';document.body.style.overflow='';if(!fromPop)try{history.back()}catch{};rvBack&&rvBack.focus&&rvBack.focus()}
+$('#rview').addEventListener('click',e=>{if(e.target.closest('[data-rv]'))closeReceipt()});
+window.addEventListener('popstate',()=>closeReceipt(true));
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#rview').hidden)closeReceipt()});
 // ---------- support chat (AI assistant; it can draft a report you confirm, or pass you to a person) ----------
 let HELP_ON=false,help=null;
 function helpLoad(){try{return JSON.parse(sessionStorage.getItem('wfm_help')||'null')}catch{return null}}
@@ -1520,6 +1532,7 @@ $('#view').addEventListener('click',async e=>{
       const pos=await getPos();const r=await api(`/lines/${id}/purchase`,{method:'POST',body:{total,receipt:d.photo,receiptHash:d.hash,note:document.getElementById('bnote-'+id).value,...(pos||{})}});
       delete buyDraft[id];toast(`Purchase recorded: ${money(r.line.itemTotal)}. ${r.line.ownerName} can see the receipt.`)}
     if(a==='release'){await api(`/lines/${id}/release`,{method:'POST'});if(lastData)lastData.shifts=lastData.shifts.filter(x=>x.id!==+id);toast('Line released. Other waiters can claim it now.')}
+    if(a==='receipt-view'){b.disabled=false;openReceipt(+id,b.dataset.kind);return}
     if(a==='change-seen'){await api(`/lines/${id}/change-seen`,{method:'POST'});toast('Your booker knows you saw the change.');load(true);return}
     if(a==='eta'){await api(`/lines/${id}/position`,{method:'POST',body:{etaMin:+b.dataset.min}});toast('Your booker can see the update.');load(true);return}
     if(a==='walking'){await api(`/lines/${id}/walking`,{method:'POST'});toast('Your booker knows you\'re on the way.');load(true);return}

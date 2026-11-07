@@ -312,11 +312,20 @@ async function decorate(viewer, list) {
   const evs = evIds.length ? await store.eventsByIds(evIds) : [];
   const myLines = list.filter((l) => l.waiterId && (l.ownerId === viewer.id || l.waiterId === viewer.id)).map((l) => l.id);
   const myReports = myLines.length ? await store.reportsBy(viewer.id, myLines) : [];
+  // One receipt for a group run: tell each booker how many orders it covers (their share is their own total).
+  const sharedOf = new Map();
+  const runWaiters = [...new Set(list.filter((l) => l.ownerId === viewer.id && l.receiptSha && l.bundled).map((l) => l.waiterId))];
+  for (const w of runWaiters) {
+    const n = new Map();
+    for (const x of await store.listLines({ waiterId: w })) if (x.receiptSha) n.set(x.receiptSha, (n.get(x.receiptSha) || 0) + 1);
+    for (const l of list) if (l.waiterId === w && l.receiptSha) sharedOf.set(l.id, n.get(l.receiptSha) || 1);
+  }
   return list.map((l) => {
     const out = lineFor(viewer, l);
     const isOwner = l.ownerId === viewer.id;
     out.bill = billing(l, now);
     out.expired = isExpired(l, now);
+    if (sharedOf.get(l.id) > 1) out.receiptShared = sharedOf.get(l.id);
     out.ownerRating = summarize(sums[l.ownerId] && sums[l.ownerId].booker);
     if (l.waiterId) out.waiterRating = summarize(sums[l.waiterId] && sums[l.waiterId].waiter);
     if (chatIds.includes(l.id)) out.unread = unread[l.id] || 0;
@@ -1660,7 +1669,8 @@ async function api(req, res, urlPath, query) {
       if (l.ownerId !== me.id) fail(403, "Only the person who posted this can change the order.");
       if (kindOf(l) !== "pickup") fail(400, "Only pickups have an order to change.");
       if (l.status === "open") fail(409, "No one has taken it yet, so use Edit instead.");
-      if (!["claimed", "enroute", "inline", "nearfront"].includes(l.status) || l.purchasedAt) fail(409, "Your waiter already bought it, so the order can't change now.");
+      if (l.status === "nearfront" && !l.purchasedAt) fail(409, "Your waiter is at the register now, so the order can't change. Message them if it's urgent.", "at_register");
+      if (!["claimed", "enroute", "inline"].includes(l.status) || l.purchasedAt) fail(409, "Your waiter already bought it, so the order can't change now.");
       if ((l.changeCount || 0) >= MAX_ORDER_CHANGES) fail(409, `You've changed this order ${MAX_ORDER_CHANGES} times. Message your waiter for anything else.`);
       const f = itemFields(b);
       checkRestricted(f);
