@@ -966,6 +966,9 @@ function chosenStart(){
   return{d,text:fmtStart(d)}}
 // ---------- scroll wheels ----------
 const STANDARD_RATE=17;                                 // every request's hourly rate (waiters can counter-offer more)
+// First-order credit only applies to drink orders. Kept in step with DRINK_RE in server.js.
+const DRINK_RE=/\b(drinks?|beverages?|sodas?|pop|cokes?|coca[- ]?cola|pepsi|sprite|fanta|dr\.? ?pepper|root ?beers?|mountain dew|7 ?up|lemonades?|limeades?|waters?|seltzers?|la ?croix|gatorades?|powerades?|body ?armor|vitamin ?water|red ?bull|monster energy|celsius|slush(ee|ie|y)?s?|slurpees?|icees?|smoothies?|shakes?|milkshakes?|coffees?|cold brew|espressos?|lattes?|cappuccinos?|mochas?|americanos?|frappes?|frappuccinos?|teas?|chai|matcha|boba|hot chocolate|cocoa|juices?|horchata|agua fresca|aguas frescas|kombucha|milk|fountain|refills?|souvenir cups?)\b/i;
+const formIsDrink=()=>{const i=$('#f-item');return [i?i.value:'',...postExtras.map(x=>x.item)].some(t=>DRINK_RE.test(t||''))};
 let postWaitSave=false,CREDIT=0; // Wait & save toggle on the form; first-order credit the server says this booker gets
 let postBoost=0; // boosts retired; kept at 0 so older boosted requests still price right
 const RATES=Array.from({length:733},(_,i)=>17+i/4);   // $17.00 … $200.00
@@ -1006,7 +1009,7 @@ function updateQuote(){
   // Worst case (what the card hold covers) and a typical 15-minute wait.
   const time=Math.max(jmin,h*r),fee=svcV2(time,budget,small)+tiny,total=time+budget+fee+rush+boost;
   const likelyTime=Math.max(jmin,0.25*r),est=price*qty+xEst,likelyRaw=likelyTime+est+svcV2(likelyTime,est,small)+tiny+rush+boost;
-  const credit=!editing&&CREDIT?Math.min(CREDIT,svcV2(likelyTime,est,small)+tiny):0,likely=likelyRaw-credit;
+  const drinkCredit=!editing&&CREDIT&&pk,credit=drinkCredit&&formIsDrink()?Math.min(CREDIT,svcV2(likelyTime,est,small)+tiny):0,likely=likelyRaw-credit;
   // If Wait & save forms a run of 2: time at the group price (10% off), no small-order fee.
   const runTime=r2(likelyTime*(1-0.10)),runLikely=runTime+est+svcV2(runTime,est,small)+boost-(credit?Math.min(CREDIT,svcV2(runTime,est,small)):0);
   const st=evStands(postEvent).find(x=>x.id===postStand),run=st&&STAND_RUNS.find(x=>x.eventId===postEvent&&x.place.trim().toLowerCase()===st.name.trim().toLowerCase());
@@ -1021,12 +1024,13 @@ function updateQuote(){
   q.innerHTML=`<div class="total"><span>Estimated total <small style="font-weight:600;color:var(--muted)">fees included</small></span><span class="mono">${price||!pk?money(likely):'—'}</span></div>`
     +`<div class="qline">${parts.join(' · ')}</div>`
     +(credit&&(price||!pk)?`<div class="qline">Includes your first-order credit: −${money(credit)}</div>`:'')
+    +(drinkCredit&&!credit?`<div class="qline">Your first drink order gets ${money(CREDIT)} off. Add a drink to use it now.</div>`:'')
     +(ws&&price?`<div class="note qnote"><b>Wait &amp; save:</b> ${runLikely<likely-0.005?`about ${money(runLikely)} if a group run forms in 10 minutes, ${money(likely)} if not.`:`for a short wait the price is the same whether or not a run forms (every order pays at least one 15-minute step).`}${isAsap()&&!postEvent?` You skip the ${money(RUSH_FEE)} ASAP fee either way.`:''}</div>`:'')
     +(addOn?`<div class="note qnote"><b>A waiter is in line at ${esc(st.name)} now.</b> If they take your order, it joins their run and you get the group discount.</div>`:'')
     +`<details class="feedet"><summary>What are the fees?</summary>`
     +frow('Service fee',money(likelyBase),`${small?'$1.99':'$3.49'} + 9% of the waiter's time and item, never more than $12. Covers card processing, payouts and support.`)
     +(tiny?frow('Small-order fee',money(tiny),'For solo orders an estimated $10 or less. Add a second item or join a group run and it goes away.'):'')
-    +(credit?frow('First-order credit',`−${money(credit)}`,'New bookers get this off our fee on their first order. Your waiter\'s pay doesn\'t change.'):'')
+    +(credit?frow('First-order credit',`−${money(credit)}`,'New bookers get this off our fee on their first drink order. Your waiter\'s pay doesn\'t change.'):'')
     +(rush?frow('ASAP fee',money(rush),'You picked a start within 30 minutes. All of it goes to your waiter.'):postEvent?'':frow('ASAP fee','$0.00',ws?'No ASAP fee with Wait & save.':`Only if the start is within 30 minutes (before ${tLabel(firstNoFee())} today).`))
     +`<small class="fnote">Waiter time is $17/hr in 15-minute steps, so a solo order pays at least one step ($4.25). In a group run that step costs 10–20% less, and your waiter still earns at least $17/hr.</small></details>`
     +`<details class="feedet"><summary>Most it could cost: ${money(total)}</summary>`
@@ -1418,7 +1422,7 @@ function render(){
     $('#postForm').addEventListener('click',e=>{const c=e.target.closest('[data-runplace]');if(!c)return;const sx=evStands(postEvent).find(x=>x.name.trim().toLowerCase()===c.dataset.runplace.trim().toLowerCase());if(sx){setStand(sx.id);const sel=$('#f-stand');if(sel)sel.value=sx.id}$('#f-place').value=c.dataset.runplace;c.parentNode.querySelectorAll('[data-runplace]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));toast(`Posting at ${c.dataset.runplace}. You'll join that group run if a waiter buys them together.`)});
     $('#postForm').querySelectorAll('[data-kind]').forEach(b=>b.onclick=()=>setPostKind(b.dataset.kind));
     $('#postForm').querySelectorAll('[data-hand]').forEach(b=>b.onclick=()=>setHandoff(b.dataset.hand));
-    ['#f-price','#f-dropfee'].forEach(id=>{const el=$(id);if(el)el.addEventListener('input',updateQuote)});
+    ['#f-price','#f-dropfee','#f-item'].forEach(id=>{const el=$(id);if(el)el.addEventListener('input',updateQuote)});
     {const ws=$('#f-waitsave');if(ws)ws.addEventListener('change',()=>{postWaitSave=ws.checked;updateQuote()})}
     $('#postForm').addEventListener('submit',async e=>{e.preventDefault();const btn=e.target.querySelector('button[type=submit]');btn.disabled=true;
       try{const {d,text}=chosenStart();

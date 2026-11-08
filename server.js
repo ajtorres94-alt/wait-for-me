@@ -435,6 +435,21 @@ async function creditFor(me) {
   if (fp && used[fp] && used[fp] !== me.id) return 0;
   return FIRST_ORDER_CREDIT;
 }
+// The first-order credit only applies to drink orders (Nov 2026): the order's item, or one of its extra items,
+// has to look like a drink. Kept in step with DRINK_RE in public/index.html.
+const DRINK_RE = /\b(drinks?|beverages?|sodas?|pop|cokes?|coca[- ]?cola|pepsi|sprite|fanta|dr\.? ?pepper|root ?beers?|mountain dew|7 ?up|lemonades?|limeades?|waters?|seltzers?|la ?croix|gatorades?|powerades?|body ?armor|vitamin ?water|red ?bull|monster energy|celsius|slush(ee|ie|y)?s?|slurpees?|icees?|smoothies?|shakes?|milkshakes?|coffees?|cold brew|espressos?|lattes?|cappuccinos?|mochas?|americanos?|frappes?|frappuccinos?|teas?|chai|matcha|boba|hot chocolate|cocoa|juices?|horchata|agua fresca|aguas frescas|kombucha|milk|fountain|refills?|souvenir cups?)\b/i;
+const isDrinkOrder = (f) => [f.item, ...(f.extraItems || []).map((x) => x.item)].some((t) => DRINK_RE.test(String(t || "")));
+// When an order's items change, the credit follows: it comes off if it's no longer a drink order, and a
+// booker who still has their credit gets it if the order becomes one.
+async function creditChange(me, l, f) {
+  const drink = isDrinkOrder(f);
+  if (Number(l.promoOff) > 0 && !drink) return { promoOff: 0 };
+  if (!(Number(l.promoOff) > 0) && drink) {
+    const c = await creditFor(me);
+    if (c) { await markCreditCard(me); return { promoOff: c }; }
+  }
+  return {};
+}
 async function markCreditCard(me) {
   const fp = me.cardPm ? await pay.cardFingerprint(store, me).catch(() => null) : null;
   if (!fp) return;
@@ -1384,7 +1399,7 @@ async function api(req, res, urlPath, query) {
       f.flexUntil = new Date(Date.now() + WAIT_SAVE_MIN * 60000);
       f.rush = false; // they chose to wait, so no ASAP fee
     }
-    const credit = await creditFor(me);
+    const credit = isDrinkOrder(f) ? await creditFor(me) : 0;
     if (credit) f.promoOff = credit;
     const line = await store.createLine({ ownerId: me.id, ...f, code: newCode() });
     if (credit) await markCreditCard(me);
@@ -1492,7 +1507,7 @@ async function api(req, res, urlPath, query) {
       const evE = await eventFor(b.eventId);
       const f = lineFields(b, evE);
       await applyStand(f, b, evE);
-      const fields = { ...f, approvedHours: f.hours };
+      const fields = { ...f, approvedHours: f.hours, ...(await creditChange(me, l, f)) };
       if (Math.abs(new Date(f.startAt) - new Date(l.startAt)) < 60 * 1000 && f.eventId === l.eventId) fields.rush = !!l.rush; // same time: same ASAP fee as when posted
       const ev = f.eventId ? await store.eventById(f.eventId) : null;
       const moved = f.place !== l.place || f.eventId !== l.eventId;
@@ -1684,7 +1699,7 @@ async function api(req, res, urlPath, query) {
         if (held && held.payStatus === "failed") fail(402, "Your card didn't cover the higher limit, so the order wasn't changed. Update your card in Account or keep the limit the same.");
       }
       updated = await store.updateLine(id, l.status, {
-        ...f, what: f.item, changeCount: (l.changeCount || 0) + 1, changeAt: new Date(), changeSeenAt: null, changeFrom: before.slice(0, 400),
+        ...f, ...(await creditChange(me, l, f)), what: f.item, changeCount: (l.changeCount || 0) + 1, changeAt: new Date(), changeSeenAt: null, changeFrom: before.slice(0, 400),
         ...(l.prepStatus && l.prepStatus !== "new" ? { prepStatus: "new", prepAt: new Date() } : {}),
       });
       if (!updated) fail(409, "Your waiter just bought it, so the order can't change now.");
