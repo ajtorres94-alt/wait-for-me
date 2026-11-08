@@ -45,8 +45,9 @@ function encode(obj, prefix, out = []) {
   return out;
 }
 
-async function stripe(method, path, params, { idempotencyKey } = {}) {
+async function stripe(method, path, params, { idempotencyKey, account } = {}) {
   const headers = { Authorization: `Bearer ${KEY()}`, "Stripe-Version": "2024-06-20" };
+  if (account) headers["Stripe-Account"] = account; // act on a waiter's connected account
   let url = API() + path;
   let body;
   if (params && method === "GET") url += "?" + new URLSearchParams(encode(params)).toString();
@@ -210,6 +211,27 @@ async function refreshPayouts(store, user) {
   user.payoutFps = fps;
   user.payoutsReady = ready;
   return { ready, started: true, needsInfo: due.length > 0, detailsSubmitted: !!a.details_submitted, minor };
+}
+
+// ---------- waiters: Instant Payouts ----------
+// Waiters can cash out right away instead of waiting for the standard payout. Stripe charges us 1% of each
+// Instant Payout; we charge waiters 1.5% through Stripe's Platform Pricing Tool (Dashboard → Connect →
+// Platform pricing → Instant Payouts), which Stripe takes as an application fee on the payout. The amounts
+// here come straight from Stripe: net_available is what the waiter gets after our fee.
+async function instantBalance(user) {
+  if (!user.stripeAccount) return { gross: 0, net: 0, destination: null };
+  const b = await stripe("GET", "/v1/balance", { expand: ["instant_available.net_available"] }, { account: user.stripeAccount });
+  const usd = (b.instant_available || []).find((x) => x.currency === "usd") || { amount: 0, net_available: [] };
+  const best = (usd.net_available || []).reduce((a, x) => (!a || x.amount > a.amount ? x : a), null);
+  return { gross: usd.amount / 100, net: best ? best.amount / 100 : 0, destination: best ? best.destination : null };
+}
+async function instantPayout(user, net, destination) {
+  return stripe(
+    "POST",
+    "/v1/payouts",
+    { amount: cents(net), currency: "usd", method: "instant", destination, metadata: { wfm_user: user.id } },
+    { account: user.stripeAccount, idempotencyKey: `instant-${user.id}-${cents(net)}-${minute()}` }
+  );
 }
 
 // ---------- holds and charges on a line ----------
@@ -396,6 +418,6 @@ module.exports = {
   cardFingerprint,
   checkKey,
   enabled, publishableKey, testMode, PaymentError, HOLD_DAYS,
-  startCardSetup, finishCardSetup, payoutLink, refreshPayouts,
+  startCardSetup, finishCardSetup, payoutLink, refreshPayouts, instantBalance, instantPayout,
   placeHold, releaseHold, settle, holdDue, maxCharge, registerDomains, refund, WAITER_ACCOUNT_MSG,
 };

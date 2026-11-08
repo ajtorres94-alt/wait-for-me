@@ -420,6 +420,7 @@ const RESTRICTED =
 // Wait & save: the booker lets their order wait up to this long for a group run. Until then it can only be
 // taken as part of a run (with another order at the same stand); after that it's a normal order.
 const WAIT_SAVE_MIN = 10;
+const INSTANT_MIN = 0.5; // Stripe's smallest US Instant Payout
 // First-order credit for new bookers, off our fee on their first paid order.
 const FIRST_ORDER_CREDIT = process.env.FIRST_ORDER_CREDIT != null ? Math.max(0, Number(process.env.FIRST_ORDER_CREDIT) || 0) : 2;
 const flexOpen = (l) => !!(l.flexUntil && new Date(l.flexUntil).getTime() > Date.now() && l.status === "open");
@@ -1188,6 +1189,25 @@ async function api(req, res, urlPath, query) {
       limit(`payout:${me.id}`, 20, 60 * 60 * 1000, "Too many tries. Try again in an hour.");
       if (me.stripeAccount && !me.payoutsReady) await pay.refreshPayouts(store, me);
       return send(res, 200, await pay.payoutLink(store, me, appUrl(req)));
+    }
+    // Instant cash-out: what the waiter can take now, and Stripe's 1.5% fee on it (see payments.js).
+    if (urlPath === "/api/payments/instant" && method === "GET") {
+      if (!me.stripeAccount || !me.payoutsReady) return send(res, 200, { on: false });
+      const b = await pay.instantBalance(me);
+      const fee = Math.max(0, Math.round((b.gross - b.net) * 100) / 100);
+      return send(res, 200, { on: !!b.destination, gross: b.gross, net: b.net, fee, feePct: b.gross > 0 ? Math.round((fee / b.gross) * 1000) / 10 : 0, min: INSTANT_MIN });
+    }
+    if (urlPath === "/api/payments/instant" && method === "POST") {
+      if (!me.stripeAccount || !me.payoutsReady) fail(400, "Set up payouts first.");
+      limit(`instant:${me.id}`, 6, 60 * 60 * 1000, "Too many cash-outs. Try again in an hour.");
+      const b = await readBody(req);
+      const now = await pay.instantBalance(me);
+      if (!now.destination) fail(409, "Your bank or debit card can't take Instant Payouts. Add a debit card in See payouts and earnings.", "instant_ineligible");
+      if (now.net < INSTANT_MIN) fail(409, `There's less than ${dollars(INSTANT_MIN)} to cash out right now.`, "instant_too_small");
+      // The waiter confirmed a specific amount; if the balance moved since, show them the new numbers first.
+      if (Math.abs(Number(b.net) - now.net) > 0.009) fail(409, `Your balance changed. You can now cash out ${dollars(now.net)}. Check the new amount and tap again.`, "instant_changed");
+      const po = await pay.instantPayout(me, now.net, now.destination);
+      return send(res, 200, { ok: true, paid: now.net, fee: Math.round((now.gross - now.net) * 100) / 100, status: po.status || "pending" });
     }
     if (urlPath === "/api/payments/payouts/refresh" && method === "POST") {
       const st = await pay.refreshPayouts(store, me);

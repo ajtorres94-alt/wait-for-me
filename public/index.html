@@ -618,8 +618,9 @@ function paymentCard(){
       <div class="btns"><button class="btn small" id="card-save" data-act="card-save" disabled>Save card</button><button class="btn ghost small" data-act="card-close">Cancel</button></div></div>`
     :`<div class="btns"><button class="btn ${me.card?'ghost ':''}small" data-act="card-open">${me.card?'Change card':'Add a card'}</button></div>`}</article>
   <article class="card section"><h2>Getting paid</h2>
-    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. If your Stripe payouts page shows Instant Payout, you can cash out the same night for a small fee. Your very first payout can take about 7 days while Stripe sets up your account, so start with small items. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
+    <div class="kv"><div>Payouts for waiting<small>Stripe sends your earnings and any item costs to your bank. Standard payouts are free. Need it tonight? Cash out instantly for a 1.5% fee. Your very first payout can take about 7 days while Stripe sets up your account, so start with small items. You'll verify your identity with Stripe once.</small></div><b>${po==='ready'?'On':po==='started'?'Pending':'Off'}</b></div>
     ${me.contractorAgreed?`<div class="hint">You accepted the <a href="/terms#waiters" target="_blank" rel="noopener">waiter agreement</a> and <a href="/terms#conduct" target="_blank" rel="noopener">code of conduct</a> on ${new Date(me.contractorAcceptedAt).toLocaleDateString()}.</div>`:agreementBox()}
+    ${po==='ready'?`<div id="instant">${instantBox()}</div>`:''}
     <div class="btns">${!me.contractorAgreed?'':po==='ready'?'<button class="btn ghost small" data-act="payouts">See payouts and earnings</button>'
       :`<button class="btn small" data-act="payouts">${po==='started'?'Finish payout setup':'Set up payouts'}</button>${po==='started'?'<button class="btn ghost small" data-act="payouts-check">Check status</button>':''}`}</div>
     ${rateBox()}
@@ -756,7 +757,7 @@ function renderTabs(){
   const mine=data.mine.filter(j=>j.status!=='done').length, open=data.open.length, shifts=data.shifts.filter(j=>j.status!=='done').length;
   const t=role==='customer'?[['mine','Requests',mine],['post','Post',0],['account','Account',0]]:[['find','Find jobs',open],['shifts','My jobs',shifts],['account','Account',0]];
   $('#tabs').innerHTML=t.map(([k,l,c])=>`<button role="tab" id="tab-${k}" class="${k==='post'?'plus':''}" aria-selected="${tab[role]===k}" data-k="${k}"><span class="ic">${ICONS[k]}${c?`<span class="badge">${c}</span>`:''}</span>${l}</button>`).join('');
-  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){if(tab[role]==='post'){editing=null;postExtras=[];postBoost=0}tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
+  $('#tabs').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(tab[role]!==b.dataset.k){INSTANT=null;if(tab[role]==='post'){editing=null;postExtras=[];postBoost=0}tab[role]=b.dataset.k;render();window.scrollTo(0,0)}});
 }
 function setRole(r){if(r===role)return;role=r;store.set('wfm_role',r);render();window.scrollTo(0,0)}
 document.querySelectorAll('.roles button').forEach(b=>b.addEventListener('click',()=>setRole(b.dataset.role)));
@@ -1193,6 +1194,15 @@ function waiterShifts(){
        ${j.status!=='done'?whoCard(j.ownerName,'Your customer · '+ratingTxt(j.ownerRating),undefined,j.ownerAvatar):''}${meterHTML(j,'waiter')}${outfit}
        ${j.notes&&j.status!=='done'?`<div class="meta">“${esc(j.notes)}”</div>`:''}${checkinNote(j)}${extra}${payNote(j,'waiter')}${facts(j,'waiter')}${ctl?`<div class="btns">${ctl}</div>`:''}${j.status!=='done'||j.chatOpen?chatHTML(j,j.ownerName):''}${reportHTML(j,'waiter')}</article>`}).join(''):`<div class="empty">No jobs yet. Claim a job from <b>Find jobs</b>.</div>`}</div>`}
 
+// Instant cash-out box on Account (waiters with payouts on). Numbers come from Stripe via /payments/instant.
+let INSTANT=null;
+async function loadInstant(){INSTANT={loading:true};try{INSTANT=await api('/payments/instant')}catch{INSTANT={on:false}}const el=$('#instant');if(el)el.innerHTML=instantBox()}
+function instantBox(){
+  if(!INSTANT){setTimeout(loadInstant,0);return''}
+  if(INSTANT.loading||!INSTANT.on)return'';
+  const i=INSTANT;if(i.net<i.min)return`<div class="kv"><div>Cash out now<small>Nothing to cash out yet. Your pay shows here as soon as a job ends.</small></div><b>${money(i.gross)}</b></div>`;
+  return`<div class="kv"><div>Cash out now — ${i.feePct?`${i.feePct}% fee (${money(i.fee)})`:'no fee'}<small>You get ${money(i.net)} now, usually within 30 minutes, or ${money(i.gross)} free in your next standard payout.</small></div><b>${money(i.gross)}</b></div>
+    <div class="btns"><button class="btn small" data-act="instant-cashout" data-net="${i.net}">Cash out ${money(i.net)} now</button></div>`}
 function account(){
   const done=data.mine.filter(j=>j.status==='done');
   return`<div class="list">
@@ -1467,6 +1477,7 @@ $('#view').addEventListener('click',async e=>{
       if(r.error){$('#cardErr').textContent=r.error.message;b.disabled=false;return}
       await finishCard(r.setupIntent.id);await load(true);return}
     if(a==='payouts'){const r=await api('/payments/payouts/link',{method:'POST'});location.href=r.url;return}
+    if(a==='instant-cashout'){try{const r=await api('/payments/instant',{method:'POST',body:{net:+b.dataset.net}});toast(`Cashing out ${money(r.paid)}. It usually reaches your card or bank within 30 minutes.`)}catch(e){toast(e.message)}await loadInstant();return}
     if(a==='agree'){if(!$('#agree-cb').checked)throw new Error('Check the box to accept the waiter agreement.');const r=await api('/me/contractor-agreement',{method:'POST',body:{accept:true}});me=r.user;toast('Agreement accepted. You can set up payouts and claim jobs.');render();return}
     if(a==='rates-all'){showAllRates=!showAllRates;b.disabled=false;render();return}
     if(a==='dob-save'){const v=$('#dob-in').value;if(!v)throw new Error('Enter your date of birth.');const r=await api('/me/birthdate',{method:'POST',body:{birthDate:v}});me=r.user;toast('Thanks, you\'re all set.');render();return}
